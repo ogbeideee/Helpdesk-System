@@ -1,0 +1,41 @@
+# --- dependencies ---
+node_modules/
+
+# --- secrets / local environment ---
+# Real credentials never belong in the repo. .env.example documents the
+# required variables instead.
+.env
+.env.*
+!.env.example
+
+# --- local database ---
+# SQLite dev database: contains seeded accounts and password hashes.
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# --- build output ---
+dist/
+build/
+
+# --- prisma generated client ---
+.prisma/
+
+# --- logs / diagnostics ---
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- editor / OS noise ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# --- misc ---
+coverage/
+*.bak
+*.tmp

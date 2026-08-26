@@ -1,0 +1,117 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Team {
+  id      Int      @id @default(autoincrement())
+  key     String   @unique
+  name    String
+  agents  Agent[]
+  tickets Ticket[]
+}
+
+model Agent {
+  id              Int       @id @default(autoincrement())
+  name            String
+  email           String    @unique
+  passwordHash    String?
+  role            String    @default("agent") // "agent" | "admin"
+  isActive        Boolean   @default(true)
+  teamId          Int?
+  team            Team?     @relation(fields: [teamId], references: [id])
+  skillLevel      Int       @default(1) // 1 = junior, 2 = standard, 3 = senior
+  lastAssignedAt  DateTime?
+  createdAt       DateTime  @default(now())
+  assignedTickets Ticket[]
+  comments        Comment[]
+}
+
+// Sequence counter backing human-readable ticket numbers (INC-000001).
+// year = 0 row is the global counter for the current numbering scheme.
+model TicketSequence {
+  year Int  @id
+  last Int  @default(0)
+}
+
+model Ticket {
+  id                  Int              @id @default(autoincrement())
+  ticketNumber        String           @unique // e.g. HD-2026-000042
+  shortDescription    String
+  body                String           @default("")
+  category            String           @default("Inquiry / Help")
+  priority            String           @default("medium")
+  state               String           @default("NEW")
+  source              String           @default("email") // "email" | "portal"
+  resolution          String?
+  requesterEmail      String
+  requesterName       String?
+  graphMessageId      String?          @unique
+  graphConversationId String?
+  teamId              Int?
+  team                Team?            @relation(fields: [teamId], references: [id])
+  assignedAgentId     Int?
+  assignedAgent       Agent?           @relation(fields: [assignedAgentId], references: [id])
+  dueAt               DateTime?
+  resolvedAt          DateTime?
+  closedAt            DateTime?
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+  auditLogs           TicketAuditLog[]
+  comments            Comment[]
+
+  @@index([state])
+  @@index([graphConversationId])
+  @@index([dueAt])
+}
+
+model TicketAuditLog {
+  id        Int      @id @default(autoincrement())
+  ticketId  Int
+  ticket    Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  fromState String?
+  toState   String
+  actor     String   @default("system")
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@index([ticketId])
+}
+
+model Comment {
+  id           Int      @id @default(autoincrement())
+  ticketId     Int
+  ticket       Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorAgentId Int?
+  authorAgent  Agent?   @relation(fields: [authorAgentId], references: [id])
+  authorName   String   @default("")
+  authorEmail  String   @default("")
+  isRequester Boolean  @default(false)
+  isInternal  Boolean  @default(false)
+  viaEmail    Boolean  @default(false)
+  body        String
+  // Set for activities created from an inbound Graph/email message. Unique so a
+  // redelivered notification can never append the same reply twice.
+  graphMessageId String? @unique
+  createdAt   DateTime @default(now())
+
+  @@index([ticketId])
+}
+
+// Microsoft Graph change-notification subscription state. Persisted so a
+// restart reuses (and renews) the live subscription instead of orphaning it.
+model GraphSubscription {
+  id                 Int      @id @default(autoincrement())
+  subscriptionId     String   @unique
+  resource           String
+  notificationUrl    String
+  clientState        String
+  expirationDateTime DateTime
+  lastRenewedAt      DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}

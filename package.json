@@ -1,0 +1,15 @@
+{
+  "name": "ticketing-system",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Full-stack ticketing system: Express API + React client",
+  "scripts": {
+    "install-all": "npm install && npm install --prefix server && npm install --prefix client",
+    "dev": "concurrently -k -n api,ui -c blue,green \"npm:server\" \"npm:client\"",
+    "server": "npm run dev --prefix server",
+    "client": "npm run dev --prefix client"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
