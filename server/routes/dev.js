@@ -12,7 +12,12 @@ const {
   tryParseEmail,
   extractTicketNumberFromSubject,
   stripReplyPrefixes,
+  EmailParseError,
 } = require('../src/email/emailParser');
+const {
+  ingestNormalizedEmail,
+  IntakeValidationError,
+} = require('../src/services/emailIngestion');
 
 const router = express.Router();
 
@@ -94,6 +99,114 @@ router.get('/email/ticket-number', (req, res) => {
     subject,
     withoutReplyPrefix: stripReplyPrefixes(subject),
     ticketNumber: extractTicketNumberFromSubject(subject),
+  });
+});
+
+/**
+ * POST /api/dev/email/ingest
+ *
+ * Same request body as /email/parse, but the parsed email continues into the
+ * existing ticket pipeline:
+ *
+ *   parse -> dedupe by messageId -> new ticket or reply activity
+ *   -> classification -> assignment group -> agent -> audit log
+ *
+ * No ticket logic lives here: this handler validates, delegates, and shapes
+ * the response. Everything else is intakeEmailMessage() and the assignment
+ * engine, unchanged.
+ */
+router.post('/email/ingest', async (req, res) => {
+  // 1) Parse + validate the raw email.
+  let email;
+  try {
+    email = parseEmail(req.body);
+  } catch (err) {
+    if (err instanceof EmailParseError) {
+      return res.status(400).json({ error: 'Could not parse email', errors: err.errors });
+    }
+    throw err;
+  }
+
+  // 2) Hand the normalized email to the existing pipeline.
+  let outcome;
+  try {
+    outcome = await ingestNormalizedEmail(email, { logger: console });
+  } catch (err) {
+    if (err instanceof IntakeValidationError) {
+      // Parsed fine, but cannot become a ticket (e.g. no subject).
+      return res.status(422).json({
+        error: 'Email could not be turned into a ticket',
+        errors: err.errors,
+        parsed: email,
+      });
+    }
+    console.error(`[dev-ingest] ingestion failed for ${email.messageId}: ${err.message}`);
+    return res.status(500).json({ error: 'Ingestion failed', message: err.message });
+  }
+
+  const { status, ticket, comment, assignment, attachments } = outcome;
+
+  // 3) Describe what happened, without re-deriving any of it.
+  const httpStatus = status === 'created' ? 201 : 200;
+
+  res.status(httpStatus).json({
+    status,
+    // "created" -> brand new ticket; "comment_added"/"reopened" -> activity on
+    // an existing ticket; "duplicate" -> this messageId was already processed.
+    duplicate: status === 'duplicate',
+    parsed: email,
+    ticket: ticket
+      ? {
+          id: ticket.id,
+          ticketNumber: ticket.ticketNumber,
+          shortDescription: ticket.shortDescription,
+          category: ticket.category,
+          priority: ticket.priority,
+          state: ticket.state,
+          requesterEmail: ticket.requesterEmail,
+          requesterName: ticket.requesterName,
+          graphMessageId: ticket.graphMessageId,
+          graphConversationId: ticket.graphConversationId,
+          teamId: ticket.teamId,
+          team: ticket.team ? { id: ticket.team.id, key: ticket.team.key, name: ticket.team.name } : null,
+          assignedAgentId: ticket.assignedAgentId,
+          assignedAgent: ticket.assignedAgent
+            ? {
+                id: ticket.assignedAgent.id,
+                name: ticket.assignedAgent.name,
+                email: ticket.assignedAgent.email,
+                skillLevel: ticket.assignedAgent.skillLevel,
+              }
+            : null,
+          dueAt: ticket.dueAt,
+          createdAt: ticket.createdAt,
+        }
+      : null,
+    activity: comment
+      ? {
+          id: comment.id,
+          ticketId: comment.ticketId,
+          authorName: comment.authorName,
+          authorEmail: comment.authorEmail,
+          isRequester: comment.isRequester,
+          viaEmail: comment.viaEmail,
+          graphMessageId: comment.graphMessageId,
+          body: comment.body,
+          createdAt: comment.createdAt,
+        }
+      : null,
+    assignment: assignment
+      ? {
+          group: assignment.groupName,
+          groupKey: assignment.groupKey,
+          minSkillLevel: assignment.minSkillLevel,
+          assignedAgentId: assignment.agent ? assignment.agent.id : null,
+          awaitingAssignment: assignment.awaitingAssignment,
+          reason: assignment.reason,
+        }
+      : null,
+    // Carried through from the parser; nothing is stored yet.
+    attachments,
   });
 });
 

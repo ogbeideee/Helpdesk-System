@@ -160,11 +160,14 @@ Email Provider Adapter        (provider-specific -> RawEmailInput)
         v
 Email Parser                  (RawEmailInput -> NormalizedEmail)
         v
+Email Ingestion               (src/services/emailIngestion.js - field mapping)
+        v
 Ticket Creation Service       (src/services/ticketIntake.js)
+   dedupe -> thread match -> classify -> number -> route
         v
 Assignment Engine
         v
-Ticket
+Ticket  (or an activity on an existing ticket)
 ```
 
 | File | Role |
@@ -173,6 +176,7 @@ Ticket
 | `src/email/emailParser.js` | `parseEmail()` / `tryParseEmail()` - raw email -> normalized |
 | `src/email/htmlToText.js` | Deterministic HTML -> readable plain text |
 | `src/email/subjectUtils.js` | Ticket-number and reply-prefix helpers |
+| `src/services/emailIngestion.js` | Maps `NormalizedEmail` onto the intake payload |
 
 The parser is a pure function: no clock beyond a `receivedAt` fallback, no
 network, no database, no LLM. It does **not** classify, prioritise, assign,
@@ -227,8 +231,67 @@ curl -s -X POST http://localhost:4000/api/dev/email/parse \
 Also available: `POST /api/dev/email/parse-batch` and
 `GET /api/dev/email/ticket-number?subject=...`.
 
-Run the parser tests with `npm run test:parser` (from `server/`) - 104 checks,
-no credentials required.
+### Ingestion endpoint
+
+`POST /api/dev/email/ingest` takes the **same body** as `/email/parse`, but the
+normalized email continues into the existing ticket pipeline:
+
+```text
+parse -> dedupe by messageId -> new ticket OR reply activity
+      -> classification -> assignment group -> agent -> audit log
+```
+
+No ticket logic lives in the route or in `emailIngestion.js` - they only
+translate field names and delegate to `intakeEmailMessage()`. Classification,
+ticket numbering, routing, assignment, reopening and audit are untouched.
+
+Field mapping for a new ticket:
+
+| Normalized email | Ticket |
+|---|---|
+| `subject` | `shortDescription` |
+| `body` | `body` |
+| `senderEmail` | `requesterEmail` |
+| `senderName` | `requesterName` |
+| `messageId` | `graphMessageId` |
+| `conversationId` | `graphConversationId` |
+
+Response `status` is one of:
+
+| status | meaning |
+|---|---|
+| `created` | new ticket (HTTP 201) |
+| `comment_added` | activity added to an existing ticket |
+| `reopened` | requester replied to a RESOLVED/CLOSED ticket |
+| `duplicate` | this `messageId` was already processed - nothing changed |
+
+**Reply detection** (performed by intake, not the parser): a ticket number in
+the subject or body wins first; otherwise a matching `conversationId` **from the
+same requester** threads the email onto that ticket. A different sender on the
+same conversation gets their own ticket.
+
+**Idempotency** comes from the unique `graphMessageId` on both `Ticket` and
+`Comment`, so replaying a message creates neither a second ticket nor a second
+activity.
+
+Attachment metadata is returned with the response but not yet persisted.
+
+```bash
+curl -s -X POST http://localhost:4000/api/dev/email/ingest \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messageId": "demo-1",
+    "conversationId": "demo-conv-1",
+    "from": { "name": "John Doe", "email": "john.doe@company.com" },
+    "subject": "Cannot connect to WiFi",
+    "body": "<p>Hello IT,</p><p>My laptop cannot connect to WiFi.</p>",
+    "bodyType": "html"
+  }'
+```
+
+Run the parser tests with `npm run test:parser` (104 checks) and the ingestion
+tests with `npm run test:ingest` (76 checks), both from `server/`. Neither
+requires credentials.
 
 ## Microsoft 365 / Microsoft Graph
 

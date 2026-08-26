@@ -15,7 +15,8 @@
     "test:e2e": "node scripts/test-e2e.js",
     "test:webhook": "node scripts/test-webhook.js",
     "test:parser": "node scripts/test-email-parser.js",
-    "test": "npm run test:parser && npm run test:graph && npm run test:webhook && npm run test:api && npm run test:e2e"
+    "test:ingest": "node scripts/test-email-ingest.js",
+    "test": "npm run test:parser && npm run test:ingest && npm run test:graph && npm run test:webhook && npm run test:api && npm run test:e2e"
   },
   "dependencies": {
     "@azure/msal-node": "^3.2.0",
