@@ -15,6 +15,10 @@ app.use(express.json());
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/webhooks', require('./routes/webhooks'));
 
+// Development-only tooling (email parser harness). The router itself returns
+// 404 when NODE_ENV=production, and it never creates or stores anything.
+app.use('/api/dev', require('./routes/dev'));
+
 // Authenticated API
 app.use('/api/tickets', require('./src/authMiddleware').requireAuth, require('./routes/tickets'));
 app.use('/api/stats', require('./src/authMiddleware').requireAuth, require('./routes/stats'));
