@@ -23,8 +23,9 @@ async function pollOnce() {
   if (summary.fetched > 0) {
     console.log(
       `[poller] ${summary.fetched} unread message(s): ` +
-        `created=${summary.created}, duplicate=${summary.duplicate}, ` +
-        `skipped=${summary.skipped_self + summary.skipped_reply}, rejected=${summary.rejected}, failed=${summary.failed}`
+        `created=${summary.created}, activity=${summary.comment_added + summary.reopened}, ` +
+        `duplicate=${summary.duplicate}, skipped=${summary.skipped_self}, ` +
+        `rejected=${summary.rejected}, failed=${summary.failed}`
     );
   }
   return summary;

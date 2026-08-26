@@ -126,7 +126,7 @@ async function main() {
       })
     );
     check('normalizes message id + conversation id', n.messageId === 'abc123' && n.conversationId === 'conv-xyz');
-    check('extracts sender address and display name', n.from === 'jane@company.com' && n.name === 'Jane Doe');
+    check('extracts sender address and display name', n.senderEmail === 'jane@company.com' && n.senderName === 'Jane Doe');
     check('trims subject', n.subject === 'My laptop will not start');
     check('converts HTML body to text', n.body.includes('Laptop dead since Monday.') && !/<\w+>/.test(n.body) && n.body.includes('& urgent'));
   }
@@ -184,15 +184,15 @@ async function main() {
   /* ================================================================== */
   {
     let attempt = 0;
-    const flakyIntake = async (payload) => {
-      if (payload.messageId === `${MARK}m-flaky` && attempt === 0) {
+    // The Graph path now hands a NormalizedEmail to the shared ingestion
+    // service, so the injected double receives that shape.
+    const flakyIntake = async (email) => {
+      if (email.messageId === `${MARK}m-flaky` && attempt === 0) {
         attempt += 1;
         throw new Error('transient database hiccup');
       }
       attempt += 1;
-      return require('../src/services/ticketIntake').intakeEmailMessage(payload, {
-        allowThreading: false,
-      });
+      return require('../src/services/emailIngestion').ingestNormalizedEmail(email);
     };
     const ops = makeFakeOps(inbox);
     const { createMailService } = require('../src/graph/mailService');
@@ -242,13 +242,18 @@ async function main() {
 
     const beforeComments = await prisma.comment.count({ where: { ticketId: existing.id } });
     const s = await svc.pollUnread();
-    check('reply with existing [INC-…] subject is skipped', s.skipped_reply === 1, JSON.stringify(s));
-    check('skipped reply creates no comment/thread activity', (await prisma.comment.count({ where: { ticketId: existing.id } })) === beforeComments);
+    // Reply handling is live now: a [INC-…] subject threads the mail onto the
+    // existing ticket as an activity instead of being skipped.
+    check('reply with existing [INC-…] subject becomes an activity', s.comment_added === 1, JSON.stringify(s));
+    check(
+      'reply appended exactly one comment to the ticket',
+      (await prisma.comment.count({ where: { ticketId: existing.id } })) === beforeComments + 1
+    );
     check(
       'no new ticket from the reply',
       (await prisma.ticket.count({ where: { graphMessageId: `${MARK}m-reply-tagged` } })) === 0
     );
-    check('skipped reply still marked read so it is not re-fetched', ops.calls.markAsRead.includes(`${MARK}m-reply-tagged`));
+    check('reply marked read so it is not re-fetched', ops.calls.markAsRead.includes(`${MARK}m-reply-tagged`));
 
     // A reference to a NON-existing ticket number is treated as new email.
     inbox.push(

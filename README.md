@@ -295,11 +295,103 @@ requires credentials.
 
 ## Microsoft 365 / Microsoft Graph
 
-Register an Entra ID app with application permissions `Mail.ReadWrite` +
-`Mail.Send`, then fill `GRAPH_TENANT_ID`, `GRAPH_CLIENT_ID`,
-`GRAPH_CLIENT_SECRET`, `GRAPH_SHARED_MAILBOX`, `GRAPH_BROADCAST_DL` in
-`server/.env`. Missing credentials are never fatal — the API, frontend and
-simulated-email endpoint keep working with Graph off.
+The monitored mailbox is the Microsoft 365 **shared mailbox**
+`ithelpdesk@mrsholdings.com`. The application only ever reads that mailbox -
+never individual employee mailboxes.
+
+Register an Entra ID app with **application** permissions `Mail.ReadWrite` +
+`Mail.Send` (admin consent granted), then fill `GRAPH_TENANT_ID`,
+`GRAPH_CLIENT_ID`, `GRAPH_CLIENT_SECRET`, `GRAPH_SHARED_MAILBOX` and
+`GRAPH_BROADCAST_DL` in `server/.env`. Missing credentials are never fatal -
+the API, dashboard and simulated-email endpoints keep working with Graph off,
+and the server logs `Microsoft Graph integration disabled`.
+
+Authentication is MSAL client-credentials with token caching; tokens are
+renewed before expiry and re-acquired on a 401. Secrets and tokens are never
+logged and never reach the frontend.
+
+### Graph adapter
+
+```text
+Microsoft Graph (shared mailbox)
+      v
+Graph Email Adapter      src/graph/graphMailAdapter.js  (Graph shape -> RawEmailInput)
+      v
+Email Parser             src/email/emailParser.js
+      v
+Ticket Ingestion         src/services/emailIngestion.js -> ticketIntake.js
+      v
+Ticket / Activity  ->  Assignment Engine
+```
+
+The adapter only translates Graph's vocabulary into the shared normalized
+model. It performs no classification, no assignment, no ticket creation and
+makes no reply-vs-new decision - tests assert this. Graph mail and simulated
+mail therefore travel exactly the same path.
+
+### Safe connectivity check
+
+Before enabling ingestion, verify the connection **without creating anything**:
+
+```bash
+cd server
+npm run graph:check                 # 5 newest unread, inside the age window
+npm run graph:check -- --limit 3
+npm run graph:check -- --all        # ignore the age cutoff
+```
+
+It authenticates, resolves the shared mailbox, parses a few messages and prints
+safe metadata (sender, subject, body length, a short excerpt, attachment
+metadata). It never creates tickets, never marks anything read, and never
+prints a token, secret or complete body. It is a command rather than an HTTP
+route on purpose - mailbox contents are never exposed through an API endpoint.
+
+### Ingestion safety
+
+Switching the integration on must not convert an existing inbox into hundreds
+of tickets, so ingestion is bounded by default:
+
+| Variable | Default | Effect |
+|---|---|---|
+| `GRAPH_INGEST_MAX_AGE_HOURS` | `24` | only mail newer than this is ingested; `0` disables the limit |
+| `GRAPH_INGEST_SINCE` | *(unset)* | absolute ISO cutoff; wins over the rolling window |
+| `GRAPH_POLL_BATCH_SIZE` | `25` | messages fetched per cycle (max 100) |
+| `GRAPH_DRY_RUN` | `false` | `true` = authenticate, read and parse, but never create tickets or mark anything read |
+
+The cutoff is applied **server-side** in the Graph query, so an old backlog is
+never even fetched.
+
+### Polling behaviour
+
+Every `MAIL_POLL_INTERVAL_MS` (default 2 minutes) the poller lists unread inbox
+messages inside the window, fetches attachment metadata when present, parses,
+and hands the normalized email to the shared ingestion service.
+
+A message is marked read **only after a definitive outcome** (ticket created,
+activity added, reopened, duplicate, rejected, or self-addressed). A transient
+failure leaves it unread and logs the reason, so the next cycle retries it.
+
+Read/unread is a delivery concern and never the idempotency mechanism: the
+unique `graphMessageId` on `Ticket` and `Comment` is what guarantees one email
+can never produce two tickets, two activities, or duplicate notifications -
+even if the mailbox reports it unread again.
+
+Typical cycle:
+
+```text
+[graph] Found 2 unread message(s)
+[graph] Processing message AAMkAGI1...
+[email] Parsed message from john.doe@mrsholdings.com (html, 1 attachment(s))
+[ticket] Created INC-000459
+[assignment] Assigned INC-000459 to Lena Fischer
+[graph] Marked message as read (ticket created)
+```
+
+Attachments are captured as metadata only - filename, content type, size and
+the Graph attachment id used as a future content reference. Nothing is
+downloaded or stored; attachment storage is a separate decision.
+
+
 
 ### Two ingestion mechanisms, one pipeline
 

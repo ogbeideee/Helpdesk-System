@@ -170,9 +170,10 @@ function createWebhookProcessor(options = {}) {
     const summary = {
       received: list.length,
       created: 0,
+      comment_added: 0,
+      reopened: 0,
       duplicate: 0,
       skipped_self: 0,
-      skipped_reply: 0,
       rejected: 0,
       failed: 0,
       invalid: 0,

@@ -13,6 +13,29 @@ function readGraphEnv() {
     tenantId && clientId && clientSecret && sharedMailbox
   );
 
+  // --- Ingestion safety guards ----------------------------------------
+  // Protects a real mailbox from being turned into hundreds of tickets the
+  // first time the integration is switched on.
+  //   GRAPH_INGEST_SINCE          absolute ISO cutoff (wins when set)
+  //   GRAPH_INGEST_MAX_AGE_HOURS  relative cutoff, default 24h
+  //   GRAPH_POLL_BATCH_SIZE       messages fetched per cycle, default 25
+  //   GRAPH_DRY_RUN               parse and log, never create tickets
+  const ingestSinceRaw = String(process.env.GRAPH_INGEST_SINCE || '').trim();
+  const ingestSince =
+    ingestSinceRaw && !Number.isNaN(Date.parse(ingestSinceRaw))
+      ? new Date(ingestSinceRaw)
+      : null;
+  const ingestMaxAgeHours =
+    process.env.GRAPH_INGEST_MAX_AGE_HOURS === ''
+      ? 24
+      : Number(process.env.GRAPH_INGEST_MAX_AGE_HOURS) >= 0
+        ? Number(process.env.GRAPH_INGEST_MAX_AGE_HOURS)
+        : 24;
+  const pollBatchSize = Number(process.env.GRAPH_POLL_BATCH_SIZE) > 0
+    ? Math.min(Number(process.env.GRAPH_POLL_BATCH_SIZE), 100)
+    : 25;
+  const dryRun = String(process.env.GRAPH_DRY_RUN || '').toLowerCase() === 'true';
+
   // --- Change notifications (webhook) ---------------------------------
   // Entirely optional. Without WEBHOOK_PUBLIC_URL the app keeps running and
   // ingestion falls back to polling, which is the local-development default.
@@ -36,6 +59,10 @@ function readGraphEnv() {
     broadcastDl,
     pollIntervalMs,
     enabled,
+    ingestSince,
+    ingestMaxAgeHours,
+    pollBatchSize,
+    dryRun,
     webhookPublicUrl: webhookBase,
     webhookIsHttps,
     notificationUrl,
@@ -62,6 +89,10 @@ function logGraphStatus(logger) {
     if (!graphConfig.broadcastDl) {
       logger('[graph] GRAPH_BROADCAST_DL not set — team broadcast emails will be skipped');
     }
+    logger(
+      `[graph] ingest guard: ${describeCutoff()} · batch ${graphConfig.pollBatchSize}` +
+        (graphConfig.dryRun ? ' · DRY RUN (no tickets will be created)' : '')
+    );
     logWebhookStatus(logger);
   } else {
     logger('Microsoft Graph integration disabled.');
@@ -97,4 +128,29 @@ function logWebhookStatus(logger) {
   }
 }
 
-module.exports = { graphConfig, logGraphStatus, logWebhookStatus, WEBHOOK_PATH };
+/**
+ * The point in time before which unread mail is ignored.
+ * Absolute cutoff wins; otherwise a rolling window; 0 hours disables the guard.
+ */
+function ingestCutoff(now = Date.now()) {
+  if (graphConfig.ingestSince) return graphConfig.ingestSince;
+  if (!graphConfig.ingestMaxAgeHours) return null; // explicitly disabled
+  return new Date(now - graphConfig.ingestMaxAgeHours * 3600 * 1000);
+}
+
+function describeCutoff() {
+  if (graphConfig.ingestSince) {
+    return `only mail received after ${graphConfig.ingestSince.toISOString()}`;
+  }
+  if (!graphConfig.ingestMaxAgeHours) return 'no age limit (all unread mail)';
+  return `only mail newer than ${graphConfig.ingestMaxAgeHours}h`;
+}
+
+module.exports = {
+  graphConfig,
+  logGraphStatus,
+  logWebhookStatus,
+  ingestCutoff,
+  describeCutoff,
+  WEBHOOK_PATH,
+};

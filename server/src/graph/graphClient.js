@@ -35,7 +35,7 @@ function mailboxPath(suffix = '') {
 }
 
 const MESSAGE_FIELDS =
-  'id,subject,bodyPreview,body,from,conversationId,receivedDateTime,isRead,webLink';
+  'id,subject,bodyPreview,body,from,conversationId,receivedDateTime,isRead,webLink,hasAttachments';
 
 async function getMessage(messageId) {
   return withTokenRetry(() =>
@@ -46,17 +46,66 @@ async function getMessage(messageId) {
   );
 }
 
-async function listUnreadMessages(top = 25) {
+/**
+ * Unread inbox messages, newest first.
+ *
+ * `since` is applied server-side so an old backlog is never even fetched —
+ * the development-safety guard against turning hundreds of existing mails
+ * into tickets.
+ *
+ * @param {number} top   maximum messages to return
+ * @param {{ since?: Date|string|null }} [options]
+ */
+async function listUnreadMessages(top = 25, options = {}) {
+  const filters = ['isRead eq false'];
+  if (options.since) {
+    const since =
+      options.since instanceof Date ? options.since : new Date(options.since);
+    if (!Number.isNaN(since.getTime())) {
+      filters.push(`receivedDateTime ge ${since.toISOString()}`);
+    }
+  }
+
   const res = await withTokenRetry(() =>
     getClient()
       .api(mailboxPath("/mailFolders('inbox')/messages"))
-      .filter('isRead eq false')
+      .filter(filters.join(' and '))
       .orderby('receivedDateTime desc')
       .top(top)
       .select(MESSAGE_FIELDS)
       .get()
   );
   return res.value || [];
+}
+
+/**
+ * Attachment metadata for one message.
+ * Only the metadata fields are selected — content bytes are never requested,
+ * because attachment storage is a separate, later decision.
+ */
+async function listAttachments(messageId) {
+  const res = await withTokenRetry(() =>
+    getClient()
+      .api(mailboxPath(`/messages/${encodeURIComponent(messageId)}/attachments`))
+      .select('id,name,contentType,size,isInline')
+      .get()
+  );
+  return res.value || [];
+}
+
+/**
+ * Confirm the shared mailbox is reachable with the current credentials.
+ * Returns identifying detail only — never a token or secret.
+ */
+async function getMailboxProfile() {
+  const res = await withTokenRetry(() =>
+    getClient().api(mailboxPath()).select('id,displayName,mail,userPrincipalName').get()
+  );
+  return {
+    id: res.id || null,
+    displayName: res.displayName || null,
+    mail: res.mail || res.userPrincipalName || null,
+  };
 }
 
 async function markAsRead(messageId) {
@@ -131,6 +180,8 @@ async function deleteSubscription(subscriptionId) {
 const graphOps = {
   getMessage,
   listUnreadMessages,
+  listAttachments,
+  getMailboxProfile,
   markAsRead,
   sendMail,
   sendBroadcastMail,
