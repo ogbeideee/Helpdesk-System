@@ -459,7 +459,7 @@ async function seed(count) {
     let assignment = null;
     if (wantsAssignment) {
       assignment = await assignmentEngine.assign(
-        { category: classifiedCategory, priority },
+        { category: classifiedCategory, priority, text: subject },
         prisma,
         { warn: () => {}, log: () => {} }
       );

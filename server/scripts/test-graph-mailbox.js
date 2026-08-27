@@ -405,7 +405,24 @@ async function main() {
   /* ================================================================== */
   let baseTicket;
   {
+    // Earlier sections have given this agent tickets, so priming
+    // lastAssignedAt is not enough to make the pick deterministic. Park the
+    // other accounts agents for this section instead, then restore them.
     await primeRoundRobin();
+    const parked = await prisma.agent.findMany({
+      where: { teamId: accounts.id, id: { not: agent.id }, isAvailable: true },
+      select: { id: true },
+    });
+    await prisma.agent.updateMany({
+      where: { id: { in: parked.map((x) => x.id) } },
+      data: { isAvailable: false },
+    });
+    const restoreParked = () =>
+      prisma.agent.updateMany({
+        where: { id: { in: parked.map((x) => x.id) } },
+        data: { isAvailable: true },
+      });
+
     const msg = graphMessage({
       id: `${MARK}new-1`,
       from: ['Olivia Stone', `olivia2@${DOMAIN}`],
@@ -437,6 +454,8 @@ async function main() {
     // 12. marked read only after success
     check('read-marking: message marked read after success', ops.calls.markAsRead.includes(`${MARK}new-1`));
     check('read-marking: mailbox reflects it', msg.isRead === true);
+
+    await restoreParked();
   }
 
   /* ================================================================== */

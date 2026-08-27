@@ -24,6 +24,7 @@ app.use('/api/tickets', require('./src/authMiddleware').requireAuth, require('./
 app.use('/api/stats', require('./src/authMiddleware').requireAuth, require('./routes/stats'));
 app.use('/api/dashboard', require('./src/authMiddleware').requireAuth, require('./routes/dashboard'));
 app.use('/api/agents', require('./routes/agents'));
+app.use('/api/routing', require('./routes/routing'));
 
 // Reference data for the client — read-only, authenticated.
 app.get('/api/teams', require('./src/authMiddleware').requireAuth, async (req, res) => {
@@ -161,6 +162,12 @@ const server = app.listen(PORT, () => {
       }
     })
     .catch((err) => console.error(`[users] administrator bootstrap failed: ${err.message}`));
+
+  // Starter routing rules, seeded only when none exist. Administrator edits
+  // are never overwritten.
+  require('./src/services/defaultRoutingRules')
+    .ensureDefaultRoutingRules({ logger: console })
+    .catch((err) => console.error(`[routing] default rule seeding failed: ${err.message}`));
 
   require('./src/graph/poller').startPolling();
 

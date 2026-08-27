@@ -7,6 +7,7 @@ import TicketsPage from './components/TicketsPage.jsx';
 import TicketDetail from './components/TicketDetail.jsx';
 import TicketForm from './components/TicketForm.jsx';
 import AgentsPage from './components/AgentsPage.jsx';
+import RoutingPage from './components/RoutingPage.jsx';
 import GroupsPage from './components/GroupsPage.jsx';
 import SimulateEmailPage from './components/SimulateEmailPage.jsx';
 
@@ -51,7 +52,10 @@ export default function App() {
     { path: '/', label: 'Dashboard', icon: '▤' },
     { path: '/tickets', label: 'Tickets', icon: '🎫' },
     ...(isAdmin
-      ? [{ path: '/agents', label: 'Agents', icon: '👤' }]
+      ? [
+          { path: '/agents', label: 'Agents', icon: '👤' },
+          { path: '/routing', label: 'Routing Rules', icon: '⇄' },
+        ]
       : []),
     { path: '/groups', label: 'Assignment Groups', icon: '⛁' },
     ...(EMAIL_SIMULATOR_ENABLED
@@ -86,6 +90,9 @@ export default function App() {
       break;
     case 'agents':
       content = isAdmin ? <AgentsPage me={me} /> : <Denied />;
+      break;
+    case 'routing':
+      content = isAdmin ? <RoutingPage /> : <Denied />;
       break;
     case 'groups':
       content = <GroupsPage />;
@@ -173,6 +180,7 @@ function parseHash() {
     case '/tickets': return { name: 'list', path: '/tickets' };
     case '/tickets/new': return { name: 'new', path: '/tickets' };
     case '/agents': return { name: 'agents', path: '/agents' };
+    case '/routing': return { name: 'routing', path: '/routing' };
     case '/groups': return { name: 'groups', path: '/groups' };
     case '/simulate-email': return { name: 'simulate-email', path: '/simulate-email' };
     default: return { name: 'dashboard', path: '/' };

@@ -19,8 +19,9 @@
     "test:mailbox": "node scripts/test-graph-mailbox.js",
     "test:lifecycle": "node scripts/test-lifecycle.js",
     "test:users": "node scripts/test-users.js",
+    "test:routing": "node scripts/test-routing.js",
     "graph:check": "node scripts/graph-check.js",
-    "test": "npm run test:parser && npm run test:ingest && npm run test:mailbox && npm run test:graph && npm run test:webhook && npm run test:api && npm run test:lifecycle && npm run test:users && npm run test:e2e"
+    "test": "npm run test:parser && npm run test:ingest && npm run test:mailbox && npm run test:graph && npm run test:webhook && npm run test:api && npm run test:lifecycle && npm run test:users && npm run test:routing && npm run test:e2e"
   },
   "dependencies": {
     "@azure/msal-node": "^3.2.0",

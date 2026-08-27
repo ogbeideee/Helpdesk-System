@@ -272,7 +272,11 @@ async function main() {
     check('simulated ticket classified as Hardware', fromEmail.data.ticket.category === 'Hardware', fromEmail.data.ticket.category);
     check('simulated ticket priority MODERATE', fromEmail.data.ticket.priority === 'moderate');
     check('simulated ticket state NEW + numbered', fromEmail.data.ticket.state === 'NEW' && /^INC-\d{6}$/.test(fromEmail.data.ticket.ticketNumber));
-    check('simulated ticket routed to Hardware group', fromEmail.data.assignment.groupKey === 'hardware' || fromEmail.data.ticket.team?.key === 'hardware');
+    check(
+      'simulated WiFi ticket routed to the Network Team by the routing rules',
+      fromEmail.data.assignment.groupKey === 'network' || fromEmail.data.ticket.team?.key === 'network',
+      JSON.stringify(fromEmail.data.assignment)
+    );
     check('engine assigned available hardware agent', fromEmail.data.assignment.assignedAgentId !== null && fromEmail.data.assignment.awaitingAssignment === false, JSON.stringify(fromEmail.data.assignment));
 
     const dupe = await req('/api/tickets/from-email', { method: 'POST', token: agentToken, body: wifiEmail });
@@ -285,13 +289,45 @@ async function main() {
       wifiDetail.data.auditLogs.some((l) => l.actor === 'system' && l.note && l.note.includes('assigned'))
     );
 
-    // --- awaiting-assignment path -----------------------------------------------------
+    // --- cross-team fallback + awaiting-assignment path -------------------------------
     const hwTeam = groups.data.find((g) => g.key === 'hardware');
-    // Deactivate all active hardware agents temporarily.
     const agentsList = await req('/api/agents', { token: adminToken });
     const hwAgents = agentsList.data.agents.filter((a) => a.teamId === hwTeam.id && a.isActive);
+
+    // Stage 1: nobody in the target group, but staff elsewhere. The ticket
+    // keeps its assignment group and is worked by somebody from another team.
     for (const a of hwAgents) {
-      await req(`/api/agents/${a.id}`, { method: 'PATCH', token: adminToken, body: { isActive: false } });
+      await req(`/api/agents/${a.id}`, { method: 'PATCH', token: adminToken, body: { isAvailable: false } });
+    }
+
+    const crossTeam = await req('/api/tickets/from-email', {
+      method: 'POST',
+      token: agentToken,
+      body: {
+        from: 'jane.roe@company.com',
+        subject: `${MARKER} projector HDMI port dead`,
+        body: 'The meeting room projector will not power on.',
+        messageId: 'test-message-orphan-001',
+      },
+    });
+    check(
+      'empty group -> assignment group kept',
+      crossTeam.status === 201 && crossTeam.data.ticket.team?.key === 'hardware',
+      JSON.stringify(crossTeam.data.assignment)
+    );
+    check(
+      'empty group -> worked by an agent from another team',
+      crossTeam.data.ticket.assignedAgentId !== null &&
+        !hwAgents.some((a) => a.id === crossTeam.data.ticket.assignedAgentId),
+      JSON.stringify(crossTeam.data.assignment)
+    );
+
+    // Stage 2: nobody anywhere. Only now is the ticket left unassigned.
+    // Admins hold tickets too, so they must be parked as well. Availability is
+    // separate from account status, so this does not affect signing in.
+    const everyone = agentsList.data.agents.filter((a) => a.isActive);
+    for (const a of everyone) {
+      await req(`/api/agents/${a.id}`, { method: 'PATCH', token: adminToken, body: { isAvailable: false } });
     }
 
     const orphan = await req('/api/tickets/from-email', {
@@ -299,17 +335,17 @@ async function main() {
       token: agentToken,
       body: {
         from: 'jane.roe@company.com',
-        subject: `${MARKER} projector HDMI port dead`,
-        body: 'No signal on any cable.',
-        messageId: 'test-message-orphan-001',
+        subject: `${MARKER} second projector also dead`,
+        body: 'The backup projector will not power on either.',
+        messageId: 'test-message-orphan-002',
       },
     });
     check(
-      'no available agent -> group kept, awaiting assignment, creation succeeds',
+      'nobody available anywhere -> group kept, awaiting assignment, creation succeeds',
       orphan.status === 201 &&
         orphan.data.ticket.assignedAgentId === null &&
         orphan.data.assignment.awaitingAssignment === true &&
-        orphan.data.ticket.team?.key === 'hardware' &&
+        Boolean(orphan.data.ticket.team) &&
         orphan.data.ticket.awaitingAssignment === true,
       JSON.stringify(orphan.data.assignment)
     );
@@ -318,14 +354,17 @@ async function main() {
       orphan.data.ticket.auditLogs.some((l) => l.note && l.note.toLowerCase().includes('awaiting'))
     );
 
-    // Restore hardware agents.
+    // Restore everyone.
+    for (const a of everyone) {
+      await req(`/api/agents/${a.id}`, { method: 'PATCH', token: adminToken, body: { isAvailable: true } });
+    }
     for (const a of hwAgents) {
-      await req(`/api/agents/${a.id}`, { method: 'PATCH', token: adminToken, body: { isActive: true } });
+      await req(`/api/agents/${a.id}`, { method: 'PATCH', token: adminToken, body: { isAvailable: true } });
     }
     const restoredList = await req('/api/agents', { token: adminToken });
     check(
-      'agents reactivated after scenario',
-      restoredList.data.agents.filter((a) => a.teamId === hwTeam.id).every((a) => a.isActive)
+      'agents made available again after the scenario',
+      restoredList.data.agents.filter((a) => a.teamId === hwTeam.id).every((a) => a.isAvailable)
     );
 
     // --- filters -------------------------------------------------------------------

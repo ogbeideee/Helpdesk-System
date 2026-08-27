@@ -201,26 +201,34 @@ router.post('/', async (req, res) => {
     // Assignment engine decides group + best agent (unless autoAssign disabled).
     let assignment = null;
     if (req.body.autoAssign !== false) {
-      assignment = await assignmentEngine.assign({ category, priority });
+      assignment = await assignmentEngine.assign({
+        category,
+        priority,
+        text: `${shortDescription}
+${body || ''}`,
+      });
     }
 
     const created = await prisma.$transaction(async (tx) => {
       const ticketNumber = await nextTicketNumber(tx);
       let teamId = null;
       if (assignment) {
-        teamId = assignment.groupName
-          ? (await tx.team.findUnique({ where: { key: assignment.groupKey } }))?.id ?? null
-          : null;
+        teamId = assignment.teamId ?? null;
       } else if (req.body.assignmentGroup) {
         teamId =
           (await tx.team.findUnique({ where: { key: String(req.body.assignmentGroup) } }))?.id ?? null;
       }
 
+      const ruleNote = assignment && assignment.ruleName
+        ? `rule "${assignment.ruleName}"`
+        : 'no routing rule matched — default group';
       const auditNote = !assignment
         ? `Created via portal by ${actorLabel(req.agent)}`
         : assignment.agent
-          ? `Auto-routed to ${assignment.groupName}, assigned to ${assignment.agent.name}: ${assignment.reason}`
-          : `Routed to ${assignment.groupName || 'triage'} — awaiting assignment (${assignment.reason})`;
+          ? `Auto-routed to ${assignment.groupName} via ${ruleNote}, assigned to ${assignment.agent.name}` +
+            (assignment.crossTeam ? ' from another team (group unchanged)' : '') +
+            `: ${assignment.reason}`
+          : `Routed to ${assignment.groupName || 'triage'} via ${ruleNote} — awaiting assignment (${assignment.reason})`;
 
       return tx.ticket.create({
         data: {
@@ -234,6 +242,8 @@ router.post('/', async (req, res) => {
           requesterEmail,
           requesterName: req.body.requesterName ? String(req.body.requesterName).trim() : null,
           teamId,
+          // Permanent record of where the ticket first landed.
+          originatingTeamId: teamId,
           assignedAgentId: assignment && assignment.agent ? assignment.agent.id : null,
           dueAt: computeDueAt(priority),
           auditLogs: {
@@ -775,7 +785,15 @@ async function patchTicket(req, res) {
           data.assignedAgentId === null || (!existing.assignedAgentId && data.assignedAgentId === undefined);
         if (wantsAuto && willBeUnassigned && isOpenState(existing.state)) {
           const decision = await assignmentEngine.assign(
-            { category: existing.category, priority: existing.priority },
+            {
+              category: existing.category,
+              priority: existing.priority,
+              text: `${existing.shortDescription}
+${existing.body || ''}`,
+              // Pin the group the admin just chose: routing rules must not
+              // move the ticket somewhere else behind their back.
+              forceTeamId: team.id,
+            },
             prisma,
             { log: () => {}, warn: () => {} }
           );

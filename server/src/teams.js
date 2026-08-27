@@ -1,11 +1,35 @@
 // Team routing + round-robin agent assignment.
 const prisma = require('./lib/prisma');
 
+// Assignment groups (IT teams). `isDefault` marks the group that receives a
+// ticket when no routing rule matches — "General IT Support".
 const TEAM_DEFS = [
-  { key: 'service_desk', name: 'Service Desk' },
-  { key: 'accounts', name: 'Accounts & Access' },
-  { key: 'software', name: 'Software & Applications' },
-  { key: 'hardware', name: 'Hardware & Devices' },
+  {
+    key: 'service_desk',
+    name: 'General IT Support',
+    description: 'First-line support and triage. Receives anything no routing rule claims.',
+    isDefault: true,
+  },
+  {
+    key: 'accounts',
+    name: 'Accounts & Access',
+    description: 'Account lifecycle, passwords, MFA and access requests.',
+  },
+  {
+    key: 'software',
+    name: 'Software & Applications',
+    description: 'Desktop and line-of-business applications, licensing and updates.',
+  },
+  {
+    key: 'hardware',
+    name: 'Hardware & Devices',
+    description: 'Laptops, peripherals, printers and meeting-room equipment.',
+  },
+  {
+    key: 'network',
+    name: 'Network Team',
+    description: 'Connectivity: WiFi, LAN, VPN, routers and firewalls.',
+  },
 ];
 
 // Category -> default owning team.
@@ -24,10 +48,18 @@ function teamKeyForCategory(category) {
 
 async function ensureTeams(client = prisma) {
   for (const def of TEAM_DEFS) {
+    const data = {
+      key: def.key,
+      name: def.name,
+      description: def.description || null,
+      isDefault: Boolean(def.isDefault),
+    };
     await client.team.upsert({
       where: { key: def.key },
-      create: def,
-      update: { name: def.name },
+      create: data,
+      // isActive is deliberately not reset: an admin may have deactivated a
+      // group, and re-running the seed must not silently re-enable it.
+      update: { name: data.name, description: data.description, isDefault: data.isDefault },
     });
   }
 }

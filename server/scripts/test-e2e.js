@@ -121,8 +121,8 @@ async function main() {
     const EMAIL = {
       from: 'jane.user@company.com',
       name: 'Jane User',
-      subject: MARK + 'My laptop is not connecting to WiFi',
-      body: 'I have been unable to connect since this morning.',
+      subject: MARK + 'My laptop screen is cracked',
+      body: 'The display is physically damaged after a drop.',
       messageId: MARK + 'msg-001',
       conversationId: MARK + 'conv-001',
     };
@@ -286,9 +286,12 @@ async function main() {
 
     // ---- no available agent ---------------------------------------------------------
     const agentsAll = (await req('/api/agents', { token: admin.token })).data.agents;
-    const hwActives = agentsAll.filter((a) => a.teamId === t2.teamId && a.isActive);
+    // Everyone, not just this group: with nobody in the group the engine now
+    // falls back across teams, so only a fully parked roster leaves a ticket
+    // awaiting assignment.
+    const hwActives = agentsAll.filter((a) => a.isActive && a.isAvailable);
     for (const a of hwActives) {
-      await req('/api/agents/' + a.id, { method: 'PATCH', token: admin.token, body: { isActive: false } });
+      await req('/api/agents/' + a.id, { method: 'PATCH', token: admin.token, body: { isAvailable: false } });
     }
     const orphanEmail = {
       from: 'mia.user@company.com',
@@ -302,10 +305,10 @@ async function main() {
       orphan.status === 201 &&
         orphan.data.ticket.assignedAgentId === null &&
         orphan.data.assignment.awaitingAssignment === true &&
-        orphan.data.ticket.team.key === 'hardware'
+        Boolean(orphan.data.ticket.team)
     );
     for (const a of hwActives) {
-      await req('/api/agents/' + a.id, { method: 'PATCH', token: admin.token, body: { isActive: true } });
+      await req('/api/agents/' + a.id, { method: 'PATCH', token: admin.token, body: { isAvailable: true } });
     }
 
     // ---- SPA smoke (built frontend served by backend) ----------------------------

@@ -74,6 +74,16 @@ export const api = {
     request(`/tickets/${id}/notes`, body({ body: text, isInternal })),
   simulateEmail: (payload) => request('/tickets/from-email', body(payload)),
 
+  // ---- routing rules (admin) ----
+  routingRules: () => request('/routing/rules'),
+  routingGroups: () => request('/routing/groups'),
+  createRoutingRule: (payload) => request('/routing/rules', body(payload)),
+  updateRoutingRule: (id, payload) => request(`/routing/rules/${id}`, patch(payload)),
+  deleteRoutingRule: (id) => request(`/routing/rules/${id}`, { method: 'DELETE' }),
+  updateAssignmentGroup: (id, payload) => request(`/routing/groups/${id}`, patch(payload)),
+  routingAudit: () => request('/routing/audit'),
+  previewRouting: (payload) => request('/routing/preview', body(payload)),
+
   // ---- agent administration ----
   createAgent: (payload) => request('/agents', body(payload)),
   updateAgent: (id, payload) => request(`/agents/${id}`, patch(payload)),

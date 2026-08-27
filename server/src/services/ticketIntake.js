@@ -193,14 +193,28 @@ async function intakeEmailMessage(payload, { logger = console, allowThreading = 
   const priority = DEFAULT_PRIORITY;
 
   // 2) assignment engine decides group + skill + best agent.
-  const assignment = await assignmentEngine.assign({ category, priority }, prisma, logger);
+  // The routing rules match on the ticket text, so the engine needs it.
+  const assignment = await assignmentEngine.assign(
+    { category, priority, text: `${msg.subject}\n${msg.body}` },
+    prisma,
+    logger
+  );
 
   // 3) create atomically with the ticket-number sequence.
   const ticket = await prisma.$transaction(async (tx) => {
     const ticketNumber = await nextTicketNumber(tx);
+    // The routing decision is part of the ticket's permanent history.
+    const ruleNote = assignment.ruleName
+      ? `rule "${assignment.ruleName}"` +
+        (assignment.matchedKeywords && assignment.matchedKeywords.length
+          ? ` (matched: ${assignment.matchedKeywords.join(', ')})`
+          : '')
+      : 'no routing rule matched — default group';
     const auditNote = assignment.agent
-      ? `Auto-routed to ${assignment.groupName} and assigned to ${assignment.agent.name}: ${assignment.reason}`
-      : `Routed to ${assignment.groupName || 'triage'} — awaiting assignment (${assignment.reason})`;
+      ? `Auto-routed to ${assignment.groupName} via ${ruleNote}; assigned to ${assignment.agent.name}` +
+        (assignment.crossTeam ? ' from another team (group unchanged)' : '') +
+        `: ${assignment.reason}`
+      : `Routed to ${assignment.groupName || 'triage'} via ${ruleNote} — awaiting assignment (${assignment.reason})`;
 
     return tx.ticket.create({
       data: {
@@ -215,9 +229,9 @@ async function intakeEmailMessage(payload, { logger = console, allowThreading = 
         requesterName: msg.requesterName,
         graphMessageId: msg.messageId,
         graphConversationId: msg.conversationId,
-        teamId: assignment.groupName
-          ? (await tx.team.findUnique({ where: { key: assignment.groupKey } }))?.id ?? null
-          : null,
+        teamId: assignment.teamId ?? null,
+        // Recorded once at creation and never changed afterwards.
+        originatingTeamId: assignment.teamId ?? null,
         assignedAgentId: assignment.agent ? assignment.agent.id : null,
         dueAt: computeDueAt(priority),
         auditLogs: {

@@ -7,12 +7,63 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// Assignment group (IT team). "Team" is the historical table name; it is the
+// AssignmentGroup entity the routing rules and tickets refer to.
 model Team {
-  id      Int      @id @default(autoincrement())
-  key     String   @unique
-  name    String
-  agents  Agent[]
-  tickets Ticket[]
+  id          Int      @id @default(autoincrement())
+  key         String   @unique
+  name        String
+  description String?
+  // An inactive group is kept for history but is never a routing target.
+  isActive    Boolean  @default(true)
+  // The fallback group when no routing rule matches (General IT Support).
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+  agents      Agent[]
+  tickets     Ticket[] @relation("TicketCurrentGroup")
+  originated  Ticket[] @relation("TicketOriginGroup")
+  routingRules RoutingRule[]
+}
+
+// Configurable routing rule: keywords + category -> assignment group,
+// optionally a preferred agent and a minimum skill level.
+// Evaluated in `priority` order; see src/services/routingService.js.
+model RoutingRule {
+  id                Int      @id @default(autoincrement())
+  name              String
+  // Newline- or comma-separated keywords. Matching is deterministic and
+  // punctuation/case insensitive (see normaliseKeyword).
+  keywords          String   @default("")
+  // One of the four fixed ticket categories, or null to match any category.
+  category          String?
+  teamId            Int
+  team              Team     @relation(fields: [teamId], references: [id])
+  preferredAgentId  Int?
+  preferredAgent    Agent?   @relation("RoutingPreferredAgent", fields: [preferredAgentId], references: [id])
+  minimumSkillLevel Int?
+  // Lower number = evaluated first = wins. Specific rules get a lower number.
+  priority          Int      @default(100)
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @default(now()) @updatedAt
+
+  @@index([isActive, priority])
+}
+
+// Administrative history for routing rules. ruleId is intentionally not a
+// foreign key so a deleted rule keeps its audit trail.
+model RoutingRuleAuditLog {
+  id        Int      @id @default(autoincrement())
+  ruleId    Int?
+  ruleName  String
+  action    String   // created | updated | activated | deactivated | deleted
+  changes   String?
+  actor     String   @default("system")
+  createdAt DateTime @default(now())
+
+  @@index([ruleId])
+  @@index([action])
 }
 
 // The single user record for the whole product. "Agent" is the historical
@@ -45,6 +96,7 @@ model Agent {
   assignedTickets Ticket[]
   comments        Comment[]
   auditEvents     UserAuditLog[] @relation("UserAuditSubject")
+  preferredForRules RoutingRule[]  @relation("RoutingPreferredAgent")
 }
 
 // Administrative history for user records: creation, role changes,
@@ -88,7 +140,11 @@ model Ticket {
   graphMessageId      String?          @unique
   graphConversationId String?
   teamId              Int?
-  team                Team?            @relation(fields: [teamId], references: [id])
+  team                Team?            @relation("TicketCurrentGroup", fields: [teamId], references: [id])
+  // The group the ticket was first routed to. Set once at creation and never
+  // changed, even when the current assignment group moves.
+  originatingTeamId   Int?
+  originatingTeam     Team?            @relation("TicketOriginGroup", fields: [originatingTeamId], references: [id])
   assignedAgentId     Int?
   assignedAgent       Agent?           @relation(fields: [assignedAgentId], references: [id])
   dueAt               DateTime?

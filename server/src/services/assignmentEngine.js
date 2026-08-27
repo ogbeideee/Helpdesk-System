@@ -1,16 +1,33 @@
-// Assignment engine — decides which agent should receive a ticket.
+// Assignment engine — decides which group and which agent receive a ticket.
 //
-// Decision order (per spec):
-//   1. correct assignment group
-//   2. minimum required skill level (category rule + priority boost)
-//   3. agent availability (isActive, workload cap)
-//   4. lowest current open-workload, ties broken least-recently-assigned
+// Order of operations (the category itself is decided earlier, by the existing
+// classifier in src/graph/categoryRules.js):
 //
-// Rules are externalised in config/assignment.config.json — no code changes
-// needed to re-route categories or adjust skill requirements.
+//   1. Evaluate active routing rules against category + ticket text.
+//      The highest-priority match wins (precedence documented in
+//      src/services/routingService.js).
+//   2. That rule fixes the assignment group, and may name a preferred agent
+//      and a minimum skill level.
+//   3. If no rule matches, the group is the configured default —
+//      "General IT Support" (Team.isDefault).
+//   4. Preferred agent is used when they are active, available, in the chosen
+//      group, sufficiently skilled and under the workload cap.
+//   5. Otherwise the best agent in that group: lowest open workload, ties
+//      broken least-recently-assigned (round-robin).
+//   6. If nobody in the group qualifies, fall back across teams to the
+//      qualified agent with the lowest workload anywhere.
+//      The assignment GROUP is deliberately left unchanged by this step — the
+//      ticket still belongs to its group, it is merely being worked by
+//      somebody from another team.
+//   7. If still nobody, the ticket keeps its group with assignedAgentId null.
+//
+// config/assignment.config.json still supplies the priority skill boost and
+// the workload cap. Category -> group mapping now lives in RoutingRule rows,
+// which administrators edit through the API.
 const fs = require('fs');
 const path = require('path');
 const prisma = require('../lib/prisma');
+const routingService = require('./routingService');
 
 const CONFIG_PATH = path.join(__dirname, '..', '..', 'config', 'assignment.config.json');
 
@@ -45,91 +62,205 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-/** Resolve the target group key + minimum required skill level for a ticket. */
-function decide({ category, priority }) {
-  const config = loadConfig();
-  const rule = (config.categories && config.categories[category]) || {};
-  const groupKey = rule.group || config.defaultGroup;
-  const baseLevel = Number.isInteger(rule.minSkillLevel) ? rule.minSkillLevel : 1;
-  const boost = (config.prioritySkillBoost || {})[priority] || 0;
-  const minSkillLevel = clamp(baseLevel + boost, 1, config.maxSkillLevel || 3);
-  return { groupKey, minSkillLevel };
+const OPEN = ['NEW', 'IN_PROGRESS'];
+const WORKLOAD_COUNT = {
+  _count: { select: { assignedTickets: { where: { state: { in: OPEN } } } } },
+};
+
+/** Lowest workload first; ties go to the least recently assigned. */
+function byWorkloadThenRoundRobin(a, b) {
+  const byWorkload = a._count.assignedTickets - b._count.assignedTickets;
+  if (byWorkload !== 0) return byWorkload;
+  const aTime = a.lastAssignedAt ? new Date(a.lastAssignedAt).getTime() : 0;
+  const bTime = b.lastAssignedAt ? new Date(b.lastAssignedAt).getTime() : 0;
+  if (aTime !== bTime) return aTime - bTime;
+  return a.id - b.id;
 }
 
 /**
- * Pick the best available agent for a ticket.
- * Returns full decision metadata so callers can audit/log it:
- *   { groupKey, groupName|null, minSkillLevel, agent|null,
- *     candidatesConsidered, reason, awaitingAssignment }
+ * Resolve the group and minimum skill for a ticket, without picking an agent.
+ * Kept for callers that only need the routing decision.
  */
-async function assign({ category, priority }, client = prisma, logger = console) {
+async function decide({ category, priority, text, forceTeamId }, client = prisma) {
   const config = loadConfig();
-  const { groupKey, minSkillLevel } = decide({ category, priority });
+  const boost = (config.prioritySkillBoost || {})[priority] || 0;
 
-  const team = await client.team.findUnique({ where: { key: groupKey } });
-  const groupName = team ? team.name : null;
-
-  // Eligibility: staff who can actually take work — the account is enabled,
-  // they are currently available, and their role receives assignments (a USER
-  // never does). Plus the right group and sufficient skill.
-  const { STAFF_ROLES } = require('./userService');
-  const candidates = await client.agent.findMany({
-    where: {
-      isActive: true,
-      isAvailable: true,
-      role: { in: STAFF_ROLES },
-      ...(team ? { teamId: team.id } : {}),
-      skillLevel: { gte: minSkillLevel },
-    },
-    include: {
-      _count: {
-        select: { assignedTickets: { where: { state: { in: ['NEW', 'IN_PROGRESS'] } } } },
-      },
-    },
-  });
-
-  const cap = config.maxActiveTicketsPerAgent || FALLBACK_CONFIG.maxActiveTicketsPerAgent;
-  const eligible = candidates.filter((a) => a._count.assignedTickets < cap);
-
-  // Priority 4: lowest current workload, then least-recently-assigned.
-  eligible.sort((a, b) => {
-    const byWorkload = a._count.assignedTickets - b._count.assignedTickets;
-    if (byWorkload !== 0) return byWorkload;
-    const aTime = a.lastAssignedAt ? new Date(a.lastAssignedAt).getTime() : 0;
-    const bTime = b.lastAssignedAt ? new Date(b.lastAssignedAt).getTime() : 0;
-    return aTime - bTime;
-  });
-
-  if (!eligible.length) {
-    const reason = candidates.length
-      ? `all ${candidates.length} eligible agent(s) at or above workload cap (${cap})`
-      : `no active agent in "${groupName || groupKey}" with skill level >= ${minSkillLevel}`;
-    logger.warn(`[assignment] ${groupName || groupKey}: awaiting assignment — ${reason}`);
+  // forceTeamId pins the group (used when an admin has just moved a ticket to
+  // a specific group and only wants an agent picked inside it). Routing rules
+  // are not consulted in that case.
+  if (forceTeamId) {
+    const forced = await client.team.findUnique({ where: { id: forceTeamId } });
     return {
-      groupKey,
-      groupName,
-      minSkillLevel,
-      agent: null,
-      candidatesConsidered: candidates.length,
-      reason,
-      awaitingAssignment: true,
+      rule: null,
+      ruleName: null,
+      matchedKeywords: [],
+      team: forced,
+      groupKey: forced ? forced.key : null,
+      groupName: forced ? forced.name : null,
+      minSkillLevel: clamp(1 + boost, 1, config.maxSkillLevel || 3),
     };
   }
 
-  const chosen = eligible[0];
-  await client.agent.update({
-    where: { id: chosen.id },
-    data: { lastAssignedAt: new Date() },
-  });
+  const { rule, matchedKeywords } = await routingService.matchRule(
+    { category, text: text || category },
+    client
+  );
+
+  let team = null;
+  let baseLevel = 1;
+
+  if (rule) {
+    team = rule.team;
+    if (Number.isInteger(rule.minimumSkillLevel)) baseLevel = rule.minimumSkillLevel;
+  } else {
+    team = await routingService.defaultGroup(client);
+  }
+
+  const minSkillLevel = clamp(baseLevel + boost, 1, config.maxSkillLevel || 3);
 
   return {
+    rule: rule || null,
+    ruleName: rule ? rule.name : null,
+    matchedKeywords: matchedKeywords || [],
+    team,
+    groupKey: team ? team.key : null,
+    groupName: team ? team.name : null,
+    minSkillLevel,
+  };
+}
+
+/**
+ * Pick the group and best available agent for a ticket.
+ *
+ * Returns full decision metadata so callers can audit it:
+ *   { groupKey, groupName, teamId, minSkillLevel, agent|null, rule info,
+ *     candidatesConsidered, crossTeam, reason, awaitingAssignment }
+ */
+async function assign({ category, priority, text, forceTeamId }, client = prisma, logger = console) {
+  const config = loadConfig();
+  const cap = config.maxActiveTicketsPerAgent || FALLBACK_CONFIG.maxActiveTicketsPerAgent;
+  const { STAFF_ROLES } = require('./userService');
+
+  const decision = await decide({ category, priority, text, forceTeamId }, client);
+  const { team, minSkillLevel, rule } = decision;
+  const groupKey = decision.groupKey;
+  const groupName = decision.groupName;
+
+  const base = {
+    rule: rule ? { id: rule.id, name: rule.name, priority: rule.priority } : null,
+    ruleName: decision.ruleName,
+    matchedKeywords: decision.matchedKeywords,
     groupKey,
     groupName,
+    teamId: team ? team.id : null,
     minSkillLevel,
-    agent: chosen,
-    candidatesConsidered: candidates.length,
-    reason: `selected by lowest workload (${chosen._count.assignedTickets} open), skill >= ${minSkillLevel}`,
-    awaitingAssignment: false,
+  };
+
+  const eligibilityBase = {
+    isActive: true,
+    isAvailable: true,
+    role: { in: STAFF_ROLES },
+    skillLevel: { gte: minSkillLevel },
+  };
+
+  /* ---- 1. preferred agent named by the rule ------------------------ */
+  if (rule && rule.preferredAgentId) {
+    const preferred = await client.agent.findFirst({
+      where: { id: rule.preferredAgentId, ...eligibilityBase, ...(team ? { teamId: team.id } : {}) },
+      include: WORKLOAD_COUNT,
+    });
+
+    if (preferred && preferred._count.assignedTickets < cap) {
+      await client.agent.update({ where: { id: preferred.id }, data: { lastAssignedAt: new Date() } });
+      return {
+        ...base,
+        agent: preferred,
+        candidatesConsidered: 1,
+        crossTeam: false,
+        preferredAgentUsed: true,
+        reason: `preferred agent for rule "${rule.name}"`,
+        awaitingAssignment: false,
+      };
+    }
+    // Not usable — say why once, then fall through to the normal search.
+    const why = !preferred
+      ? 'unavailable, wrong group, or insufficient skill'
+      : `at or above the workload cap (${cap})`;
+    logger.warn(
+      `[assignment] preferred agent for rule "${rule.name}" not used — ${why}; falling back to the group`
+    );
+  }
+
+  /* ---- 2. best agent inside the chosen group ----------------------- */
+  const inGroup = team
+    ? await client.agent.findMany({
+        where: { ...eligibilityBase, teamId: team.id },
+        include: WORKLOAD_COUNT,
+      })
+    : [];
+  const groupEligible = inGroup.filter((a) => a._count.assignedTickets < cap);
+
+  if (groupEligible.length) {
+    groupEligible.sort(byWorkloadThenRoundRobin);
+    const chosen = groupEligible[0];
+    await client.agent.update({ where: { id: chosen.id }, data: { lastAssignedAt: new Date() } });
+    return {
+      ...base,
+      agent: chosen,
+      candidatesConsidered: inGroup.length,
+      crossTeam: false,
+      preferredAgentUsed: false,
+      reason: `selected by lowest workload (${chosen._count.assignedTickets} open), skill >= ${minSkillLevel}`,
+      awaitingAssignment: false,
+    };
+  }
+
+  /* ---- 3. cross-team fallback -------------------------------------- */
+  // Nobody in the group can take it. Rather than leave the ticket unassigned,
+  // find the lowest-workload qualified agent anywhere. The ticket KEEPS its
+  // assignment group: only the person working it comes from elsewhere.
+  const anywhere = forceTeamId
+    ? []
+    : await client.agent.findMany({
+        where: { ...eligibilityBase, ...(team ? { NOT: { teamId: team.id } } : {}) },
+        include: WORKLOAD_COUNT,
+      });
+  const globalEligible = anywhere.filter((a) => a._count.assignedTickets < cap);
+
+  if (globalEligible.length) {
+    globalEligible.sort(byWorkloadThenRoundRobin);
+    const chosen = globalEligible[0];
+    await client.agent.update({ where: { id: chosen.id }, data: { lastAssignedAt: new Date() } });
+    logger.log(
+      `[assignment] no one available in ${groupName || groupKey} — ` +
+        `${chosen.name} is taking it from another team (group unchanged)`
+    );
+    return {
+      ...base,
+      agent: chosen,
+      candidatesConsidered: inGroup.length + anywhere.length,
+      crossTeam: true,
+      preferredAgentUsed: false,
+      reason:
+        `no available agent in ${groupName || groupKey}; ` +
+        `assigned across teams by lowest workload (${chosen._count.assignedTickets} open)`,
+      awaitingAssignment: false,
+    };
+  }
+
+  /* ---- 4. nobody at all -------------------------------------------- */
+  const reason = inGroup.length
+    ? `all ${inGroup.length} agent(s) in ${groupName || groupKey} at or above the workload cap (${cap}), and no one else qualifies`
+    : `no available agent with skill level >= ${minSkillLevel} in ${groupName || groupKey} or any other team`;
+  logger.warn(`[assignment] ${groupName || groupKey}: awaiting assignment — ${reason}`);
+  return {
+    ...base,
+    agent: null,
+    candidatesConsidered: inGroup.length + anywhere.length,
+    crossTeam: false,
+    preferredAgentUsed: false,
+    reason,
+    awaitingAssignment: true,
   };
 }
 
