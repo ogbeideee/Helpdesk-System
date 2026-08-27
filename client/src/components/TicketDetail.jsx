@@ -23,6 +23,10 @@ export default function TicketDetail({ id, me, onChanged }) {
   const [resolutionText, setResolutionText] = useState('');
   const [closeConfirm, setCloseConfirm] = useState(false);
   const [assignPick, setAssignPick] = useState('');
+  const [reassignOpen, setReassignOpen] = useState(false);
+  const [candidates, setCandidates] = useState(null);
+  const [candidatesError, setCandidatesError] = useState('');
+  const [reassignReason, setReassignReason] = useState('');
   const [groupPick, setGroupPick] = useState('');
   const [showToast, toastNode] = useToast();
 
@@ -63,6 +67,20 @@ export default function TicketDetail({ id, me, onChanged }) {
       setBusy(false);
     }
   }
+
+  // Candidates load when the dialog opens. Declared with the other hooks,
+  // above every early return, so the hook order never changes.
+  useEffect(() => {
+    if (!reassignOpen) return;
+    setCandidates(null);
+    setCandidatesError('');
+    setAssignPick('');
+    setReassignReason('');
+    api
+      .assignmentCandidates(id)
+      .then(setCandidates)
+      .catch((e) => setCandidatesError(e.message));
+  }, [reassignOpen, id]);
 
   if (error && !ticket) return <div className="page"><ErrorState message={error} onRetry={load} /></div>;
   if (!ticket) return <div className="page"><Spinner label="Loading ticket…" /></div>;
@@ -224,9 +242,15 @@ export default function TicketDetail({ id, me, onChanged }) {
             <div className="action-block">
               <h3 className="action-label">Workflow</h3>
               <div className="btn-row">
-                {canStart && (
+                {canStart && ticket.state === 'NEW' && (
                   <button className="btn btn-primary" disabled={busy}
-                    onClick={() => run(async () => api.setStatus(id, { state: 'IN_PROGRESS' }, ), 'Work started')}>
+                    onClick={() => run(async () => api.startTicket(id), 'Work started')}>
+                    ▶ Start working
+                  </button>
+                )}
+                {canStart && ticket.state !== 'NEW' && ticket.state !== 'RESOLVED' && ticket.state !== 'CLOSED' && (
+                  <button className="btn btn-primary" disabled={busy}
+                    onClick={() => run(async () => api.setStatus(id, { state: 'IN_PROGRESS' }), 'Work started')}>
                     ▶ Start work
                   </button>
                 )}
@@ -247,33 +271,26 @@ export default function TicketDetail({ id, me, onChanged }) {
                   </button>
                 )}
                 {!canStart && !canResolve && !canClose && ticket.state === 'CLOSED' && (
-                  <span className="muted small">Closed tickets can only be reopened.</span>
+                  <span className="muted small">
+                    This ticket is closed. It reopens automatically if the requester replies by email.
+                  </span>
                 )}
               </div>
             </div>
 
             {/* Assignment */}
-            <div className="action-block">
-              <h3 className="action-label">Assign / Reassign</h3>
-              <div className="assign-controls">
-                <select value={assignPick} onChange={(e) => setAssignPick(e.target.value)} aria-label="Select agent">
-                  <option value="">Select agent…</option>
-                  {agents.filter((a) => a.agentId !== ticket.assignedAgentId).map((a) => (
-                    <option key={a.agentId} value={a.agentId}>
-                      {a.name} · {a.assignmentGroup || 'no group'} · L{a.skillLevel} · {a.openTickets} open
-                    </option>
-                  ))}
-                </select>
+            {ticket.state !== 'CLOSED' && (
+              <div className="action-block">
+                <h3 className="action-label">Assignment</h3>
                 <button
-                  className="btn btn-primary btn-sm"
-                  disabled={busy || !assignPick}
-                  onClick={() => run(async () => api.assignTicket(id, { agentId: Number(assignPick) }),
-                    ticket.assignedAgent ? 'Ticket reassigned' : 'Ticket assigned')}
+                  className="btn btn-secondary btn-sm"
+                  disabled={busy}
+                  onClick={() => setReassignOpen(true)}
                 >
-                  {ticket.assignedAgent ? 'Reassign' : 'Assign'}
+                  ⇄ {ticket.assignedAgent ? 'Reassign' : 'Assign'}
                 </button>
               </div>
-            </div>
+            )}
 
             {me.role === 'admin' && (
               <div className="action-block">
@@ -285,6 +302,107 @@ export default function TicketDetail({ id, me, onChanged }) {
           </section>
         </div>
       </div>
+
+      {/* Reassign modal — the backend is the authority on who is eligible;
+          this only renders the decision it already made per candidate. */}
+      {reassignOpen && (
+        <Modal title={`Reassign ${ticket.ticketNumber}`} onClose={() => setReassignOpen(false)} width={560}>
+          {candidatesError && <div className="callout callout-error">{candidatesError}</div>}
+          {!candidates && !candidatesError && <Spinner label="Loading team…" />}
+
+          {candidates && (
+            <>
+              <div className="reassign-current">
+                <h4 className="action-label">Current assignment</h4>
+                <div className="muted">
+                  {candidates.assignmentGroup ? candidates.assignmentGroup.name : 'No assignment group'}
+                </div>
+                <div>
+                  {candidates.currentAssignee ? (
+                    <>
+                      <strong>{candidates.currentAssignee.name}</strong>{' '}
+                      <span className="muted small">
+                        · {candidates.currentAssignee.openTickets} open
+                      </span>
+                    </>
+                  ) : (
+                    <em className="muted">Unassigned</em>
+                  )}
+                </div>
+              </div>
+
+              <h4 className="action-label" style={{ marginTop: 14 }}>Reassign to</h4>
+              {candidates.candidates.length === 0 && (
+                <p className="muted">No other agents in this assignment group.</p>
+              )}
+              <div className="reassign-list">
+                {candidates.candidates.map((c) => (
+                  <label
+                    key={c.id}
+                    className={`reassign-option ${c.selectable ? '' : 'is-disabled'} ${
+                      String(c.id) === assignPick ? 'is-selected' : ''
+                    }`}
+                    title={c.selectable ? '' : c.reason || 'Not selectable'}
+                  >
+                    <input
+                      type="radio"
+                      name="reassign-target"
+                      value={c.id}
+                      disabled={!c.selectable}
+                      checked={String(c.id) === assignPick}
+                      onChange={() => setAssignPick(String(c.id))}
+                    />
+                    <span className="reassign-option-body">
+                      <strong>{c.name}</strong>
+                      <small className="muted">
+                        {c.skillLabel} · {c.assignmentGroup || 'no group'} ·{' '}
+                        <span className={c.available ? 'ok-text' : 'warn-text'}>
+                          {c.available ? 'Available' : 'Unavailable'}
+                        </span>{' '}
+                        · {c.openTickets} open {c.openTickets === 1 ? 'ticket' : 'tickets'}
+                      </small>
+                      {!c.selectable && c.reason && (
+                        <small className="muted reassign-why">{c.reason}</small>
+                      )}
+                    </span>
+                  </label>
+                ))}
+              </div>
+
+              <label className="field" style={{ marginTop: 12 }}>
+                <span className="field-label">Reason (optional)</span>
+                <textarea
+                  rows={2}
+                  placeholder="e.g. Currently handling several critical requests."
+                  value={reassignReason}
+                  onChange={(e) => setReassignReason(e.target.value)}
+                />
+              </label>
+
+              <div className="modal-actions">
+                <button className="btn btn-ghost" onClick={() => setReassignOpen(false)} disabled={busy}>
+                  Cancel
+                </button>
+                <button
+                  className="btn btn-primary"
+                  disabled={busy || !assignPick}
+                  onClick={() =>
+                    run(async () => {
+                      await api.reassignTicket(id, {
+                        agentId: Number(assignPick),
+                        reason: reassignReason.trim() || undefined,
+                      });
+                      setReassignOpen(false);
+                    }, 'Ticket reassigned')
+                  }
+                >
+                  Reassign
+                </button>
+              </div>
+            </>
+          )}
+        </Modal>
+      )}
 
       {/* Resolve modal — resolution note is mandatory (backend enforces too) */}
       {resolveOpen && (
@@ -355,16 +473,14 @@ function buildTimeline(ticket) {
 
   for (const log of ticket.auditLogs || []) {
     if (!log.fromState && log.toState === 'NEW') continue; // covered by created event
-    const assignmentChange =
-      log.note && /assigned|claim/i.test(log.note) && log.fromState === log.toState;
+    const { kind, title } = classifyAuditEvent(log);
     events.push({
-      kind: log.fromState !== log.toState ? 'status' : assignmentChange ? 'assignment' : 'audit',
+      kind,
       at: log.createdAt,
-      title:
-        log.fromState && log.fromState !== log.toState
-          ? `Status: ${STATE_LABELS[log.fromState] || log.fromState} → ${STATE_LABELS[log.toState] || log.toState}`
-          : log.note || 'Updated',
+      title,
       detail: [
+        // For a status change the note adds context; for assignment-style
+        // entries the note *is* the title, so it is not repeated.
         ...(log.note && log.fromState !== log.toState ? [log.note] : []),
         `by ${prettyActor(log.actor)}`,
       ].filter(Boolean).join(' · '),
@@ -398,6 +514,36 @@ function buildTimeline(ticket) {
   return events.sort((a, b) => new Date(a.at) - new Date(b.at));
 }
 
+/**
+ * Give each audit entry a distinct kind so the timeline reads as a story
+ * rather than a list of generic "Updated" rows: creation, assignment,
+ * reassignment, status change, resolution, closure, reopening, group change.
+ */
+function classifyAuditEvent(log) {
+  const note = log.note || '';
+  const changedState = log.fromState !== log.toState;
+
+  if (changedState) {
+    const reopened =
+      log.toState === 'IN_PROGRESS' && ['RESOLVED', 'CLOSED'].includes(log.fromState);
+    if (reopened) {
+      return { kind: 'reopened', title: `Reopened (${STATE_LABELS[log.fromState] || log.fromState} → In Progress)` };
+    }
+    if (log.toState === 'CLOSED') return { kind: 'closed', title: 'Ticket closed' };
+    if (log.toState === 'RESOLVED') return { kind: 'resolution', title: 'Status changed to Resolved' };
+    if (log.toState === 'IN_PROGRESS') return { kind: 'status', title: 'Status changed to In Progress' };
+    return {
+      kind: 'status',
+      title: `Status: ${STATE_LABELS[log.fromState] || log.fromState} → ${STATE_LABELS[log.toState] || log.toState}`,
+    };
+  }
+
+  if (/^Reassigned from/i.test(note)) return { kind: 'reassign', title: note };
+  if (/assignment group changed/i.test(note)) return { kind: 'group', title: note };
+  if (/assigned|claim/i.test(note)) return { kind: 'assignment', title: note };
+  return { kind: 'audit', title: note || 'Updated' };
+}
+
 function prettyActor(actor) {
   if (!actor) return 'system';
   if (actor === 'system') return 'automation';
@@ -406,12 +552,16 @@ function prettyActor(actor) {
 }
 
 const KIND_META = {
-  created:     { icon: '✦', cls: 'tl-created', },
+  created:     { icon: '✦', cls: 'tl-created' },
   status:      { icon: '⇄', cls: 'tl-status' },
   assignment:  { icon: '👤', cls: 'tl-assign' },
+  reassign:    { icon: '⇄', cls: 'tl-assign' },
+  group:       { icon: '⛁', cls: 'tl-assign' },
   internal:    { icon: '🔒', cls: 'tl-internal' },
   update:      { icon: '💬', cls: 'tl-update' },
   resolution:  { icon: '✓', cls: 'tl-resolution' },
+  closed:      { icon: '⏹', cls: 'tl-closed' },
+  reopened:    { icon: '↻', cls: 'tl-reopened' },
   audit:       { icon: '•', cls: 'tl-audit' },
 };
 

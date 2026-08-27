@@ -149,59 +149,75 @@ async function main() {
     check('PATCH rejects state changes (use /status)', patchStateBlocked.status === 400);
 
     // --- assign ------------------------------------------------------------------
-    const assign = await req(`/api/tickets/${ticketId}/assign`, {
+    // An agent may not hand someone else's ticket to another team: that is an
+    // administrator action (see assignmentPolicy).
+    const assignByAgent = await req(`/api/tickets/${ticketId}/assign`, {
       method: 'POST',
       token: agentToken,
-      body: { agentEmail: 'lena.fischer@noctincan.com' },
+      body: { agentEmail: 'dev.patel@noctincan.com' },
     });
-    check('assign routes to requested agent, state unchanged', assign.status === 200 && assign.data.assignedAgent.email === 'lena.fischer@noctincan.com' && assign.data.state === 'NEW');
+    check('agent cannot assign a ticket that is not theirs', assignByAgent.status === 403, JSON.stringify(assignByAgent.data));
+
+    const assign = await req(`/api/tickets/${ticketId}/assign`, {
+      method: 'POST',
+      token: adminToken,
+      body: { agentEmail: 'dev.patel@noctincan.com' },
+    });
+    check('admin assign routes across groups, state unchanged', assign.status === 200 && assign.data.assignedAgent.email === 'dev.patel@noctincan.com' && assign.data.state === 'NEW', JSON.stringify(assign.data).slice(0,150));
 
     const assignUnknown = await req(`/api/tickets/${ticketId}/assign`, {
       method: 'POST',
-      token: agentToken,
+      token: adminToken,
       body: { agentId: 999999 },
     });
     check('assign to unknown agent fails cleanly', assignUnknown.status === 404);
 
     // --- workflow transitions -----------------------------------------------------
-    const resolveNoNote = await req(`/api/tickets/${ticketId}/resolve`, {
+    const resolveByStranger = await req(`/api/tickets/${ticketId}/resolve`, {
       method: 'POST',
       token: agentToken,
+      body: { resolution: 'not my ticket' },
+    });
+    check('agent cannot resolve a ticket assigned to someone else', resolveByStranger.status === 403);
+
+    const resolveNoNote = await req(`/api/tickets/${ticketId}/resolve`, {
+      method: 'POST',
+      token: adminToken,
       body: {},
     });
     check('resolve without note rejected', resolveNoNote.status === 400);
 
     const skipAhead = await req(`/api/tickets/${ticketId}/status`, {
       method: 'POST',
-      token: agentToken,
+      token: adminToken,
       body: { state: 'CLOSED' },
     });
     check('invalid transition NEW->CLOSED rejected', skipAhead.status === 400, JSON.stringify(skipAhead.data));
 
     const started = await req(`/api/tickets/${ticketId}/status`, {
       method: 'POST',
-      token: agentToken,
+      token: adminToken,
       body: { state: 'IN_PROGRESS', note: 'picking this up' },
     });
     check('NEW -> IN_PROGRESS works', started.status === 200 && started.data.state === 'IN_PROGRESS');
 
     const resolved = await req(`/api/tickets/${ticketId}/resolve`, {
       method: 'POST',
-      token: agentToken,
+      token: adminToken,
       body: { resolution: `${MARKER} screen replaced under warranty.` },
     });
     check('resolve stores resolution + resolvedAt', resolved.status === 200 && resolved.data.state === 'RESOLVED' && resolved.data.resolvedAt && resolved.data.resolution.includes('warranty'));
 
     const closed = await req(`/api/tickets/${ticketId}/close`, {
       method: 'POST',
-      token: agentToken,
+      token: adminToken,
       body: { note: 'verified with requester' },
     });
     check('RESOLVED -> CLOSED works', closed.status === 200 && closed.data.state === 'CLOSED' && closed.data.closedAt);
 
     const reopenClosedToNew = await req(`/api/tickets/${ticketId}/status`, {
       method: 'POST',
-      token: agentToken,
+      token: adminToken,
       body: { state: 'NEW' },
     });
     check('invalid transition CLOSED->NEW rejected', reopenClosedToNew.status === 400, JSON.stringify(reopenClosedToNew.data));

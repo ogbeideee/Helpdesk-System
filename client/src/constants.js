@@ -19,7 +19,9 @@ export const STATE_TRANSITIONS = {
   NEW: ['IN_PROGRESS'],
   IN_PROGRESS: ['RESOLVED'],
   RESOLVED: ['CLOSED', 'IN_PROGRESS'],
-  CLOSED: ['IN_PROGRESS'],
+  // CLOSED is final. Reopening happens only when the requester replies by
+  // email, which the backend handles - there is no manual reopen action.
+  CLOSED: [],
 };
 
 export const CATEGORIES = ['Password Reset', 'Inquiry / Help', 'Software', 'Hardware'];

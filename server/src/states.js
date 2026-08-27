@@ -1,6 +1,12 @@
 // Ticket lifecycle: NEW -> IN_PROGRESS -> RESOLVED -> CLOSED
-// (RESOLVED/CLOSED -> IN_PROGRESS is the supported reopen path; CLOSED -> NEW
-// and other backwards jumps are rejected.)
+//
+// CLOSED is final: no agent-driven transition leaves it. A closed ticket comes
+// back only through the requester-reply workflow in services/ticketIntake.js,
+// which reopens it to IN_PROGRESS and writes its own audit entry. That path
+// deliberately does not consult this map, so "final for people, reopenable by
+// the requester" is expressed in exactly one place.
+//
+// RESOLVED -> IN_PROGRESS stays available as rework before closure.
 const STATES = ['NEW', 'IN_PROGRESS', 'RESOLVED', 'CLOSED'];
 const PRIORITIES = ['low', 'moderate', 'high', 'critical'];
 const CATEGORIES = ['Password Reset', 'Inquiry / Help', 'Software', 'Hardware'];
@@ -10,7 +16,7 @@ const STATE_TRANSITIONS = {
   NEW: ['IN_PROGRESS'],
   IN_PROGRESS: ['RESOLVED'],
   RESOLVED: ['CLOSED', 'IN_PROGRESS'], // close or send back / rework
-  CLOSED: ['IN_PROGRESS'], // reopen path used by requester replies
+  CLOSED: [], // final — see the note above
 };
 
 function isValidState(v) {

@@ -15,6 +15,7 @@ const assignmentEngine = require('../src/services/assignmentEngine');
 const notificationService = require('../src/mailer');
 const { intakeEmailMessage, IntakeValidationError } = require('../src/services/ticketIntake');
 const { classify } = require('../src/graph/categoryRules');
+const assignmentPolicy = require('../src/services/assignmentPolicy');
 
 const router = express.Router();
 
@@ -32,6 +33,23 @@ const DETAIL_INCLUDE = {
 function truncateShortDescription(value) {
   const str = String(value || '').trim();
   return str.length <= 160 ? str : str.slice(0, 160);
+}
+
+/**
+ * Lifecycle actions (start / resolve / close) belong to the ticket's owner.
+ * An administrator may always act. An unassigned open ticket stays actionable
+ * so a ticket in triage never gets stuck with nobody able to touch it.
+ */
+function canActOnTicket(ticket, actor) {
+  if (assignmentPolicy.isAdmin(actor)) return { ok: true };
+  if (!actor) return { ok: false, status: 401, error: 'Authentication required' };
+  if (!ticket.assignedAgentId) return { ok: true };
+  if (ticket.assignedAgentId === actor.id) return { ok: true };
+  return {
+    ok: false,
+    status: 403,
+    error: 'Only the assigned agent or an administrator can change this ticket',
+  };
 }
 
 function actorLabel(agent) {
@@ -334,6 +352,8 @@ router.post('/:id/resolve', async (req, res) => {
   try {
     const ticket = await loadTicketOr404(req.params.id, res);
     if (!ticket) return;
+    const allowed = canActOnTicket(ticket, req.agent);
+    if (!allowed.ok) return res.status(allowed.status).json({ error: allowed.error });
     if (!String(req.body.resolution || '').trim() && !String(ticket.resolution || '').trim()) {
       return res.status(400).json({ error: 'resolution is required to resolve a ticket' });
     }
@@ -353,6 +373,8 @@ router.post('/:id/close', async (req, res) => {
   try {
     const ticket = await loadTicketOr404(req.params.id, res);
     if (!ticket) return;
+    const allowed = canActOnTicket(ticket, req.agent);
+    if (!allowed.ok) return res.status(allowed.status).json({ error: allowed.error });
     const result = await applyStateChange(ticket, 'CLOSED', {
       actor: actorLabel(req.agent),
       note: req.body.note,
@@ -391,7 +413,17 @@ router.post('/:id/assign', async (req, res) => {
       return res.status(400).json({ error: 'agentId or agentEmail is required' });
     }
     if (!agent) return res.status(404).json({ error: 'Agent not found' });
-    if (!agent.isActive) return res.status(400).json({ error: `Agent ${agent.email} is inactive` });
+
+    // Authorization lives in the policy, not in the UI: an agent may only
+    // hand their own ticket to an available teammate in the same group.
+    const verdict = assignmentPolicy.checkTarget(ticket, req.agent, agent);
+    if (!verdict.ok) {
+      return res.status(verdict.status).json({ error: verdict.error });
+    }
+
+    const reason = String(req.body.reason || '').trim().slice(0, 500);
+    const previous = ticket.assignedAgent ? ticket.assignedAgent.name : 'nobody';
+    const groupName = ticket.team ? ticket.team.name : 'no group';
 
     const updated = await prisma.ticket.update({
       where: { id: ticket.id },
@@ -402,10 +434,12 @@ router.post('/:id/assign', async (req, res) => {
             fromState: ticket.state,
             toState: ticket.state,
             actor: actorLabel(req.agent),
+            // Previous holder, new holder and group are all preserved so the
+            // history reads as a handover rather than an overwrite.
             note:
-              ticket.assignedAgentId === agent.id
-                ? `Reconfirmed assignment to ${agent.name}`
-                : `Assigned to ${agent.name}${agent.skillLevel ? ` (skill level ${agent.skillLevel})` : ''}`,
+              `Reassigned from ${previous} to ${agent.name} ` +
+              `(${groupName}, skill level ${agent.skillLevel})` +
+              (reason ? ` — Reason: ${reason}` : ''),
           },
         },
       },
@@ -416,6 +450,147 @@ router.post('/:id/assign', async (req, res) => {
       notificationService.notifyAssignment(updated, agent).catch(() => {});
     }
     res.json(serializeTicket(updated));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/tickets/:id/reassign — hand a ticket to a teammate
+//
+// Same rules as /assign (one policy, one implementation); this endpoint exists
+// because "reassign" is the action agents actually perform and it carries an
+// optional reason.
+router.post('/:id/reassign', async (req, res) => {
+  try {
+    const ticket = await loadTicketOr404(req.params.id, res, {
+      assignedAgent: true,
+      team: true,
+    });
+    if (!ticket) return;
+
+    let target = null;
+    if (req.body.agentId !== undefined) {
+      if (!Number.isInteger(req.body.agentId)) {
+        return res.status(400).json({ error: 'agentId must be an integer' });
+      }
+      target = await prisma.agent.findUnique({ where: { id: req.body.agentId } });
+    } else if (req.body.agentEmail !== undefined) {
+      target = await prisma.agent.findUnique({
+        where: { email: String(req.body.agentEmail).trim().toLowerCase() },
+      });
+    } else {
+      return res.status(400).json({ error: 'agentId or agentEmail is required' });
+    }
+
+    const verdict = assignmentPolicy.checkTarget(ticket, req.agent, target);
+    if (!verdict.ok) return res.status(verdict.status).json({ error: verdict.error });
+
+    const reason = String(req.body.reason || '').trim().slice(0, 500);
+    const previous = ticket.assignedAgent ? ticket.assignedAgent.name : 'nobody';
+    const groupName = ticket.team ? ticket.team.name : 'no group';
+
+    const updated = await prisma.ticket.update({
+      where: { id: ticket.id },
+      data: {
+        assignedAgentId: target.id,
+        auditLogs: {
+          create: {
+            fromState: ticket.state,
+            toState: ticket.state,
+            actor: actorLabel(req.agent),
+            note:
+              `Reassigned from ${previous} to ${target.name} ` +
+              `(${groupName}, skill level ${target.skillLevel})` +
+              (reason ? ` — Reason: ${reason}` : ''),
+          },
+        },
+      },
+      include: DETAIL_INCLUDE,
+    });
+
+    notificationService.notifyAssignment(updated, target).catch(() => {});
+    res.json(serializeTicket(updated));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/tickets/:id/assignment-candidates — who this ticket can go to
+//
+// Returns availability, workload and skill for each candidate plus whether the
+// caller may actually select them, so the UI can render the list without
+// re-deriving any rule.
+router.get('/:id/assignment-candidates', async (req, res) => {
+  try {
+    const ticket = await loadTicketOr404(req.params.id, res, {
+      assignedAgent: true,
+      team: true,
+    });
+    if (!ticket) return;
+
+    const candidates = await assignmentPolicy.listCandidates(ticket, req.agent);
+    res.json({
+      ticketId: ticket.id,
+      ticketNumber: ticket.ticketNumber,
+      state: ticket.state,
+      assignmentGroup: ticket.team
+        ? { id: ticket.team.id, key: ticket.team.key, name: ticket.team.name }
+        : null,
+      currentAssignee: ticket.assignedAgent
+        ? {
+            id: ticket.assignedAgent.id,
+            name: ticket.assignedAgent.name,
+            email: ticket.assignedAgent.email,
+            skillLevel: ticket.assignedAgent.skillLevel,
+            available: ticket.assignedAgent.isActive,
+            openTickets: await assignmentPolicy.workloadFor(ticket.assignedAgent.id),
+          }
+        : null,
+      // Admins may reach other groups; agents see their own group only.
+      canChangeGroup: assignmentPolicy.isAdmin(req.agent),
+      candidates,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/tickets/:id/start — NEW -> IN_PROGRESS in one click
+//
+// The assignee (or an admin) begins work without touching a status dropdown.
+router.post('/:id/start', async (req, res) => {
+  try {
+    const ticket = await loadTicketOr404(req.params.id, res, {
+      assignedAgent: true,
+      team: true,
+    });
+    if (!ticket) return;
+
+    if (ticket.state !== 'NEW') {
+      return res
+        .status(400)
+        .json({ error: `Only a NEW ticket can be started (this one is ${ticket.state})` });
+    }
+
+    const admin = assignmentPolicy.isAdmin(req.agent);
+    if (!admin) {
+      if (!ticket.assignedAgentId) {
+        return res
+          .status(403)
+          .json({ error: 'Claim this ticket before starting work on it' });
+      }
+      if (ticket.assignedAgentId !== req.agent.id) {
+        return res
+          .status(403)
+          .json({ error: 'You can only start work on tickets assigned to you' });
+      }
+    }
+
+    const result = await applyStateChange(ticket, 'IN_PROGRESS', {
+      actor: actorLabel(req.agent),
+      note: req.body && req.body.note ? String(req.body.note) : 'Work started',
+    });
+    res.status(result.status).json(result.body);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -535,7 +710,7 @@ function validatePatchBody(body) {
 
 async function patchTicket(req, res) {
   try {
-    const existing = await loadTicketOr404(req.params.id, res, { team: true });
+    const existing = await loadTicketOr404(req.params.id, res, { team: true, assignedAgent: true });
     if (!existing) return;
 
     const errors = validatePatchBody(req.body || {});
@@ -559,16 +734,56 @@ async function patchTicket(req, res) {
       notes.push(`priority changed to ${req.body.priority} (SLA target recalculated)`);
     }
     if (req.body.assignmentGroup !== undefined) {
+      // Moving a ticket between teams is an administrator action: an agent
+      // must not be able to push work onto an unrelated group.
+      const verdict = assignmentPolicy.checkGroupChange(existing, req.agent);
+      if (!verdict.ok) return res.status(verdict.status).json({ errors: [verdict.error] });
+
+      const previousGroup = existing.team ? existing.team.name : 'none';
+
       if (req.body.assignmentGroup === null) {
         data.teamId = null;
-        notes.push('removed from assignment group');
+        notes.push(`assignment group changed from ${previousGroup} to none`);
+        // Nobody can own a ticket that belongs to no group.
+        if (existing.assignedAgentId) {
+          data.assignedAgentId = null;
+          notes.push('cleared the assignee, who no longer matches the group');
+        }
       } else {
         const team = await prisma.team.findUnique({
           where: { key: String(req.body.assignmentGroup) },
         });
         if (!team) return res.status(400).json({ errors: [`unknown assignment group "${req.body.assignmentGroup}"`] });
         data.teamId = team.id;
-        notes.push(`moved to assignment group ${team.name}`);
+        notes.push(`assignment group changed from ${previousGroup} to ${team.name}`);
+
+        // Never leave a ticket owned by someone from the wrong team.
+        if (existing.assignedAgentId) {
+          const current = await prisma.agent.findUnique({ where: { id: existing.assignedAgentId } });
+          if (!current || current.teamId !== team.id) {
+            data.assignedAgentId = null;
+            notes.push(
+              `cleared the assignee ${current ? current.name : 'unknown'}, who is not in ${team.name}`
+            );
+          }
+        }
+
+        // Re-route through the existing engine when the ticket is now
+        // unassigned and still open. Opt out with autoAssign:false.
+        const wantsAuto = req.body.autoAssign !== false;
+        const willBeUnassigned =
+          data.assignedAgentId === null || (!existing.assignedAgentId && data.assignedAgentId === undefined);
+        if (wantsAuto && willBeUnassigned && isOpenState(existing.state)) {
+          const decision = await assignmentEngine.assign(
+            { category: existing.category, priority: existing.priority },
+            prisma,
+            { log: () => {}, warn: () => {} }
+          );
+          if (decision.agent && decision.agent.teamId === team.id) {
+            data.assignedAgentId = decision.agent.id;
+            notes.push(`auto-assigned to ${decision.agent.name} by the assignment engine`);
+          }
+        }
       }
     }
 

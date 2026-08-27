@@ -716,3 +716,47 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
   .user-meta { display: none; }
   .content { padding: 18px 14px 50px; }
 }
+
+/* --- Reassignment dialog ------------------------------------------- */
+.reassign-current {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--surface-2, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.09));
+}
+.reassign-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.reassign-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 11px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.09));
+  border-radius: 8px;
+  cursor: pointer;
+}
+.reassign-option:hover:not(.is-disabled) {
+  border-color: var(--accent, hsl(212 90% 60%));
+}
+.reassign-option.is-selected {
+  border-color: var(--accent, hsl(212 90% 60%));
+  background: rgba(80, 150, 255, 0.10);
+}
+.reassign-option.is-disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.reassign-option input { margin-top: 3px; }
+.reassign-option-body { display: flex; flex-direction: column; gap: 2px; }
+.reassign-why { font-style: italic; }
+.ok-text { color: hsl(145 55% 55%); }
+.warn-text { color: hsl(35 85% 62%); }
+
+/* --- Timeline kinds added for the lifecycle work -------------------- */
+.timeline-item.tl-closed .timeline-icon { color: hsl(215 15% 65%); }
+.timeline-item.tl-reopened .timeline-icon { color: hsl(35 85% 62%); }
