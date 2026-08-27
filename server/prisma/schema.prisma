@@ -15,20 +15,55 @@ model Team {
   tickets Ticket[]
 }
 
+// The single user record for the whole product. "Agent" is the historical
+// table name; it holds every person who can sign in, whatever their role.
+// There is deliberately no second user system.
 model Agent {
   id              Int       @id @default(autoincrement())
   name            String
   email           String    @unique
-  passwordHash    String?
-  role            String    @default("agent") // "agent" | "admin"
+  passwordHash    String?   // null once an account is Entra-only
+  // "user" | "agent" | "admin" — see src/services/userService.js (ROLES).
+  // New sign-ins default to "agent"; "admin" is only ever granted by an
+  // existing admin or the one-time initial-admin bootstrap.
+  role            String    @default("agent")
+  // Account enabled. An inactive account cannot sign in and receives no work.
   isActive        Boolean   @default(true)
+  // Currently accepting new assignments. Distinct from isActive: an agent on
+  // leave stays active (can sign in) but unavailable (gets no new tickets).
+  isAvailable     Boolean   @default(true)
   teamId          Int?
   team            Team?     @relation(fields: [teamId], references: [id])
   skillLevel      Int       @default(1) // 1 = junior, 2 = standard, 3 = senior
   lastAssignedAt  DateTime?
+  // Identity-provider linkage, ready for Microsoft Entra ID. Not used yet:
+  // no Entra authentication is implemented.
+  externalId       String?  @unique
+  externalProvider String?
   createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @default(now()) @updatedAt
   assignedTickets Ticket[]
   comments        Comment[]
+  auditEvents     UserAuditLog[] @relation("UserAuditSubject")
+}
+
+// Administrative history for user records: creation, role changes,
+// activation, availability, assignment group and skill level.
+// Ticket history stays in TicketAuditLog — these are separate concerns.
+model UserAuditLog {
+  id        Int      @id @default(autoincrement())
+  agentId   Int
+  agent     Agent    @relation("UserAuditSubject", fields: [agentId], references: [id], onDelete: Cascade)
+  action    String   // created | role_changed | activated | deactivated | availability_changed | group_changed | skill_changed
+  field     String?
+  fromValue String?
+  toValue   String?
+  actor     String   @default("system")
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@index([agentId])
+  @@index([action])
 }
 
 // Sequence counter backing human-readable ticket numbers (INC-000001).

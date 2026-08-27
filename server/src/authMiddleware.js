@@ -19,6 +19,7 @@ function sanitizeAgent(agent) {
     email: agent.email,
     role: agent.role,
     isActive: agent.isActive,
+    isAvailable: agent.isAvailable,
     skillLevel: agent.skillLevel,
     teamId: agent.teamId,
     team: agent.team ? { id: agent.team.id, key: agent.team.key, name: agent.team.name } : null,

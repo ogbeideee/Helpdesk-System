@@ -69,11 +69,15 @@ async function assign({ category, priority }, client = prisma, logger = console)
   const team = await client.team.findUnique({ where: { key: groupKey } });
   const groupName = team ? team.name : null;
 
-  // Availability: active agents in the right group with sufficient skill,
-  // each carrying their current open workload for ranking / cap enforcement.
+  // Eligibility: staff who can actually take work — the account is enabled,
+  // they are currently available, and their role receives assignments (a USER
+  // never does). Plus the right group and sufficient skill.
+  const { STAFF_ROLES } = require('./userService');
   const candidates = await client.agent.findMany({
     where: {
       isActive: true,
+      isAvailable: true,
+      role: { in: STAFF_ROLES },
       ...(team ? { teamId: team.id } : {}),
       skillLevel: { gte: minSkillLevel },
     },

@@ -760,3 +760,11 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
 /* --- Timeline kinds added for the lifecycle work -------------------- */
 .timeline-item.tl-closed .timeline-icon { color: hsl(215 15% 65%); }
 .timeline-item.tl-reopened .timeline-icon { color: hsl(35 85% 62%); }
+
+/* --- Role and account chips (user administration) ------------------- */
+.chip-role-admin { background: rgba(129, 140, 248, 0.22); color: hsl(239 84% 80%); }
+.chip-role-agent { background: rgba(56, 189, 248, 0.18); color: hsl(199 89% 74%); }
+.chip-role-user  { background: rgba(148, 163, 184, 0.20); color: hsl(215 20% 75%); }
+.chip-you        { background: rgba(250, 204, 21, 0.18); color: hsl(48 96% 70%); margin-left: 6px; }
+.chip-ok         { background: rgba(52, 211, 153, 0.18); color: hsl(160 64% 62%); }
+.chip-off        { background: rgba(148, 163, 184, 0.18); color: hsl(215 16% 68%); }

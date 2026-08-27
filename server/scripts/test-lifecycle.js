@@ -101,13 +101,16 @@ async function main() {
   const software = await prisma.team.findUnique({ where: { key: 'software' } });
 
   const hash = bcrypt.hashSync(PASSWORD, 10);
-  const mk = (name, email, teamId, skillLevel, isActive = true, role = 'agent') =>
-    prisma.agent.create({ data: { name, email, teamId, skillLevel, isActive, role, passwordHash: hash } });
+  // isActive = account enabled; isAvailable = currently accepting work.
+  const mk = (name, email, teamId, skillLevel, isAvailable = true, role = 'agent') =>
+    prisma.agent.create({
+      data: { name, email, teamId, skillLevel, isActive: true, isAvailable, role, passwordHash: hash },
+    });
 
   // Hardware team
   const jane = await mk('Jane Smith', `jane@${DOMAIN}`, hardware.id, 2);
   const sarah = await mk('Sarah Smith', `sarah@${DOMAIN}`, hardware.id, 3);
-  const michael = await mk('Michael Brown', `michael@${DOMAIN}`, hardware.id, 1, false); // unavailable
+  const michael = await mk('Michael Brown', `michael@${DOMAIN}`, hardware.id, 1, false); // on leave: active but unavailable
   // Software team
   const dave = await mk('Dave Software', `dave@${DOMAIN}`, software.id, 2);
   // Admin
@@ -283,7 +286,7 @@ async function main() {
       const byId = Object.fromEntries(res.data.candidates.map((c) => [c.id, c]));
       check('candidates: teammate listed', Boolean(byId[sarah.id]));
       check('candidates: unavailable teammate is shown', Boolean(byId[michael.id]));
-      eq('candidates: availability flag reflects isActive', byId[michael.id].available, false);
+      eq('candidates: availability flag reflects isAvailable', byId[michael.id].available, false);
       eq('candidates: unavailable teammate is not selectable by an agent', byId[michael.id].selectable, false);
       eq('candidates: available teammate is selectable', byId[sarah.id].selectable, true);
       eq('candidates: current assignee flagged', byId[jane.id].isCurrentAssignee, true);

@@ -16,10 +16,12 @@
 //   ADMIN may assign any open ticket to any active agent, across groups, and
 //   may deliberately assign to an unavailable agent.
 //
-// "Availability" is the Agent.isActive flag — the same flag the Agents admin
-// screen toggles and the assignment engine already respects.
+// "Available" means the account is enabled (isActive) AND the person is
+// currently accepting work (isAvailable). Both are shown on the Agents admin
+// screen and both are respected by the assignment engine.
 const prisma = require('../lib/prisma');
 const { OPEN_STATES } = require('../states');
+const { STAFF_ROLES } = require('./userService');
 
 /**
  * Workload = tickets that still need work.
@@ -74,12 +76,15 @@ function skillLabel(level) {
 async function listCandidates(ticket, actor, client = prisma) {
   const admin = isAdmin(actor);
 
-  // Agents an admin can reach: everyone. An agent: the ticket's group only.
-  const where = admin ? {} : { teamId: ticket.teamId };
+  // Agents an admin can reach: every staff member. An agent: the ticket's
+  // group only. USER-role accounts never appear — they cannot hold tickets.
+  const where = admin
+    ? { role: { in: STAFF_ROLES } }
+    : { teamId: ticket.teamId, role: { in: STAFF_ROLES } };
   const agents = await client.agent.findMany({
     where,
     include: { team: true },
-    orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
+    orderBy: [{ isActive: 'desc' }, { isAvailable: 'desc' }, { name: 'asc' }],
   });
 
   const counts = await workloadByAgent(agents.map((a) => a.id), client);
@@ -93,7 +98,7 @@ async function listCandidates(ticket, actor, client = prisma) {
         email: a.email,
         skillLevel: a.skillLevel,
         skillLabel: skillLabel(a.skillLevel),
-        available: a.isActive,
+        available: a.isActive && a.isAvailable,
         teamId: a.teamId,
         assignmentGroup: a.team ? a.team.name : null,
         assignmentGroupKey: a.team ? a.team.key : null,
@@ -129,8 +134,24 @@ function checkTarget(ticket, actor, target) {
 
   const admin = isAdmin(actor);
 
-  // An inactive agent is unavailable. Only an admin may override that.
-  if (!target.isActive && !admin) {
+  // A USER-role account never holds tickets, whoever is asking.
+  if (!STAFF_ROLES.includes(target.role)) {
+    return {
+      ok: false,
+      status: 400,
+      error: `${target.name} is not a helpdesk agent`,
+    };
+  }
+  // A disabled account can never receive work — not even from an admin.
+  if (!target.isActive) {
+    return {
+      ok: false,
+      status: 400,
+      error: `${target.name}'s account is deactivated`,
+    };
+  }
+  // Being unavailable is a softer state: an admin may override it deliberately.
+  if (!target.isAvailable && !admin) {
     return {
       ok: false,
       status: 400,

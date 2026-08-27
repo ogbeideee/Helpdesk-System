@@ -42,8 +42,9 @@ async function getTeamByKey(key, client = prisma) {
  */
 async function pickAgentRoundRobin(teamId, client = prisma) {
   if (!teamId) return null;
+  const { STAFF_ROLES } = require('./services/userService');
   const agent = await client.agent.findFirst({
-    where: { teamId, isActive: true },
+    where: { teamId, isActive: true, isAvailable: true, role: { in: STAFF_ROLES } },
     orderBy: [{ lastAssignedAt: 'asc' }, { id: 'asc' }],
   });
   if (!agent) return null;

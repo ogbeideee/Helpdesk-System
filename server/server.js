@@ -149,6 +149,19 @@ const PORT = process.env.PORT || 4000;
 const server = app.listen(PORT, () => {
   console.log(`Ticketing API listening on http://localhost:${PORT}`);
 
+  // One-time initial-administrator bootstrap. Inert as soon as any active
+  // admin exists, so it can never mint a second one.
+  require('./src/services/userService')
+    .bootstrapInitialAdmin({ logger: console })
+    .then((r) => {
+      if (r.status === 'skipped') {
+        console.log('[users] INITIAL_ADMIN_EMAIL not set — no administrator bootstrap');
+      } else if (r.status === 'inert') {
+        console.log(`[users] administrator bootstrap inert (${r.reason})`);
+      }
+    })
+    .catch((err) => console.error(`[users] administrator bootstrap failed: ${err.message}`));
+
   require('./src/graph/poller').startPolling();
 
   // Webhook subscription lifecycle. Safe no-op when WEBHOOK_PUBLIC_URL is

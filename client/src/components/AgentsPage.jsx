@@ -7,7 +7,7 @@ import {
 
 const SKILL_LABELS = { 1: 'L1 · Junior', 2: 'L2 · Standard', 3: 'L3 · Senior' };
 
-export default function AgentsPage() {
+export default function AgentsPage({ me }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [editorAgent, setEditorAgent] = useState(null); // null | 'new' | agent object
@@ -21,14 +21,40 @@ export default function AgentsPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  async function toggleAvailability(agent, nextActive) {
-    if (!nextActive) {
+  // Availability = accepting new work. Turning it off releases open tickets,
+  // so it is confirmed; turning it back on is immediate.
+  async function toggleAvailability(agent, nextAvailable) {
+    if (!nextAvailable) {
       setConfirmToggle(agent);
       return;
     }
     try {
-      await api.updateAgent(agent.id, { isActive: true });
+      await api.updateAgent(agent.id, { isAvailable: true });
       showToast(`${agent.name} is now available`);
+      await load();
+    } catch (e) {
+      showToast(e.message, 'error');
+    }
+  }
+
+  // Active = may sign in at all. Separate from availability, and guarded by
+  // the backend (the last administrator cannot be deactivated).
+  async function setActive(agent, nextActive) {
+    try {
+      await api.updateAgent(agent.id, { isActive: nextActive });
+      showToast(`${agent.name} ${nextActive ? 'activated' : 'deactivated'}`);
+      await load();
+    } catch (e) {
+      showToast(e.message, 'error');
+    }
+  }
+
+  // Promotion / demotion. The backend refuses self-changes and protects the
+  // final administrator; this only surfaces the outcome.
+  async function changeRole(agent, nextRole) {
+    try {
+      await api.updateAgent(agent.id, { role: nextRole });
+      showToast(`${agent.name} is now ${nextRole.toUpperCase()}`);
       await load();
     } catch (e) {
       showToast(e.message, 'error');
@@ -58,13 +84,14 @@ export default function AgentsPage() {
           <table className="table">
             <thead>
               <tr>
-                <th>Agent</th>
+                <th>Name</th>
                 <th>Email</th>
-                <th>Skill Level</th>
+                <th>Role</th>
                 <th>Assignment Group</th>
+                <th>Skill Level</th>
                 <th>Availability</th>
+                <th>Account</th>
                 <th>Open Workload</th>
-                <th>Last Assigned</th>
                 <th></th>
               </tr>
             </thead>
@@ -74,27 +101,53 @@ export default function AgentsPage() {
                   <td>
                     <span className="cell-agent">
                       <Avatar name={a.name} />
-                      <span><strong>{a.name}</strong>{a.role === 'admin' && <span className="chip chip-role">admin</span>}</span>
+                      <span>
+                        <strong>{a.name}</strong>
+                        {me && a.id === me.id && <span className="chip chip-you">you</span>}
+                      </span>
                     </span>
                   </td>
                   <td className="mono-sm muted">{a.email}</td>
-                  <td><span className={`chip chip-skill-${a.skillLevel}`}>{SKILL_LABELS[a.skillLevel] || `L${a.skillLevel}`}</span></td>
+                  <td><span className={`chip chip-role-${a.role}`}>{String(a.role || '').toUpperCase()}</span></td>
                   <td>{teamName(a.teamId)}</td>
+                  <td><span className={`chip chip-skill-${a.skillLevel}`}>{SKILL_LABELS[a.skillLevel] || `L${a.skillLevel}`}</span></td>
                   <td>
-                    <label className="switch" title={a.isActive ? 'Available' : 'Unavailable'}>
+                    <label className="switch" title={a.isAvailable ? 'Accepting new work' : 'Not accepting new work'}>
                       <input
                         type="checkbox"
-                        checked={a.isActive}
+                        checked={Boolean(a.isAvailable)}
+                        disabled={!a.isActive}
                         onChange={(e) => toggleAvailability(a, e.target.checked)}
                       />
                       <span className="switch-track" aria-hidden="true" />
-                      <span className={`switch-text ${a.isActive ? '' : 'muted'}`}>{a.isActive ? 'Available' : 'Off'}</span>
+                      <span className={`switch-text ${a.isAvailable ? '' : 'muted'}`}>
+                        {a.isAvailable ? 'Available' : 'Unavailable'}
+                      </span>
                     </label>
                   </td>
+                  <td>
+                    <span className={`chip ${a.isActive ? 'chip-ok' : 'chip-off'}`}>
+                      {a.isActive ? 'Active' : 'Inactive'}
+                    </span>
+                  </td>
                   <td><span className={`workload-pill ${a.openWorkload > 10 ? 'hot' : ''}`}>{a.openWorkload ?? 0}</span></td>
-                  <td className="muted nowrap">{a.lastAssignedAt ? timeAgo(a.lastAssignedAt) : 'never'}</td>
                   <td className="nowrap">
                     <button className="btn btn-ghost btn-sm" onClick={() => setEditorAgent(a)}>Edit</button>
+                    {/* Role and account actions are hidden on your own row -
+                        the backend refuses them regardless. */}
+                    {me && a.id !== me.id && (
+                      <>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => changeRole(a, a.role === 'admin' ? 'agent' : 'admin')}
+                        >
+                          {a.role === 'admin' ? 'Revoke admin' : 'Make admin'}
+                        </button>
+                        <button className="btn btn-ghost btn-sm" onClick={() => setActive(a, !a.isActive)}>
+                          {a.isActive ? 'Deactivate' : 'Activate'}
+                        </button>
+                      </>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -125,7 +178,7 @@ export default function AgentsPage() {
           onCancel={() => setConfirmToggle(null)}
           onConfirm={async () => {
             try {
-              await api.updateAgent(confirmToggle.id, { isActive: false });
+              await api.updateAgent(confirmToggle.id, { isAvailable: false });
               setConfirmToggle(null);
               showToast(`${confirmToggle.name} marked unavailable`);
               await load();
@@ -227,8 +280,9 @@ function AgentEditor({ agent, teams, onClose, onSaved }) {
             </select>
           </Field>
         </div>
-        <Field label="Role">
+        <Field label="Role" hint="USER cannot be assigned tickets. ADMIN can manage users.">
           <select value={form.role} onChange={set('role')}>
+            <option value="user">User</option>
             <option value="agent">Agent</option>
             <option value="admin">Administrator</option>
           </select>
