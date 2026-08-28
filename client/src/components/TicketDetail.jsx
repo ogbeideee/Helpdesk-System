@@ -28,6 +28,10 @@ export default function TicketDetail({ id, me, onChanged }) {
   const [candidatesError, setCandidatesError] = useState('');
   const [reassignReason, setReassignReason] = useState('');
   const [groupPick, setGroupPick] = useState('');
+  const [handovers, setHandovers] = useState([]);
+  const [handoverOpen, setHandoverOpen] = useState(false);
+  const [handoverPick, setHandoverPick] = useState('');
+  const [handoverNote, setHandoverNote] = useState('');
   const [showToast, toastNode] = useToast();
 
   const load = useCallback(() => {
@@ -37,6 +41,9 @@ export default function TicketDetail({ id, me, onChanged }) {
       .then((t) => {
         setTicket(t);
         setGroupPick(t.team?.key || '');
+        // The handover chain is a separate read: it outlives the ticket's
+        // current assignment and is never derived from it.
+        return api.ticketHandovers(id).then((h) => setHandovers(h.handovers || [])).catch(() => {});
       })
       .catch((e) => setError(e.message));
   }, [id]);
@@ -71,16 +78,18 @@ export default function TicketDetail({ id, me, onChanged }) {
   // Candidates load when the dialog opens. Declared with the other hooks,
   // above every early return, so the hook order never changes.
   useEffect(() => {
-    if (!reassignOpen) return;
+    if (!reassignOpen && !handoverOpen) return;
     setCandidates(null);
     setCandidatesError('');
     setAssignPick('');
     setReassignReason('');
+    setHandoverPick('');
+    setHandoverNote('');
     api
       .assignmentCandidates(id)
       .then(setCandidates)
       .catch((e) => setCandidatesError(e.message));
-  }, [reassignOpen, id]);
+  }, [reassignOpen, handoverOpen, id]);
 
   if (error && !ticket) return <div className="page"><ErrorState message={error} onRetry={load} /></div>;
   if (!ticket) return <div className="page"><Spinner label="Loading ticket…" /></div>;
@@ -90,6 +99,8 @@ export default function TicketDetail({ id, me, onChanged }) {
   const canStart = nextStates.includes('IN_PROGRESS');
   const canResolve = nextStates.includes('RESOLVED');
   const canClose = nextStates.includes('CLOSED');
+  // At most one offer is outstanding per ticket (the backend enforces it).
+  const activeHandover = handovers.find((h) => h.active) || null;
 
   return (
     <div className="page">
@@ -163,6 +174,16 @@ export default function TicketDetail({ id, me, onChanged }) {
             </div>
             <Timeline ticket={ticket} />
           </section>
+
+          {handovers.length > 0 && (
+            <section className="card">
+              <div className="card-head">
+                <h2>Handovers</h2>
+                <span className="muted small">{handovers.length} in the chain</span>
+              </div>
+              <HandoverChain handovers={handovers} />
+            </section>
+          )}
         </div>
 
         {/* ---------------- side column: properties + actions ---------------- */}
@@ -289,6 +310,40 @@ export default function TicketDetail({ id, me, onChanged }) {
                 >
                   ⇄ {ticket.assignedAgent ? 'Reassign' : 'Assign'}
                 </button>
+
+                {/* A handover is an offer, not a move: the ticket stays here
+                    until the teammate accepts. Offered to the ticket's owner
+                    (and to an admin, who may raise one on their behalf). */}
+                {ticket.assignedAgentId && ticket.state !== 'RESOLVED'
+                  && (ticket.assignedAgentId === me.id || me.role === 'admin') && (
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    disabled={busy || Boolean(activeHandover)}
+                    title={activeHandover
+                      ? `Awaiting ${activeHandover.targetAgent.name}'s answer`
+                      : 'Ask a teammate to take this ticket'}
+                    onClick={() => setHandoverOpen(true)}
+                  >
+                    🤝 Request handover
+                  </button>
+                )}
+
+                {activeHandover && (
+                  <p className="muted small" style={{ marginTop: 6 }}>
+                    {activeHandover.status === 'QUEUED'
+                      ? `Queued for ${activeHandover.targetAgent.name}.`
+                      : `Awaiting ${activeHandover.targetAgent.name}'s answer.`}{' '}
+                    {(activeHandover.requestedById === me.id || me.role === 'admin') && (
+                      <button
+                        className="btn btn-link btn-sm"
+                        disabled={busy}
+                        onClick={() => run(async () => api.cancelHandover(activeHandover.id), 'Handover cancelled')}
+                      >
+                        Cancel it
+                      </button>
+                    )}
+                  </p>
+                )}
 
                 {/* Taking a ticket from a colleague is only offered once it has
                     gone unattended; the backend enforces the same rule. */}
@@ -419,6 +474,88 @@ export default function TicketDetail({ id, me, onChanged }) {
                   }
                 >
                   Reassign
+                </button>
+              </div>
+            </>
+          )}
+        </Modal>
+      )}
+
+      {/* Request handover — the same candidate list as reassignment, but this
+          only sends an offer; the teammate decides. */}
+      {handoverOpen && (
+        <Modal title={`Request a handover of ${ticket.ticketNumber}`} onClose={() => setHandoverOpen(false)} width={560}>
+          <p className="modal-message">
+            The ticket stays with {ticket.assignedAgent ? ticket.assignedAgent.name : 'its current owner'} until
+            the teammate accepts. They can accept, decline, or suggest somebody else.
+          </p>
+          {candidatesError && <div className="callout callout-error">{candidatesError}</div>}
+          {!candidates && !candidatesError && <Spinner label="Loading team…" />}
+          {candidates && (
+            <>
+              {candidates.candidates.filter((c) => !c.isCurrentAssignee).length === 0 && (
+                <p className="muted">No other agents in this assignment group.</p>
+              )}
+              <div className="reassign-list">
+                {candidates.candidates.filter((c) => !c.isCurrentAssignee).map((c) => (
+                  <label
+                    key={c.id}
+                    className={`reassign-option ${c.selectable ? '' : 'is-disabled'} ${
+                      String(c.id) === handoverPick ? 'is-selected' : ''
+                    }`}
+                    title={c.selectable ? '' : c.reason || 'Not selectable'}
+                  >
+                    <input
+                      type="radio"
+                      name="handover-target"
+                      value={c.id}
+                      disabled={!c.selectable}
+                      checked={String(c.id) === handoverPick}
+                      onChange={() => setHandoverPick(String(c.id))}
+                    />
+                    <span className="reassign-option-body">
+                      <strong>{c.name}</strong>
+                      <small className="muted">
+                        {c.skillLabel} · {c.assignmentGroup || 'no group'} ·{' '}
+                        <span className={c.available ? 'ok-text' : 'warn-text'}>
+                          {c.available ? 'Available' : 'Unavailable'}
+                        </span>{' '}
+                        · {c.openTickets} open {c.openTickets === 1 ? 'ticket' : 'tickets'}
+                      </small>
+                      {!c.selectable && c.reason && (
+                        <small className="muted reassign-why">{c.reason}</small>
+                      )}
+                    </span>
+                  </label>
+                ))}
+              </div>
+              <label className="field" style={{ marginTop: 12 }}>
+                <span className="field-label">Message (optional)</span>
+                <textarea
+                  rows={2}
+                  placeholder="e.g. You dealt with this printer last week."
+                  value={handoverNote}
+                  onChange={(e) => setHandoverNote(e.target.value)}
+                />
+              </label>
+              <div className="modal-actions">
+                <button className="btn btn-ghost" onClick={() => setHandoverOpen(false)} disabled={busy}>
+                  Cancel
+                </button>
+                <button
+                  className="btn btn-primary"
+                  disabled={busy || !handoverPick}
+                  onClick={() =>
+                    run(async () => {
+                      await api.requestHandover(id, {
+                        agentId: Number(handoverPick),
+                        note: handoverNote.trim() || undefined,
+                      });
+                      setHandoverOpen(false);
+                    }, 'Handover requested')
+                  }
+                >
+                  Send request
                 </button>
               </div>
             </>
@@ -560,7 +697,8 @@ function classifyAuditEvent(log) {
     };
   }
 
-  if (/^Reassigned from/i.test(note)) return { kind: 'reassign', title: note };
+  if (/^Handover/i.test(note)) return { kind: 'handover', title: note };
+    if (/^Reassigned from/i.test(note)) return { kind: 'reassign', title: note };
   if (/assignment group changed/i.test(note)) return { kind: 'group', title: note };
   if (/assigned|claim/i.test(note)) return { kind: 'assignment', title: note };
   return { kind: 'audit', title: note || 'Updated' };
@@ -578,6 +716,7 @@ const KIND_META = {
   status:      { icon: '⇄', cls: 'tl-status' },
   assignment:  { icon: '👤', cls: 'tl-assign' },
   reassign:    { icon: '⇄', cls: 'tl-assign' },
+  handover:    { icon: '🤝', cls: 'tl-handover' },
   group:       { icon: '⛁', cls: 'tl-assign' },
   internal:    { icon: '🔒', cls: 'tl-internal' },
   update:      { icon: '💬', cls: 'tl-update' },
@@ -602,6 +741,47 @@ function Timeline({ ticket }) {
               {ev.detail && <div className={`timeline-detail ${ev.kind === 'resolution' ? 'resolution-text' : ''}`}>{ev.detail}</div>}
               <time className="muted small">{fmtDateTime(ev.at)}</time>
             </div>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+/**
+ * The complete handover chain, oldest first: Mr. Dare → Sarah → John.
+ * Nothing is ever removed, so an accepted handover stays visible permanently.
+ */
+const HANDOVER_META = {
+  PENDING:   { label: 'awaiting an answer', cls: 'chip-warn' },
+  QUEUED:    { label: 'queued', cls: '' },
+  ACCEPTED:  { label: 'accepted', cls: 'chip-ok' },
+  DECLINED:  { label: 'declined', cls: 'chip-warn' },
+  CANCELLED: { label: 'cancelled', cls: '' },
+  EXPIRED:   { label: 'expired', cls: '' },
+};
+
+function HandoverChain({ handovers }) {
+  return (
+    <ol className="handover-chain">
+      {handovers.map((h) => {
+        const meta = HANDOVER_META[h.status] || { label: h.status.toLowerCase(), cls: '' };
+        return (
+          <li key={h.id} className={`handover-chain-item is-${h.status.toLowerCase()}`}>
+            <div className="handover-chain-line">
+              <strong>{h.requestedBy.name}</strong>
+              <span className="handover-arrow" aria-hidden="true">→</span>
+              <strong>{h.targetAgent.name}</strong>
+              <span className={`chip ${meta.cls}`}>{meta.label}</span>
+            </div>
+            <div className="muted small">
+              {fmtDateTime(h.createdAt)}
+              {h.respondedAt && ` · answered ${fmtDateTime(h.respondedAt)}`}
+              {h.suggestedAgent && ` · suggested ${h.suggestedAgent.name} instead`}
+            </div>
+            {(h.note || h.responseNote) && (
+              <div className="handover-note">{h.responseNote || h.note}</div>
+            )}
           </li>
         );
       })}

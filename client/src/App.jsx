@@ -11,12 +11,15 @@ import RoutingPage from './components/RoutingPage.jsx';
 import GroupsPage from './components/GroupsPage.jsx';
 import SimulateEmailPage from './components/SimulateEmailPage.jsx';
 import AvailabilityControl from './components/AvailabilityControl.jsx';
+import HandoversPage from './components/HandoversPage.jsx';
 
 const EMAIL_SIMULATOR_ENABLED = import.meta.env.VITE_ENABLE_EMAIL_SIMULATOR !== 'false';
 
 export default function App() {
   const [me, setMe] = useState(undefined); // undefined = checking, null = signed out
   const [route, setRoute] = useState(() => parseHash());
+  // Handover requests waiting for this person to answer, shown on the nav.
+  const [handoverCount, setHandoverCount] = useState(0);
 
   useEffect(() => {
     if (!getToken()) {
@@ -35,6 +38,21 @@ export default function App() {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
+  // Handovers expire and queued ones activate on their own, so the badge is
+  // refreshed on a timer rather than only on navigation.
+  useEffect(() => {
+    if (!me) return undefined;
+    let cancelled = false;
+    const poll = () =>
+      api
+        .handoverInbox()
+        .then((d) => { if (!cancelled) setHandoverCount(d.pending.length); })
+        .catch(() => {});
+    poll();
+    const t = setInterval(poll, 60000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [me]);
+
   function navigate(path) {
     window.location.hash = path;
   }
@@ -52,6 +70,7 @@ export default function App() {
   const nav = [
     { path: '/', label: 'Dashboard', icon: '▤' },
     { path: '/tickets', label: 'Tickets', icon: '🎫' },
+    { path: '/handovers', label: 'Handovers', icon: '🤝', badge: handoverCount },
     ...(isAdmin
       ? [
           { path: '/agents', label: 'Agents', icon: '👤' },
@@ -88,6 +107,9 @@ export default function App() {
           onCancel={() => navigate(`/tickets/${route.id}`)}
         />
       );
+      break;
+    case 'handovers':
+      content = <HandoversPage me={me} onCountChange={setHandoverCount} />;
       break;
     case 'agents':
       content = isAdmin ? <AgentsPage me={me} /> : <Denied />;
@@ -134,6 +156,7 @@ export default function App() {
             >
               <span className="nav-icon" aria-hidden="true">{item.icon}</span>
               {item.label}
+              {item.badge > 0 && <span className="nav-badge">{item.badge}</span>}
               {item.dev && <span className="chip chip-dev">DEV</span>}
             </button>
           ))}
@@ -181,6 +204,7 @@ function parseHash() {
   switch (hash) {
     case '/tickets': return { name: 'list', path: '/tickets' };
     case '/tickets/new': return { name: 'new', path: '/tickets' };
+    case '/handovers': return { name: 'handovers', path: '/handovers' };
     case '/agents': return { name: 'agents', path: '/agents' };
     case '/routing': return { name: 'routing', path: '/routing' };
     case '/groups': return { name: 'groups', path: '/groups' };

@@ -98,6 +98,9 @@ model Agent {
   auditEvents     UserAuditLog[] @relation("UserAuditSubject")
   preferredForRules RoutingRule[]  @relation("RoutingPreferredAgent")
   notifications   Notification[] @relation("AgentNotifications")
+  handoversRaised    HandoverRequest[] @relation("HandoverRequester")
+  handoversReceived  HandoverRequest[] @relation("HandoverTarget")
+  handoversSuggested HandoverRequest[] @relation("HandoverSuggested")
 }
 
 // Administrative history for user records: creation, role changes,
@@ -156,6 +159,7 @@ model Ticket {
   auditLogs           TicketAuditLog[]
   comments            Comment[]
   notifications       Notification[]
+  handovers           HandoverRequest[]
 
   @@index([state])
   @@index([graphConversationId])
@@ -228,4 +232,64 @@ model Notification {
 
   @@index([agentId, readAt])
   @@index([ticketId])
+}
+
+// Agent-to-agent ticket handover.
+//
+// A handover is an OFFER: the ticket does not change owner until the target
+// accepts. Everything about who may hold a ticket, how it moves and how people
+// are told lives in the existing assignment/workload/notification services —
+// this record only tracks the offer's lifecycle.
+//
+// status: PENDING | QUEUED | ACCEPTED | DECLINED | CANCELLED | EXPIRED
+// Completed rows are never deleted: the ticket history is the chain of them.
+model HandoverRequest {
+  id               Int      @id @default(autoincrement())
+  ticketId         Int
+  ticket           Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  // The agent giving the ticket away (its owner at the time of the request).
+  requestedById    Int
+  requestedBy      Agent    @relation("HandoverRequester", fields: [requestedById], references: [id])
+  // The agent being asked to take it.
+  targetAgentId    Int
+  targetAgent      Agent    @relation("HandoverTarget", fields: [targetAgentId], references: [id])
+  // Set when the target proposes somebody else instead. Advisory only: no
+  // request is created for them, the original agent decides.
+  suggestedAgentId Int?
+  suggestedAgent   Agent?   @relation("HandoverSuggested", fields: [suggestedAgentId], references: [id])
+
+  status           String   @default("PENDING")
+  note             String?
+  responseNote     String?
+  // Who ended the request, for the history line ("Cancelled by ...").
+  resolvedBy       String?
+
+  // Queue position is FIFO by id among QUEUED rows for the same target, so it
+  // is derived rather than stored and can never drift.
+  queuedAt         DateTime?
+  // When the request became PENDING; the expiry clock starts here.
+  activatedAt      DateTime?
+  expiresAt        DateTime?
+  // Expiry is paused while the target is unavailable: expiresAt is cleared and
+  // the remaining time parked here until they are available again.
+  pausedAt         DateTime?
+  remainingMs      Int?
+  respondedAt      DateTime?
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([targetAgentId, status])
+  @@index([ticketId])
+  @@index([status, expiresAt])
+}
+
+// Administrator-configurable runtime settings, as strings.
+// Deliberately tiny: env vars supply the defaults, this table only holds
+// values an administrator has actually overridden.
+model Setting {
+  key       String   @id
+  value     String
+  updatedBy String?
+  updatedAt DateTime @default(now()) @updatedAt
 }

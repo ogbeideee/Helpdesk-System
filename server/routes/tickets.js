@@ -17,6 +17,7 @@ const { intakeEmailMessage, IntakeValidationError } = require('../src/services/t
 const { classify } = require('../src/graph/categoryRules');
 const assignmentPolicy = require('../src/services/assignmentPolicy');
 const workloadService = require('../src/services/workloadService');
+const handoverService = require('../src/services/handoverService');
 
 const router = express.Router();
 
@@ -342,6 +343,12 @@ async function applyStateChange(existing, toState, { actor, note, resolution }) 
     .notifyStatusChanged(updated, { previousState: existing.state })
     .catch(() => {});
 
+  // A ticket that is finished has nothing to hand over: any outstanding offer
+  // is cancelled and kept in the history. The ticket itself is untouched.
+  if (['RESOLVED', 'CLOSED'].includes(toState)) {
+    await handoverService.cancelForTicket(updated.id, actor, `Ticket was ${toState.toLowerCase()}`);
+  }
+
   return { status: 200, body: serializeTicket(updated) };
 }
 
@@ -660,6 +667,43 @@ async function takeTicket(req, res) {
 // UI calls the action.
 router.post('/:id/claim', takeTicket);
 router.post('/:id/take', takeTicket);
+
+// ---------------------------------------------------------------------------
+// Handovers (agent A offers the ticket to agent B; B decides)
+// ---------------------------------------------------------------------------
+
+// POST /api/tickets/:id/handover — request a handover to a teammate.
+// The ticket does NOT change owner here; see routes/handovers.js for the reply.
+router.post('/:id/handover', async (req, res) => {
+  try {
+    const ticket = await loadTicketOr404(req.params.id, res, { assignedAgent: true, team: true });
+    if (!ticket) return;
+    if (!Number.isInteger(req.body && req.body.agentId)) {
+      return res.status(400).json({ error: 'agentId is required' });
+    }
+    const result = await handoverService.createRequest({
+      ticket,
+      actor: req.agent,
+      targetAgentId: req.body.agentId,
+      note: req.body.note,
+    });
+    if (!result.ok) return res.status(result.status).json({ error: result.error });
+    res.status(201).json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/tickets/:id/handovers — the complete handover chain, oldest first
+router.get('/:id/handovers', async (req, res) => {
+  try {
+    const ticket = await loadTicketOr404(req.params.id, res, {});
+    if (!ticket) return;
+    res.json({ handovers: await handoverService.historyForTicket(ticket.id) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // Shared handler for internal notes and requester-facing updates.
 async function addNote(req, res) {

@@ -26,6 +26,7 @@ app.use('/api/dashboard', require('./src/authMiddleware').requireAuth, require('
 app.use('/api/agents', require('./routes/agents'));
 app.use('/api/routing', require('./routes/routing'));
 app.use('/api/workload', require('./routes/workload'));
+app.use('/api/handovers', require('./routes/handovers'));
 
 // Reference data for the client — read-only, authenticated.
 app.get('/api/teams', require('./src/authMiddleware').requireAuth, async (req, res) => {
@@ -174,6 +175,10 @@ const server = app.listen(PORT, () => {
   // overlapping runs; every move is concurrency-safe.
   require('./src/services/workloadService').startRebalancer({ logger: console });
 
+  // Handover expiry. Bounded and guarded against overlapping sweeps; a paused
+  // (recipient unavailable) request is skipped by construction.
+  require('./src/services/handoverService').startExpirySweeper({ logger: console });
+
   require('./src/graph/poller').startPolling();
 
   // Webhook subscription lifecycle. Safe no-op when WEBHOOK_PUBLIC_URL is
@@ -185,6 +190,7 @@ function shutdown(signal) {
   console.log(`\n${signal} received — shutting down`);
   require('./src/graph/poller').stopPolling();
   require('./src/services/workloadService').stopRebalancer();
+  require('./src/services/handoverService').stopExpirySweeper();
   require('./src/graph/subscriptionService').getSubscriptionService().stopLifecycle();
   server.close(async () => {
     await prisma.$disconnect();

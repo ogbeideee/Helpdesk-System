@@ -7,6 +7,7 @@ const prisma = require('../src/lib/prisma');
 const { requireAuth, sanitizeAgent } = require('../src/authMiddleware');
 const workloadService = require('../src/services/workloadService');
 const { isAdmin } = require('../src/services/assignmentPolicy');
+const handoverService = require('../src/services/handoverService');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -83,6 +84,8 @@ router.post('/availability', async (req, res) => {
           note: 'Marked themselves available',
         },
       });
+      // Any handover request that was waiting for them resumes its clock.
+      await handoverService.onAvailabilityChanged(req.agent.id, true);
       return res.json({ ...sanitizeAgent(updated), isAvailable: updated.isAvailable, reassigned: null });
     }
 
@@ -132,6 +135,10 @@ router.post('/availability', async (req, res) => {
         note: `Marked themselves unavailable; ${summary.moved} ticket(s) reassigned, ${summary.unassigned} left for triage`,
       },
     });
+
+    // Requirement 4: time away must not cost somebody a handover request, so
+    // the expiry clock on anything waiting for them is paused.
+    await handoverService.onAvailabilityChanged(req.agent.id, false);
 
     res.json({ ...sanitizeAgent(updated), isAvailable: updated.isAvailable, reassigned: summary });
   } catch (err) {

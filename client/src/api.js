@@ -84,6 +84,19 @@ export const api = {
   rebalance: (payload = {}) => request('/workload/rebalance', body(payload)),
   takeTicket: (id) => request(`/tickets/${id}/take`, body({})),
 
+  // ---- handovers ----
+  requestHandover: (ticketId, payload) => request(`/tickets/${ticketId}/handover`, body(payload)),
+  ticketHandovers: (ticketId) => request(`/tickets/${ticketId}/handovers`),
+  handoverInbox: () => request('/handovers/inbox'),
+  handoverOutbox: () => request('/handovers/outbox'),
+  acceptHandover: (id, payload = {}) => request(`/handovers/${id}/accept`, body(payload)),
+  declineHandover: (id, payload = {}) => request(`/handovers/${id}/decline`, body(payload)),
+  suggestHandover: (id, payload) => request(`/handovers/${id}/suggest`, body(payload)),
+  cancelHandover: (id, payload = {}) => request(`/handovers/${id}/cancel`, body(payload)),
+  overrideHandover: (id) => request(`/handovers/${id}/override`, body({})),
+  handoverSettings: () => request('/handovers/settings'),
+  updateHandoverSettings: (payload) => request('/handovers/settings', patch(payload)),
+
   // ---- routing rules (admin) ----
   routingRules: () => request('/routing/rules'),
   routingGroups: () => request('/routing/groups'),

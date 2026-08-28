@@ -5,6 +5,7 @@ const { requireAdmin, sanitizeAgent } = require('../src/authMiddleware');
 const { OPEN_STATES } = require('../src/states');
 const userService = require('../src/services/userService');
 const workloadService = require('../src/services/workloadService');
+const handoverService = require('../src/services/handoverService');
 
 const router = express.Router();
 router.use(requireAdmin);
@@ -198,6 +199,16 @@ router.patch('/:id', async (req, res) => {
       });
     }
 
+    // Handovers follow the same two rules: a deactivated recipient cannot
+    // answer, so their requests are routed on; a merely unavailable one keeps
+    // theirs with the expiry clock paused.
+    let handovers = null;
+    if (deactivated) {
+      handovers = await handoverService.onAgentDeactivated(id, req.agent);
+    } else if (changes.isAvailable !== undefined && changes.isAvailable !== existing.isAvailable) {
+      handovers = await handoverService.onAvailabilityChanged(id, changes.isAvailable);
+    }
+
     if (changes.teamId !== undefined && changes.teamId !== existing.teamId && !deactivated && !forcedUnavailable) {
       await prisma.ticket.updateMany({
         where: { assignedAgentId: id, state: 'NEW' },
@@ -211,6 +222,8 @@ router.patch('/:id', async (req, res) => {
       skillLevel: updated.skillLevel,
       // Present when this change handed work on to other agents.
       reassigned,
+      // Present when this change affected outstanding handover requests.
+      handovers,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

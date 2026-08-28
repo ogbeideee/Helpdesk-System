@@ -797,3 +797,63 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
 .plain-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .plain-list li { padding: 8px 10px; border-radius: 7px; background: rgba(255, 255, 255, 0.03); }
 .notif-list { max-height: 340px; overflow-y: auto; }
+
+/* ---- handovers ---------------------------------------------------------
+   Reuses the card, chip, button and reassign-option styles; only the list
+   layout and the chain are new. */
+.nav-badge {
+  margin-left: auto;
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: hsl(0 72% 55%);
+  color: #fff;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+}
+.handover-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.handover-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.09));
+}
+.handover-item.is-queued { opacity: 0.72; }
+.handover-main { display: flex; flex-direction: column; gap: 3px; min-width: 260px; flex: 1; }
+.handover-ticket { color: inherit; text-decoration: none; }
+.handover-ticket:hover { text-decoration: underline; }
+.handover-note {
+  margin-top: 4px;
+  padding: 6px 9px;
+  border-left: 2px solid var(--border, rgba(255, 255, 255, 0.14));
+  font-size: 13px;
+  color: var(--muted, rgba(255, 255, 255, 0.62));
+}
+.handover-chain { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.handover-chain-item {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border-left: 3px solid var(--border, rgba(255, 255, 255, 0.14));
+}
+.handover-chain-item.is-accepted { border-left-color: hsl(160 64% 45%); }
+.handover-chain-item.is-pending  { border-left-color: var(--warning, hsl(38 92% 55%)); }
+.handover-chain-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.handover-arrow { opacity: 0.55; }
+.tl-handover .timeline-icon { background: rgba(52, 211, 153, 0.16); color: hsl(160 64% 62%); border-color: transparent; }
+.settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-bottom: 12px; }
+.btn-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent, hsl(212 90% 68%));
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}
