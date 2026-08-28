@@ -252,7 +252,7 @@ function AgentEditor({ agent, teams, onClose, onSaved }) {
  {!editing && (
           <>
             <Field label="Email" required hint="Used to sign in to this portal">
-              <input type="email" value={form.email} onChange={set('email')} required placeholder="name@noctincan.com" />
+              <input type="email" value={form.email} onChange={set('email')} required placeholder="name@yourcompany.com" />
             </Field>
             <Field label="Initial password" required hint="Minimum 8 characters — they can change it later">
               <input type="password" value={form.password} onChange={set('password')} minLength={8} required />

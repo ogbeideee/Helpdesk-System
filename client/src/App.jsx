@@ -143,7 +143,7 @@ export default function App() {
         <div className="brand" onClick={() => navigate('/')} role="button" tabIndex={0}>
           <span className="brand-mark">IT</span>
           <span className="brand-text">
-            <strong>NoctInc</strong>
+            <strong>IT HELPDESK</strong>
             <small>Service Desk</small>
           </span>
         </div>

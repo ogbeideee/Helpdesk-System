@@ -10,6 +10,10 @@ process.env.PORT = process.env.PORT || '4166';
 // Keep the background balancer out of the way: this suite drives it directly.
 process.env.REBALANCE_INTERVAL_MS = '0';
 
+// Isolated database: this suite never touches the application's dev.db.
+// Must come before anything that loads the Prisma client.
+const testdb = require('./lib/testdb').use('workload');
+
 const { spawn } = require('child_process');
 const path = require('path');
 const bcrypt = require('bcryptjs');

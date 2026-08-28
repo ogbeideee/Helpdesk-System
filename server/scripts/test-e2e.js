@@ -4,12 +4,34 @@
    Usage: npm run test:e2e  (from server/) */
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'e2e-secret';
 process.env.PORT = '4188';
+// Isolated database: this suite never touches the application's dev.db.
+// Must come before anything that loads the Prisma client.
+const testdb = require('./lib/testdb').use('e2e');
+
 
 const { spawn } = require('child_process');
 const path = require('path');
+const bcrypt = require('bcryptjs');
+const prisma = require('../src/lib/prisma');
+const { ensureTeams } = require('../src/teams');
 
 const BASE = `http://localhost:${process.env.PORT}`;
 const MARK = 'e2e-';
+
+// The suite owns its administrator: nothing here depends on seeded data.
+const DOMAIN = 'e2e.test';
+const ADMIN_EMAIL = `admin@${DOMAIN}`;
+const ADMIN_PASSWORD = 'E2eAdmin!123';
+
+async function seedAdmin() {
+  await ensureTeams(prisma);
+  const hash = bcrypt.hashSync(ADMIN_PASSWORD, 10);
+  await prisma.agent.upsert({
+    where: { email: ADMIN_EMAIL },
+    create: { name: 'E2E Admin', email: ADMIN_EMAIL, role: 'admin', skillLevel: 3, passwordHash: hash },
+    update: { passwordHash: hash, role: 'admin', isActive: true, isAvailable: true },
+  });
+}
 let failures = 0;
 function check(name, cond, extra = '') {
   if (cond) console.log(`PASS  ${name}`);
@@ -64,6 +86,8 @@ function withGroupKeys(agentsList, groups) {
 }
 
 async function main() {
+  await seedAdmin();
+
   const proc = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
     env: process.env,
     stdio: ['ignore', 'ignore', 'pipe'],
@@ -77,14 +101,14 @@ async function main() {
     const admin = (
       await req('/api/auth/login', {
         method: 'POST',
-        body: { email: 'admin@noctincan.com', password: 'ChangeMe!123' },
+        body: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD },
       })
     ).data;
 
     const agentSpecs = [
-      { name: MARK + 'Riley Chen', email: MARK + 'riley@noctincan.com', group: 'hardware', skill: 3 },
-      { name: MARK + 'Sam Ortiz', email: MARK + 'sam@noctincan.com', group: 'software', skill: 2 },
-      { name: MARK + 'Alex Reed', email: MARK + 'alex@noctincan.com', group: 'accounts', skill: 1 },
+      { name: MARK + 'Riley Chen', email: MARK + `riley@${DOMAIN}`, group: 'hardware', skill: 3 },
+      { name: MARK + 'Sam Ortiz', email: MARK + `sam@${DOMAIN}`, group: 'software', skill: 2 },
+      { name: MARK + 'Alex Reed', email: MARK + `alex@${DOMAIN}`, group: 'accounts', skill: 1 },
     ];
     const createdAgents = [];
     for (const spec of agentSpecs) {
@@ -254,11 +278,26 @@ async function main() {
     const t2 = intake2.data.ticket;
     check('second email creates second ticket', intake2.status === 201 && t2.id !== t.id);
     const beforeAssignee = t2.assignedAgent.email;
-    const otherHw = createdAgents[0].email === beforeAssignee
-      ? (await req('/api/agents', { token: admin.token })).data.agents.find(
-          (a) => a.teamId === t2.teamId && a.isActive && a.email !== beforeAssignee && !a.email.startsWith(MARK + 'sam')
-        )
-      : createdAgents[0];
+
+    // Somebody else in the ticket's own group to move it to. Created here so
+    // the suite never depends on other staff already existing in the database.
+    const groupKey = (await req('/api/teams', { token: admin.token })).data
+      .find((g) => g.id === t2.teamId).key;
+    const otherHw = { name: MARK + 'Nia Okafor', email: MARK + `nia@${DOMAIN}` };
+    const secondAgent = await req('/api/agents', {
+      method: 'POST',
+      token: admin.token,
+      body: {
+        name: otherHw.name,
+        email: otherHw.email,
+        password: 'E2ePass!123',
+        teamKey: groupKey,
+        skillLevel: 3,
+        role: 'agent',
+      },
+    });
+    check('setup: created a second agent in the ticket group', secondAgent.status === 201,
+      JSON.stringify(secondAgent.data).slice(0, 140));
     const reassigned = await req('/api/tickets/' + t2.id + '/assign', {
       method: 'POST',
       token: admin.token,
@@ -325,8 +364,8 @@ async function main() {
 }
 
 async function cleanup() {
-  const { PrismaClient } = require('@prisma/client');
-  const prisma = new PrismaClient();
+  // Uses the suite's single Prisma client: a second one would keep the
+  // throw-away database file open and stop it being deleted afterwards.
   try {
     const tickets = await prisma.ticket.findMany({
       where: {

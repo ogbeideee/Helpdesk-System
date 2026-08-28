@@ -6,8 +6,13 @@
    Usage: npm run test:ingest  (from server/) */
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
 
+// Isolated database: this suite never touches the application's dev.db.
+// Must come before anything that loads the Prisma client.
+const testdb = require('./lib/testdb').use('ingest');
+
 const prisma = require('./../src/lib/prisma');
 const { ensureTeams } = require('../src/teams');
+const { ensureDefaultRoutingRules } = require('../src/services/defaultRoutingRules');
 const { parseEmail } = require('../src/email/emailParser');
 const { ingestRawEmail, ingestNormalizedEmail, toIntakePayload } =
   require('../src/services/emailIngestion');
@@ -65,6 +70,9 @@ async function cleanup() {
 
 async function main() {
   await ensureTeams(prisma);
+  // The application seeds these on every start, so the routing decisions
+  // exercised below are the ones a real install actually makes.
+  await ensureDefaultRoutingRules({ client: prisma, logger: { log() {}, warn() {} } });
   await cleanup();
 
   // A deterministic senior agent in "accounts" so Password Reset routing has a

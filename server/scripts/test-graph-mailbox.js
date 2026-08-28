@@ -7,8 +7,13 @@
    Usage: npm run test:mailbox  (from server/) */
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
 
+// Isolated database: this suite never touches the application's dev.db.
+// Must come before anything that loads the Prisma client.
+const testdb = require('./lib/testdb').use('mailbox');
+
 const prisma = require('../src/lib/prisma');
 const { ensureTeams } = require('../src/teams');
+const { ensureDefaultRoutingRules } = require('../src/services/defaultRoutingRules');
 
 let failures = 0;
 function check(name, cond, extra = '') {
@@ -137,6 +142,9 @@ function mailboxConfig(overrides = {}) {
 
 async function main() {
   await ensureTeams(prisma);
+  // The application seeds these on every start, so routing here matches
+  // what a real install does.
+  await ensureDefaultRoutingRules({ client: prisma, logger: { log() {}, warn() {} } });
   await cleanup();
 
   const { createMailService } = require('../src/graph/mailService');

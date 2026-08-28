@@ -5,8 +5,13 @@
    Usage: npm run test:graph  (from server/) */
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
 
+// Isolated database: this suite never touches the application's dev.db.
+// Must come before anything that loads the Prisma client.
+const testdb = require('./lib/testdb').use('graph');
+
 const prisma = require('../src/lib/prisma');
 const { ensureTeams } = require('../src/teams');
+const { ensureDefaultRoutingRules } = require('../src/services/defaultRoutingRules');
 
 let failures = 0;
 function check(name, cond, extra = '') {
@@ -57,6 +62,9 @@ const MARK = 'gtest-';
 
 async function main() {
   await ensureTeams(prisma);
+  // The application seeds these on every start, so routing here matches
+  // what a real install does.
+  await ensureDefaultRoutingRules({ client: prisma, logger: { log() {}, warn() {} } });
   // A deterministic eligible agent in accounts (password-reset emails).
   const agent = await prisma.agent.upsert({
     where: { email: `${MARK}agent@example.com` },

@@ -4,10 +4,15 @@
 //   npm run seed:demo             -> demo accounts + fixture tickets + ~120 bulk tickets
 //   npm run seed:demo -- --clear  -> remove previously seeded demo data
 //
-// LOCAL/DEVELOPMENT ONLY. The seed refuses to run when NODE_ENV=production
-// (override with --force if you really mean it). Demo passwords live here in
-// the backend seed only — never in frontend source and never in production
-// configuration.
+// LOCAL/DEVELOPMENT ONLY, AND EXPLICITLY OPT-IN.
+//
+// This script writes fictional accounts and tickets. On a real installation
+// that is data corruption, so it will not run unless you say so twice: pass
+// --confirm (or set ALLOW_DEMO_SEED=1) as well as being outside production.
+// It is never invoked from application startup or from db:init.
+//
+// Demo passwords live here in the backend seed only — never in frontend
+// source, never in the README and never in production configuration.
 //
 // Every part of this seed is idempotent: accounts are upserted by email and
 // fixture tickets are keyed by a stable graphMessageId, so re-running never
@@ -19,6 +24,11 @@ const { nextTicketNumber } = require('../src/ticketNumbers');
 const { computeDueAt } = require('../src/sla');
 const assignmentEngine = require('../src/services/assignmentEngine');
 const { ensureTeams } = require('../src/teams');
+
+// Fallback author for demo activity when no agent is assigned. Points at the
+// demo domain rather than a seeded application account, so the demo dataset
+// never depends on staff that a real installation will not have.
+const DEMO_FALLBACK_AUTHOR = { name: 'Service Desk', email: 'service.desk@demo.example' };
 
 const NAMES = [
   ['John Doe', 'john.doe'], ['Priya Nair', 'priya.nair'], ['Marcus Webb', 'marcus.webb'],
@@ -399,12 +409,12 @@ async function seedDemoFixtures(accounts) {
         data: {
           ticketId: ticket.id,
           authorAgentId: fromRequester ? null : agent ? agent.id : null,
-          authorName: fromRequester ? f.requester[0] : agent ? agent.name : 'Service Desk',
+          authorName: fromRequester ? f.requester[0] : agent ? agent.name : DEMO_FALLBACK_AUTHOR.name,
           authorEmail: fromRequester
             ? f.requester[1]
             : agent
               ? agent.email
-              : 'service.desk@noctincan.com',
+              : DEMO_FALLBACK_AUTHOR.email,
           isRequester: fromRequester,
           isInternal: Boolean(c.internal),
           viaEmail: fromRequester,
@@ -541,8 +551,8 @@ async function seed(count) {
         data: {
           ticketId: ticket.id,
           authorAgentId: assignment?.agent ? assignment.agent.id : null,
-          authorName: assignment?.agent ? assignment.agent.name : 'Service Desk',
-          authorEmail: assignment?.agent ? assignment.agent.email : 'service.desk@noctincan.com',
+          authorName: assignment?.agent ? assignment.agent.name : DEMO_FALLBACK_AUTHOR.name,
+          authorEmail: assignment?.agent ? assignment.agent.email : DEMO_FALLBACK_AUTHOR.email,
           isRequester: false,
           isInternal,
           body: isInternal ? pick(NOTE_SNIPPETS) : pick(PUBLIC_SNIPPETS),
@@ -562,6 +572,27 @@ async function main() {
     console.error(
       'Refusing to seed demo accounts/data with NODE_ENV=production.\n' +
         'This dataset is for local development only. Use --force to override.'
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  // Opt-in guard: seeding fictional data into a database that is in real use
+  // is destructive, so it takes a deliberate flag even in development.
+  // --clear is exempt: removing demo data is always safe.
+  const optedIn =
+    process.argv.includes('--confirm') ||
+    process.argv.includes('--force') ||
+    process.env.ALLOW_DEMO_SEED === '1';
+  if (!process.argv.includes('--clear') && !optedIn) {
+    console.error(
+      'Refusing to seed demo data without an explicit opt-in.\n' +
+        '\n' +
+        '  This writes fictional accounts and ~130 fake tickets. If this database\n' +
+        '  is in real use, that is data you will have to clean up again.\n' +
+        '\n' +
+        '  To seed anyway:   npm run seed:demo -- --confirm\n' +
+        '  To remove it:     npm run seed:demo -- --clear\n'
     );
     process.exitCode = 1;
     return;

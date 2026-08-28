@@ -41,13 +41,9 @@ Resolution                    mandatory resolution note, full audit history
 cd server
 npm install
 copy .env.example .env          # GRAPH_* vars can stay empty
+#   then set INITIAL_ADMIN_EMAIL in .env to your first administrator
 npm run db:push                 # create schema
-npm run db:init                 # seed teams + admin + sample agents
-
-# --- seed demo accounts + realistic demo data (recommended) -----------
-npm run seed:demo               # demo logins + 10 fixture tickets + ~120 bulk tickets
-npm run seed:demo -- --clear    # remove demo tickets again
-npm run seed:demo -- --clear --accounts   # also remove the demo logins
+npm run db:init                 # assignment groups, routing rules, first admin
 
 # --- run backend (terminal 1) ----------------------------------------
 cd server
@@ -63,48 +59,53 @@ cd client && npm run build      # builds client/dist
 cd ../server && npm start       # single server serves app + API on :4000
 ```
 
-Sign in with `admin@noctincan.com` / `ChangeMe!123` (sample agents use the same
-password — change both before real use), or use the demo accounts below.
+## First sign-in
 
-## Development Demo Accounts
+There are no built-in accounts and no default passwords. The first
+administrator comes from `INITIAL_ADMIN_EMAIL` in `server/.env`:
 
-**Local/development only.** These accounts exist so you can log in and inspect
-the dashboard and the different role experiences before production
-authentication is connected. They are created by the backend seed
-(`npm run seed:demo`) — the passwords live in `server/scripts/seed-demo.js`,
-never in frontend source and never in production configuration. The seed
-refuses to run when `NODE_ENV=production` (override with `--force`).
+```env
+INITIAL_ADMIN_EMAIL=dogbeide@bestaftechnologies.com
+```
 
-| Role | Email | Password | Skill | Assignment group |
-|---|---|---|---|---|
-| Admin | `admin.demo@noctincan.com` | `DemoAdmin!123` | — | — |
-| Agent (senior) | `senior.demo@noctincan.com` | `DemoSenior!123` | 3 (senior) | Service Desk |
-| Agent (junior) | `junior.demo@noctincan.com` | `DemoJunior!123` | 1 (junior) | Accounts & Access |
+At startup, **only while no active administrator exists**, that address is
+promoted (or provisioned) as ADMIN. Once one administrator exists the mechanism
+is inert — changing the value can never mint a second one. Any administrator can
+then promote others, and the last remaining administrator can be neither
+demoted nor deactivated.
 
-> The requested group names map onto the four existing routing teams
-> (`src/teams.js`): **General IT Support → Service Desk** (the default group)
-> and **Password Reset Team → Accounts & Access** (the group that owns the
-> `Password Reset` category). No new groups were added, so the assignment
-> engine's category→group routing is unchanged.
+The bootstrapped account is created **without a password**. Set one from
+**Admin → Agents**, or connect the identity provider. Everyone else is added
+the same way: Admin → Agents → New agent.
 
-The admin account reaches agent administration (`/api/agents` write endpoints);
-the two agent accounts get `403` there, which is the intended role split.
+## Adding your team
 
-### Demo data
+`npm run db:init` creates the five assignment groups and the default routing
+rules, and **no agents at all** — populating a real helpdesk with invented
+staff would corrupt routing and workload figures. Add real people through
+Admin → Agents, giving each one an assignment group and a skill level (L1
+junior / L2 mid / L3 senior). Until at least one agent exists in a group,
+tickets routed there are created unassigned and shown as *awaiting assignment*.
 
-`npm run seed:demo` is **idempotent** — re-running it never creates duplicates.
-It seeds, in order:
+## Development demo data (optional)
 
-1. the three demo logins (upserted by email; the password hash is re-applied so
-   the documented credentials always work)
-2. ten deterministic fixture tickets keyed by a stable `graphMessageId`, covering
-   every state (`NEW`, `IN_PROGRESS`, `RESOLVED`, `CLOSED`), every priority
-   (`low`, `moderate`, `high`, `critical`), all four categories, and both
-   assigned and unassigned tickets — seven of them carry comment threads and
-   state history so the ticket detail/activity page has something to show
-3. ~120 bulk randomised tickets for dashboard volume (skipped when already present)
+`npm run seed:demo` generates a fictional dataset — three demo logins, ten
+fixture tickets and ~120 bulk tickets — so a fresh developer machine has
+something to look at. It is **opt-in and never runs on startup**:
 
-Demo requesters all use obviously fictional `@demo.example` addresses.
+```bash
+npm run seed:demo -- --confirm   # generate the demo dataset
+npm run seed:demo -- --clear     # remove it again
+npm run db:purge-demo            # report every demo record in the database
+npm run db:purge-demo -- --apply # remove them
+```
+
+It refuses to run without `--confirm`, and refuses again when
+`NODE_ENV=production`. Demo requesters use obviously fictional `@demo.example`
+addresses and demo logins a fictional company domain, so `db:purge-demo` can
+identify them exactly. The demo passwords live in
+`server/scripts/seed-demo.js` and are printed when the seed runs — they are
+deliberately not documented here, in the UI, or in any configuration file.
 
 ## The UI
 

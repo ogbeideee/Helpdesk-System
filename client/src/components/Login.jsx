@@ -40,7 +40,7 @@ export default function Login({ onLogin }) {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@noctincan.com"
+              placeholder="you@yourcompany.com"
               autoFocus
               required
             />

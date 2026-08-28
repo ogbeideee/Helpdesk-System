@@ -8,6 +8,10 @@
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
 process.env.PORT = process.env.PORT || '4177';
 
+// Isolated database: this suite never touches the application's dev.db.
+// Must come before anything that loads the Prisma client.
+const testdb = require('./lib/testdb').use('routing');
+
 const { spawn } = require('child_process');
 const path = require('path');
 const bcrypt = require('bcryptjs');

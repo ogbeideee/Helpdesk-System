@@ -2,12 +2,41 @@
    Usage: npm run test:api  (from server/) */
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
 process.env.PORT = '4177';
+// Isolated database: this suite never touches the application's dev.db.
+// Must come before anything that loads the Prisma client.
+const testdb = require('./lib/testdb').use('api');
+
 
 const { spawn } = require('child_process');
 const path = require('path');
+const bcrypt = require('bcryptjs');
+const prisma = require('../src/lib/prisma');
+const { ensureTeams } = require('../src/teams');
 
 const BASE = `http://localhost:${process.env.PORT}`;
 const MARKER = 'api-test-';
+
+// The suite owns its staff: nothing here depends on seeded application data.
+const DOMAIN = 'api.test';
+const PASSWORD = 'ApiTestPass!123';
+const ADMIN_EMAIL = `admin@${DOMAIN}`;
+const TRIAGE_EMAIL = `triage@${DOMAIN}`;
+const SOFTWARE_EMAIL = `software@${DOMAIN}`;
+
+async function seedStaff() {
+  await ensureTeams(prisma);
+  const teams = Object.fromEntries((await prisma.team.findMany()).map((t) => [t.key, t]));
+  const hash = bcrypt.hashSync(PASSWORD, 10);
+  const mk = (name, email, role, teamId, skillLevel) =>
+    prisma.agent.upsert({
+      where: { email },
+      create: { name, email, role, teamId, skillLevel, passwordHash: hash },
+      update: { passwordHash: hash, role, teamId, skillLevel, isActive: true, isAvailable: true },
+    });
+  await mk('API Test Admin', ADMIN_EMAIL, 'admin', null, 3);
+  await mk('API Test Triage', TRIAGE_EMAIL, 'agent', teams.service_desk.id, 1);
+  await mk('API Test Software', SOFTWARE_EMAIL, 'agent', teams.software.id, 2);
+}
 let failures = 0;
 function check(name, condition, extra = '') {
   if (condition) {
@@ -44,6 +73,8 @@ async function waitForServer(proc) {
 }
 
 async function main() {
+  await seedStaff();
+
   const proc = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
     env: process.env,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -63,13 +94,13 @@ async function main() {
 
     const badLogin = await req('/api/auth/login', {
       method: 'POST',
-      body: { email: 'admin@noctincan.com', password: 'wrong-password' },
+      body: { email: ADMIN_EMAIL, password: 'wrong-password' },
     });
     check('bad credentials rejected', badLogin.status === 401);
 
     const login = await req('/api/auth/login', {
       method: 'POST',
-      body: { email: 'admin@noctincan.com', password: 'ChangeMe!123' },
+      body: { email: ADMIN_EMAIL, password: PASSWORD },
     });
     check('admin login succeeds', login.status === 200 && Boolean(login.data.token));
     const adminToken = login.data.token;
@@ -80,10 +111,10 @@ async function main() {
 
     const agentLogin = await req('/api/auth/login', {
       method: 'POST',
-      body: { email: 'service.desk@noctincan.com', password: 'ChangeMe!123' },
+      body: { email: TRIAGE_EMAIL, password: PASSWORD },
     });
     const agentToken = agentLogin.data.token;
-    check('sample agent login succeeds', Boolean(agentToken));
+    check('agent login succeeds', Boolean(agentToken));
 
     // --- dashboard & assignment groups ---------------------------------------
     const dash = await req('/api/dashboard', { token: agentToken });
@@ -154,16 +185,16 @@ async function main() {
     const assignByAgent = await req(`/api/tickets/${ticketId}/assign`, {
       method: 'POST',
       token: agentToken,
-      body: { agentEmail: 'dev.patel@noctincan.com' },
+      body: { agentEmail: SOFTWARE_EMAIL },
     });
     check('agent cannot assign a ticket that is not theirs', assignByAgent.status === 403, JSON.stringify(assignByAgent.data));
 
     const assign = await req(`/api/tickets/${ticketId}/assign`, {
       method: 'POST',
       token: adminToken,
-      body: { agentEmail: 'dev.patel@noctincan.com' },
+      body: { agentEmail: SOFTWARE_EMAIL },
     });
-    check('admin assign routes across groups, state unchanged', assign.status === 200 && assign.data.assignedAgent.email === 'dev.patel@noctincan.com' && assign.data.state === 'NEW', JSON.stringify(assign.data).slice(0,150));
+    check('admin assign routes across groups, state unchanged', assign.status === 200 && assign.data.assignedAgent.email === SOFTWARE_EMAIL && assign.data.state === 'NEW', JSON.stringify(assign.data).slice(0,150));
 
     const assignUnknown = await req(`/api/tickets/${ticketId}/assign`, {
       method: 'POST',
@@ -242,7 +273,7 @@ async function main() {
       token: agentToken,
       body: { body: `${MARKER} replacement ordered` },
     });
-    check('requester-facing update stored with author', publicUpdate.status === 201 && publicUpdate.data.isInternal === false && publicUpdate.data.authorEmail === 'service.desk@noctincan.com');
+    check('requester-facing update stored with author', publicUpdate.status === 201 && publicUpdate.data.isInternal === false && publicUpdate.data.authorEmail === TRIAGE_EMAIL);
 
     const emptyNote = await req(`/api/tickets/${ticketId}/notes`, {
       method: 'POST',
@@ -421,8 +452,8 @@ async function main() {
 }
 
 async function cleanup() {
-  const { PrismaClient } = require('@prisma/client');
-  const prisma = new PrismaClient();
+  // Uses the suite's single Prisma client: a second one would keep the
+  // throw-away database file open and stop it being deleted afterwards.
   try {
     const tickets = await prisma.ticket.findMany({
       where: {

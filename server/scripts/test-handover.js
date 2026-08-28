@@ -11,6 +11,10 @@ process.env.PORT = process.env.PORT || '4167';
 process.env.REBALANCE_INTERVAL_MS = '0';
 process.env.HANDOVER_SWEEP_INTERVAL_MS = '0';
 
+// Isolated database: this suite never touches the application's dev.db.
+// Must come before anything that loads the Prisma client.
+const testdb = require('./lib/testdb').use('handover');
+
 const { spawn } = require('child_process');
 const path = require('path');
 const bcrypt = require('bcryptjs');

@@ -8,9 +8,14 @@
    Usage: npm run test:webhook  (from server/) */
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
 
+// Isolated database: this suite never touches the application's dev.db.
+// Must come before anything that loads the Prisma client.
+const testdb = require('./lib/testdb').use('webhook');
+
 const express = require('express');
 const prisma = require('../src/lib/prisma');
 const { ensureTeams } = require('../src/teams');
+const { ensureDefaultRoutingRules } = require('../src/services/defaultRoutingRules');
 const graphStatus = require('../src/graph/graphStatus');
 
 let failures = 0;
@@ -182,6 +187,21 @@ async function cleanup() {
 
 async function main() {
   await ensureTeams(prisma);
+  // The application seeds these on every start, so routing here matches
+  // what a real install does.
+  await ensureDefaultRoutingRules({ client: prisma, logger: { log() {}, warn() {} } });
+
+  // One agent per group so the assignment engine has somebody to route to.
+  // Seeded by the suite rather than assumed to exist in the database.
+  const teams = await prisma.team.findMany();
+  for (const t of teams) {
+    const email = `${MARK}${t.key}@webhook.example`;
+    await prisma.agent.upsert({
+      where: { email },
+      create: { name: `Webhook ${t.name}`, email, role: 'agent', teamId: t.id, skillLevel: 3 },
+      update: { teamId: t.id, skillLevel: 3, isActive: true, isAvailable: true },
+    });
+  }
   await cleanup();
   graphStatus._reset();
 

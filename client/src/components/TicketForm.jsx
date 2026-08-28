@@ -85,7 +85,7 @@ export default function TicketForm({ ticketId, onSaved, onCancel }) {
               <input value={form.requesterName} onChange={set('requesterName')} required placeholder="Jane Doe" />
             </Field>
             <Field label="Requester email" required hint="Status updates and the resolution are emailed here">
-              <input type="email" value={form.requesterEmail} onChange={set('requesterEmail')} required placeholder="jane.doe@noctincan.com" />
+              <input type="email" value={form.requesterEmail} onChange={set('requesterEmail')} required placeholder="name@yourcompany.com" />
             </Field>
           </>
         )}

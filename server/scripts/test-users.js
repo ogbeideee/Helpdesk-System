@@ -7,6 +7,10 @@
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
 process.env.PORT = process.env.PORT || '4199';
 
+// Isolated database: this suite never touches the application's dev.db.
+// Must come before anything that loads the Prisma client.
+const testdb = require('./lib/testdb').use('users');
+
 const { spawn } = require('child_process');
 const path = require('path');
 const bcrypt = require('bcryptjs');
@@ -78,10 +82,36 @@ const mkUser = (name, email, role, extra = {}) =>
   });
 
 /**
- * Administrators that belong to the real database rather than this test.
+ * The standing administrator this suite runs against.
+ *
+ * The suite owns a throw-away database (see scripts/lib/testdb.js), so it
+ * creates the baseline itself instead of borrowing whatever happened to be in
+ * the developer's database. It is deliberately outside DOMAIN so
+ * parkRealAdmins/restoreRealAdmins treat it exactly as they would a real one,
+ * which is what the park/restore symmetry checks are testing.
+ */
+const BASELINE_ADMIN_EMAIL = 'standing.admin@baseline.test';
+async function ensureBaselineAdmin() {
+  return prisma.agent.upsert({
+    where: { email: BASELINE_ADMIN_EMAIL },
+    create: {
+      name: 'Standing Admin',
+      email: BASELINE_ADMIN_EMAIL,
+      role: ROLES.ADMIN,
+      isActive: true,
+      isAvailable: true,
+      skillLevel: 3,
+      passwordHash: hash,
+    },
+    update: { role: ROLES.ADMIN, isActive: true },
+  });
+}
+
+/**
+ * Administrators that exist outside this suite's own DOMAIN accounts.
  * Captured once, restored unconditionally at the end: several checks need
- * "only one administrator exists", and getting that wrong must never leave the
- * developer's database locked out.
+ * "only one administrator exists", and getting that wrong must never leave a
+ * database locked out.
  */
 let realAdminIds = [];
 async function parkRealAdmins() {
@@ -106,6 +136,8 @@ async function restoreRealAdmins() {
 async function main() {
   await ensureTeams(prisma);
   await cleanup();
+  // The baseline administrator the park/restore checks measure against.
+  await ensureBaselineAdmin();
 
   const hardware = await prisma.team.findUnique({ where: { key: 'hardware' } });
 
@@ -497,7 +529,9 @@ async function main() {
     await cleanup();
   }
 
-  // Safety net: this suite must never leave the database without an admin.
+  // Safety net: this suite must never leave a database without an admin.
+  // It is the check that would have caught the run that once demoted every
+  // administrator and could not put them back.
   const adminsLeft = await userService.countActiveAdmins();
   check('teardown: the database still has at least one administrator', adminsLeft >= 1, String(adminsLeft));
 
