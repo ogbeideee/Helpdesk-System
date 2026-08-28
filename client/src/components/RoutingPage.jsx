@@ -78,7 +78,7 @@ export default function RoutingPage() {
             Rules are evaluated in order — the lowest priority number that matches wins. Unmatched tickets go to the default group.
           </p>
         </div>
-        <button className="btn btn-primary" onClick={() => setEditing('new')}>+ New rule</button>
+        <button className="btn btn-primary" onClick={() => setEditing('new')}>New rule</button>
       </div>
 
       <section className="card" style={{ paddingTop: 16, paddingBottom: 16 }}>
@@ -160,7 +160,7 @@ export default function RoutingPage() {
                   {r.isActive ? 'Deactivate' : 'Activate'}
                 </button>
                 <button className="btn btn-secondary btn-sm" onClick={() => setEditing(r)}>Edit</button>
-                <button className="btn btn-ghost btn-sm" onClick={() => setConfirmDelete(r)}>Delete</button>
+                <button className="btn btn-ghost btn-sm btn-danger-quiet" onClick={() => setConfirmDelete(r)}>Delete</button>
               </div>
             </div>
           ))}

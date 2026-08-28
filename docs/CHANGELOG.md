@@ -10,6 +10,15 @@ Major implementation milestones only — not individual code edits.
 - Raised muted text and section labels to WCAG AA in both themes
 - Refined the sidebar (active-item marker, separated Development group) and
   promoted Recent Tickets to a full-width lead section on the dashboard
+- Rebuilt the Tickets queue: search with Ctrl-K, status segments, sortable
+  columns, skeleton loading, stacked rows on narrow screens
+- Polish pass: unified the page-header and destructive-button patterns across
+  all eight screens, replaced the last emoji icons with themed SVGs, collapsed
+  the routing rules into one ordered list, and fixed the Agents row actions
+  being pushed off-screen
+- Rebuilt Ticket detail: one primary action in the header, a single inspector
+  panel instead of stacked cards, and an activity rail with a distinct marker
+  per event kind
 
 - Moved from the demo dataset to a real installation: removed 8 seeded accounts
   (both demo admins) and 130 demo tickets with their comments, audit entries and

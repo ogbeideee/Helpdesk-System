@@ -99,7 +99,7 @@ export default function SimulateEmailPage({ onOpen }) {
 
         <div className="modal-actions">
           <button type="submit" className="btn btn-primary" disabled={busy}>
-            {busy ? 'Delivering…' : '📨 Deliver email'}
+            {busy ? 'Delivering…' : 'Deliver email'}
           </button>
         </div>
       </form>

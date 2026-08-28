@@ -10,9 +10,8 @@ _Last updated: 2026-08-28_
 Client UI redesign, continuing M3's first pass. **Uncommitted work in the
 working tree.** Frontend only — no backend, database or API change.
 
-Done this session: application-wide theme system (light/dark/system) with a
-control in the nav rail, sidebar refinements, and Recent Tickets promoted to a
-full-width lead section on the dashboard.
+Redesign complete across all screens, closed with a consistency and
+accessibility polish pass.
 
 ## Completed
 
@@ -28,8 +27,7 @@ full-width lead section on the dashboard.
 
 ## In Progress
 
-Client redesign. Remaining areas, not yet started: Tickets list, Ticket detail,
-Handovers, Agents, Routing Rules, Assignment Groups, Login.
+Nothing in flight. The client work is finished but **uncommitted**.
 
 Modified but not committed:
 
@@ -48,8 +46,7 @@ To finish: confirm each screen renders with no console errors, run
 
 Not started, no order committed to:
 
-1. Continue the redesign screen by screen (Tickets list next)
-2. Fix the Agents edit-dialog password autofill bug (see Known Issues) — small
+1. Fix the Agents edit-dialog password autofill bug (see Known Issues) — small
    and it is actively corrupting passwords
 3. Verify Microsoft Graph against live credentials
 4. Introduce Prisma migrations
@@ -113,4 +110,21 @@ Then **2026-08-28**, after the theme work:
 - All text tokens meet WCAG AA (muted text was below it in both themes)
 - Backend untouched — `git status -- server/` is clean; 12 suites still pass
 
-**Not yet verified:** the six screens still to be redesigned.
+Then **2026-08-28**, after the Tickets queue and Ticket detail:
+
+- 48 browser checks pass: queue filters, sorting, Ctrl-K, empty and loading
+  states, detail layout, inspector fields, action hierarchy, activity kinds,
+  both themes, and the responsive breakpoints — 0 console errors
+- Activity timeline verified against a temporary six-event fixture ticket
+  (created, assigned, started, internal note, requester update, resolved),
+  which was deleted afterwards
+- Backend untouched; 12 suites still pass; client build succeeds
+
+Then **2026-08-28**, after the polish pass:
+
+- 129 browser checks pass (40 quality gate + 41 theme + 48 queue/detail),
+  0 console errors
+- All text meets WCAG AA in both themes; two token failures were found and
+  fixed (light `--success` at 4.06:1, dark `--muted-2` at 4.45:1)
+- No horizontal page overflow at 1440 / 1280 / 1024 / 820 / 760px
+- Backend untouched; 12 suites pass; build succeeds

@@ -101,7 +101,7 @@ export default function AgentsPage({ me }) {
           <h1 className="hero-title">Agents</h1>
           <p className="hero-sub">Availability, skill and workload for the assignment engine.</p>
         </div>
-        <button className="btn btn-primary" onClick={() => setEditorAgent('new')}>+ New agent</button>
+        <button className="btn btn-primary" onClick={() => setEditorAgent('new')}>New agent</button>
       </div>
 
       <div className="stat-strip" style={{ marginBottom: 18 }}>
@@ -127,10 +127,10 @@ export default function AgentsPage({ me }) {
           icon="◇"
           title="No agents yet"
           hint="Create the first agent to start routing tickets."
-          action={<button className="btn btn-primary" onClick={() => setEditorAgent('new')}>+ New agent</button>}
+          action={<button className="btn btn-primary" onClick={() => setEditorAgent('new')}>New agent</button>}
         />
       ) : (
-        <div className="table-wrap">
+        <div className="table-wrap agents-table">
           <table className="table">
             <thead>
               <tr>
@@ -308,6 +308,10 @@ function AgentEditor({ agent, teams, onClose, onSaved }) {
   });
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  // Changing an existing agent's password is a separate, deliberate act. The
+  // field is not rendered until it is requested, so there is nothing for the
+  // browser's password manager to fill while an admin edits a name or a group.
+  const [changingPassword, setChangingPassword] = useState(false);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   async function handleSubmit(e) {
@@ -322,7 +326,10 @@ function AgentEditor({ agent, teams, onClose, onSaved }) {
           skillLevel: Number(form.skillLevel),
           role: form.role,
         };
-        if (form.password) patchBody.password = form.password;
+        // Gated on the admin having opened the password control, not merely on
+        // the field holding a value: autofill puts a value there without anyone
+        // typing, and that used to be enough to overwrite the real password.
+        if (changingPassword && form.password) patchBody.password = form.password;
         await api.updateAgent(agent.id, patchBody);
         onSaved(`${form.name} updated`);
       } else {
@@ -345,25 +352,50 @@ function AgentEditor({ agent, teams, onClose, onSaved }) {
 
   return (
     <Modal title={editing ? `Edit ${agent.name}` : 'New agent'} onClose={onClose} width={480}>
-      <form onSubmit={handleSubmit}>
+      <form onSubmit={handleSubmit} autoComplete="off">
         {error && <div className="callout callout-error">{error}</div>}
         <Field label="Full name" required>
-          <input value={form.name} onChange={set('name')} required autoFocus />
+          <input name="agent-name" autoComplete="off" value={form.name} onChange={set('name')} required autoFocus />
         </Field>
         {!editing && (
           <>
             <Field label="Email" required hint="Used to sign in to this portal">
-              <input type="email" value={form.email} onChange={set('email')} required placeholder="name@yourcompany.com" />
+              <input type="email" name="agent-email" autoComplete="off" value={form.email} onChange={set('email')} required placeholder="name@yourcompany.com" />
             </Field>
             <Field label="Initial password" required hint="Minimum 8 characters — they can change it later">
-              <input type="password" value={form.password} onChange={set('password')} minLength={8} required />
+              <input type="password" name="agent-initial-password" autoComplete="new-password" value={form.password} onChange={set('password')} minLength={8} required />
             </Field>
           </>
         )}
         {editing && (
-          <Field label="Reset password" hint="Leave blank to keep the current password">
-            <input type="password" value={form.password} onChange={set('password')} minLength={8} placeholder="(unchanged)" />
-          </Field>
+          changingPassword ? (
+            <Field label="New password" required hint="Minimum 8 characters. They can change it again after signing in.">
+              <input
+                type="password"
+                name="agent-new-password"
+                autoComplete="new-password"
+                value={form.password}
+                onChange={set('password')}
+                minLength={8}
+                required
+                autoFocus
+              />
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                style={{ marginTop: 6 }}
+                onClick={() => { setChangingPassword(false); setForm((f) => ({ ...f, password: '' })); }}
+              >
+                Keep the current password
+              </button>
+            </Field>
+          ) : (
+            <Field label="Password" hint="Unchanged unless you set a new one.">
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setChangingPassword(true)}>
+                Set a new password
+              </button>
+            </Field>
+          )
         )}
         <div className="form-grid-2">
           <Field label="Assignment group">

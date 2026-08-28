@@ -6,7 +6,7 @@ import {
 } from '../constants.js';
 import {
   Spinner, ErrorState, EmptyState, StateBadge, PriorityBadge, SlaBadge,
-  Avatar, Modal, ConfirmDialog, useToast, fmtDateTime, initials,
+  Avatar, Modal, ConfirmDialog, useToast, fmtDateTime, timeAgo, initials,
 } from './ui.jsx';
 
 const STATE_LABELS = Object.fromEntries(STATES.map((s) => [s.value, s.label]));
@@ -98,24 +98,41 @@ export default function TicketDetail({ id, me, onChanged }) {
 
   return (
     <div className="page">
-      <header className="page-head detail-head">
-        <div>
-          <button className="crumb" onClick={() => window.location.hash = '/tickets'}>
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M10 3L5 8l5 5"/></svg>
-            Tickets
-          </button>
-          <h1 className="detail-title">
-            <span className="cell-id">{ticket.ticketNumber}</span>
-            {ticket.shortDescription}
-          </h1>
-          <div className="pill-row">
-            <StateBadge state={ticket.state} />
-            <PriorityBadge priority={ticket.priority} />
-            <SlaBadge ticket={ticket} />
-            {ticket.awaitingAssignment && <span className="chip chip-warn">awaiting assignment</span>}
-            {ticket.source === 'email' && <span className="chip">via email</span>}
-            {ticket.category && <span className="chip">{ticket.category}</span>}
+      <header className="detail-head">
+        <button className="crumb" onClick={() => window.location.hash = '/tickets'}>
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M10 3L5 8l5 5"/></svg>
+          All tickets
+        </button>
+        <div className="detail-head-main">
+          <div className="detail-head-text">
+            <h1 className="detail-title">{ticket.shortDescription}</h1>
+            <div className="pill-row">
+              <span className="cell-id">{ticket.ticketNumber}</span>
+              <StateBadge state={ticket.state} />
+              <PriorityBadge priority={ticket.priority} />
+              <SlaBadge ticket={ticket} />
+              {ticket.awaitingAssignment && <span className="chip chip-warn">awaiting assignment</span>}
+              {ticket.source === 'email' && <span className="chip">via email</span>}
+              {ticket.category && <span className="chip">{ticket.category}</span>}
+            </div>
           </div>
+          {/* One primary action, chosen by where the ticket is in its
+              lifecycle. Everything else is secondary, in the inspector. */}
+          <PrimaryActions
+            ticket={ticket}
+            me={me}
+            busy={busy}
+            canStart={canStart}
+            canResolve={canResolve}
+            canClose={canClose}
+            activeHandover={activeHandover}
+            onStart={() => run(async () => api.startTicket(id), 'Work started')}
+            onResolve={() => setResolveOpen(true)}
+            onClose={() => setCloseConfirm(true)}
+            onTake={() => run(async () => api.takeTicket(id), 'Ticket is now yours')}
+            onReassign={() => setReassignOpen(true)}
+            onHandover={() => setHandoverOpen(true)}
+          />
         </div>
       </header>
 
@@ -150,7 +167,7 @@ export default function TicketDetail({ id, me, onChanged }) {
           )}
         </div>
 
-        <div className="stack side-panel">
+        <aside className="inspector" aria-label="Ticket details">
           <PropertiesCard
             ticket={ticket}
             busy={busy}
@@ -179,7 +196,7 @@ export default function TicketDetail({ id, me, onChanged }) {
             onCancelHandover={(hid) => run(async () => api.cancelHandover(hid), 'Handover cancelled')}
             onTake={() => run(async () => api.takeTicket(id), 'Ticket is now yours')}
           />
-        </div>
+        </aside>
       </div>
 
       {reassignOpen && (
@@ -382,22 +399,23 @@ export default function TicketDetail({ id, me, onChanged }) {
 
 function Conversation({ ticket, events, handovers }) {
   return (
-    <section className="card" style={{ padding: '20px 22px' }}>
+    <section className="card activity-card">
       <div className="card-head">
-        <h2>Conversation</h2>
+        <h2>Activity</h2>
         <span className="muted small">{events.length} event{events.length === 1 ? '' : 's'}</span>
       </div>
-      <div className="conversation">
+      <div className="activity-rail">
         <OriginalMessage ticket={ticket} />
         {events
           .filter((ev) => !['created'].includes(ev.kind))
           .map((ev, i) => <EventItem key={i} ev={ev} />)}
         {handovers.length > 0 && <HandoverChain handovers={handovers} />}
         {ticket.state === 'CLOSED' && (
-          <div className="conv-item is-system">
-            <Avatar name="system" size={28} />
-            <div>
-              <div className="conv-meta"><strong>Closed</strong> · no further status changes possible</div>
+          <div className="ev ev-closed is-marker">
+            <span className="ev-mark" aria-hidden="true"><EvGlyph name="stop" /></span>
+            <div className="ev-body">
+              <div className="ev-line"><span className="ev-title">Closed</span></div>
+              <div className="ev-detail">No further status changes. Reopens if the requester replies.</div>
             </div>
           </div>
         )}
@@ -408,57 +426,94 @@ function Conversation({ ticket, events, handovers }) {
 
 function OriginalMessage({ ticket }) {
   return (
-    <div className="conv-item is-requester conv-original">
-      <Avatar name={ticket.requesterName || ticket.requesterEmail} size={28} />
-      <div>
-        <div className="conv-meta">
-          <strong>{ticket.requesterName || 'Requester'}</strong>
-          {ticket.requesterEmail && <span className="muted mono-sm">{ticket.requesterEmail}</span>}
-          <span className="muted">opened this ticket</span>
-          <span className="muted small">{fmtDateTime(ticket.createdAt)}</span>
-          {ticket.source === 'email' && <span className="chip" style={{ fontSize: 10 }}>via email</span>}
+    <div className="ev ev-requester is-message is-original">
+      <span className="ev-mark" aria-hidden="true"><EvGlyph name="message" /></span>
+      <div className="ev-body">
+        <div className="ev-line">
+          <span className="ev-title">{ticket.requesterName || 'Requester'}</span>
+          <span className="muted small">opened this ticket</span>
+          {ticket.source === 'email' && <span className="chip ev-tag">via email</span>}
+          <time className="ev-time" dateTime={ticket.createdAt} title={fmtDateTime(ticket.createdAt)}>
+            {timeAgo(ticket.createdAt)}
+          </time>
         </div>
-        <div className="conv-bubble">{ticket.body || '(no message body)'}</div>
+        {ticket.requesterEmail && <div className="ev-detail mono-sm">{ticket.requesterEmail}</div>}
+        <div className="ev-bubble">{ticket.body || '(no message body)'}</div>
       </div>
     </div>
   );
 }
 
+/* Each activity kind gets its own marker, so requester messages, agent
+   replies, internal notes, assignment moves, handovers, status changes and
+   system events are told apart at a glance rather than by reading. */
+const EVENT_META = {
+  requester:  { cls: 'ev-requester',  glyph: 'message', label: 'Requester' },
+  update:     { cls: 'ev-update',     glyph: 'message', label: 'Agent reply' },
+  internal:   { cls: 'ev-internal',   glyph: 'lock',    label: 'Internal note' },
+  status:     { cls: 'ev-status',     glyph: 'arrow',   label: 'Status' },
+  assignment: { cls: 'ev-assign',     glyph: 'person',  label: 'Assignment' },
+  reassign:   { cls: 'ev-assign',     glyph: 'person',  label: 'Assignment' },
+  handover:   { cls: 'ev-handover',   glyph: 'swap',    label: 'Handover' },
+  group:      { cls: 'ev-assign',     glyph: 'grid',    label: 'Group' },
+  resolution: { cls: 'ev-resolution', glyph: 'check',   label: 'Resolution' },
+  closed:     { cls: 'ev-closed',     glyph: 'stop',    label: 'Closed' },
+  reopened:   { cls: 'ev-status',     glyph: 'undo',    label: 'Reopened' },
+  audit:      { cls: 'ev-system',     glyph: 'dot',     label: 'System' },
+};
+
+function EvGlyph({ name }) {
+  const p = { width: 12, height: 12, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor',
+    strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true };
+  switch (name) {
+    case 'message': return <svg {...p}><path d="M13.5 8.5a4.5 4.5 0 0 1-4.5 4.5H5l-2.5 2V6.5A3.5 3.5 0 0 1 6 3h4a3.5 3.5 0 0 1 3.5 3.5z"/></svg>;
+    case 'lock':    return <svg {...p}><rect x="3.5" y="7" width="9" height="6" rx="1.2"/><path d="M5.5 7V5.5a2.5 2.5 0 0 1 5 0V7"/></svg>;
+    case 'arrow':   return <svg {...p}><path d="M2.5 8h11M10 4.5L13.5 8 10 11.5"/></svg>;
+    case 'person':  return <svg {...p}><circle cx="8" cy="5.5" r="2.3"/><path d="M3.5 13c.6-2.4 2.3-3.5 4.5-3.5s3.9 1.1 4.5 3.5"/></svg>;
+    case 'swap':    return <svg {...p}><path d="M3 5.5h9L9.5 3M13 10.5H4l2.5 2.5"/></svg>;
+    case 'grid':    return <svg {...p}><rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="9" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="2.5" y="9" width="4.5" height="4.5" rx="1"/><rect x="9" y="9" width="4.5" height="4.5" rx="1"/></svg>;
+    case 'check':   return <svg {...p}><path d="M3 8.5l3.2 3.2L13 5"/></svg>;
+    case 'stop':    return <svg {...p}><rect x="3.5" y="3.5" width="9" height="9" rx="1.5"/></svg>;
+    case 'undo':    return <svg {...p}><path d="M3 8a5 5 0 1 0 1.6-3.7M3 3.5V7h3.5"/></svg>;
+    default:        return <svg {...p}><circle cx="8" cy="8" r="2"/></svg>;
+  }
+}
+
 function EventItem({ ev }) {
   const kind = ev.kind;
-  const isInternal = kind === 'internal';
-  const isUpdate = kind === 'update';
-  const isResolution = kind === 'resolution';
-  const isSystem = ['status', 'reassign', 'assignment', 'handover', 'group', 'closed', 'reopened', 'audit'].includes(kind);
+  const isMessage = ['internal', 'update', 'resolution', 'requester'].includes(kind);
+  const meta = EVENT_META[kind] || EVENT_META.audit;
 
-  if (isSystem) {
+  // System-ish events are one compact line on the rail: they are context,
+  // not conversation, and should never out-shout an actual message.
+  if (!isMessage) {
     return (
-      <div className="conv-item is-system">
-        <Avatar name={ev.actor || 'system'} size={28} />
-        <div>
-          <div className="conv-meta">
-            <strong>{ev.title}</strong>
-            {ev.actor && <span className="muted">by {ev.actor}</span>}
-            <span className="muted small">{fmtDateTime(ev.at)}</span>
+      <div className={`ev ${meta.cls} is-marker`}>
+        <span className="ev-mark" aria-hidden="true"><EvGlyph name={meta.glyph} /></span>
+        <div className="ev-body">
+          <div className="ev-line">
+            <span className="ev-title">{ev.title}</span>
+            <time className="ev-time" dateTime={ev.at} title={fmtDateTime(ev.at)}>{timeAgo(ev.at)}</time>
           </div>
-          {ev.detail && <div className="muted small" style={{ marginTop: 2 }}>{ev.detail}</div>}
+          {ev.detail && <div className="ev-detail">{ev.detail}</div>}
         </div>
       </div>
     );
   }
 
-  const variant = isInternal ? 'is-internal' : isUpdate ? 'is-update' : isResolution ? 'is-resolution' : '';
   return (
-    <div className={`conv-item ${variant}`}>
-      <Avatar name={ev.authorInitials ? ev.title : (ev.title || 'agent')} size={28} />
-      <div>
-        <div className="conv-meta">
-          <strong>{ev.title}</strong>
-          <span className="muted small">{fmtDateTime(ev.at)}</span>
-          {isInternal && <span className="chip chip-warn" style={{ fontSize: 10 }}>Internal</span>}
-          {isResolution && <span className="chip chip-ok" style={{ fontSize: 10 }}>Resolution</span>}
+    <div className={`ev ${meta.cls} is-message`}>
+      <span className="ev-mark" aria-hidden="true"><EvGlyph name={meta.glyph} /></span>
+      <div className="ev-body">
+        <div className="ev-line">
+          <span className="ev-title">{ev.title}</span>
+          {kind === 'internal' && <span className="chip chip-warn ev-tag">Internal</span>}
+          {kind === 'resolution' && <span className="chip chip-ok ev-tag">Resolution</span>}
+          <time className="ev-time" dateTime={ev.at} title={fmtDateTime(ev.at)}>{timeAgo(ev.at)}</time>
         </div>
-        <div className={`conv-bubble ${isResolution ? 'resolution-text' : ''}`}>{ev.detail}</div>
+        {ev.detail && (
+          <div className={`ev-bubble ${kind === 'resolution' ? 'is-resolution' : ''}`}>{ev.detail}</div>
+        )}
       </div>
     </div>
   );
@@ -516,93 +571,200 @@ function Composer({ me, ticket, noteText, setNoteText, noteMode, setNoteMode, bu
 /* Properties side panel                                              */
 /* ------------------------------------------------------------------ */
 
-function PropertiesCard({ ticket, busy, groupPick, setGroupPick, run, me }) {
+/* ------------------------------------------------------------------ */
+/* Inspector — one panel of labelled rows, not a stack of cards        */
+/* ------------------------------------------------------------------ */
+
+function Row({ label, children, stack }) {
   return (
-    <section className="card">
-      <div className="card-head"><h2>Properties</h2></div>
-      <dl className="props">
-        <div><dt>Requester</dt><dd>{ticket.requesterName || '—'}</dd></div>
-        <div><dt>Email</dt><dd className="mono-sm" style={{ fontSize: 11.5 }}>{ticket.requesterEmail}</dd></div>
-        <div>
-          <dt>Category</dt>
-          <dd>
-            <select
-              value={ticket.category}
-              disabled={busy}
-              onChange={(e) => run(async () => api.updateTicket(ticket.id, { category: e.target.value }))}
-            >
-              {[...new Set([ticket.category, ...CATEGORIES])].map((c) => <option key={c}>{c}</option>)}
-            </select>
-          </dd>
-        </div>
-        <div>
-          <dt>Priority</dt>
-          <dd>
-            <select
-              value={ticket.priority}
-              disabled={busy}
-              onChange={(e) => run(async () => api.updateTicket(ticket.id, { priority: e.target.value }), 'Priority updated')}
-            >
-              {PRIORITIES.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
-            </select>
-          </dd>
-        </div>
-        <div>
-          <dt>Group</dt>
-          <dd>
-            <select
-              value={groupPick}
-              disabled={busy || me.role !== 'admin'}
-              onChange={(e) => setGroupPick(e.target.value)}
-            >
-              <option value="">Triage</option>
-              {/* options injected from page state — using groups from API */}
-              <GroupsOptions current={groupPick} />
-            </select>
+    <div className={`insp-row ${stack ? 'is-stacked' : ''}`}>
+      <span className="insp-label">{label}</span>
+      <span className="insp-value">{children}</span>
+    </div>
+  );
+}
+
+const SKILL_LABEL = { 1: 'L1 \u00b7 Junior', 2: 'L2 \u00b7 Standard', 3: 'L3 \u00b7 Senior' };
+
+function PropertiesCard({ ticket, busy, groupPick, setGroupPick, run, me }) {
+  const [groups, setGroups] = useState([]);
+  useEffect(() => { api.groups().then(setGroups).catch(() => {}); }, []);
+
+  const isAdmin = me.role === 'admin';
+  const group = groups.find((g) => g.key === (ticket.team?.key || ''));
+  // Real figure from /api/assignment-groups — the minimum skill the routing
+  // rules require for this group. Never invented.
+  const requiredSkill = group ? group.minSkillLevel : null;
+
+  return (
+    <section className="insp-section">
+      <h2 className="insp-title">Details</h2>
+
+      <Row label="Requester">
+        <span className="insp-strong">{ticket.requesterName || 'Unknown'}</span>
+        {ticket.requesterEmail && <span className="insp-sub mono-sm">{ticket.requesterEmail}</span>}
+      </Row>
+
+      <Row label="Status"><StateBadge state={ticket.state} /></Row>
+
+      <Row label="Priority">
+        <select
+          className="insp-select"
+          value={ticket.priority}
+          disabled={busy}
+          onChange={(e) => run(async () => api.updateTicket(ticket.id, { priority: e.target.value }), 'Priority updated')}
+        >
+          {PRIORITIES.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+        </select>
+      </Row>
+
+      <Row label="Category">
+        <select
+          className="insp-select"
+          value={ticket.category}
+          disabled={busy}
+          onChange={(e) => run(async () => api.updateTicket(ticket.id, { category: e.target.value }), 'Category updated')}
+        >
+          {[...new Set([ticket.category, ...CATEGORIES])].map((c) => <option key={c}>{c}</option>)}
+        </select>
+      </Row>
+
+      <Row label="Group" stack>
+        <span className="insp-inline">
+          <select
+            className="insp-select"
+            value={groupPick}
+            disabled={busy || !isAdmin}
+            title={isAdmin ? '' : 'Only an administrator can change the assignment group'}
+            onChange={(e) => setGroupPick(e.target.value)}
+          >
+            <option value="">Triage</option>
+            {groups.map((g) => <option key={g.key} value={g.key}>{g.name}</option>)}
+          </select>
+          {isAdmin && groupPick !== (ticket.team?.key || '') && (
             <button
-              className="btn btn-ghost btn-sm"
-              disabled={busy || me.role !== 'admin' || groupPick === (ticket.team?.key || '')}
+              className="btn btn-secondary btn-sm"
+              disabled={busy}
               onClick={() => run(
                 async () => api.updateTicket(ticket.id, { assignmentGroup: groupPick || null }),
                 'Assignment group changed'
               )}
             >Apply</button>
-          </dd>
-        </div>
-        <div>
-          <dt>Assignee</dt>
-          <dd>
-            {ticket.assignedAgent ? (
-              <span className="cell-agent">
-                <Avatar name={ticket.assignedAgent.name} size={22} />
-                <strong>{ticket.assignedAgent.name}</strong>
-              </span>
-            ) : <span className="muted small">Unassigned</span>}
-          </dd>
-        </div>
-        <div><dt>Created</dt><dd className="muted small">{fmtDateTime(ticket.createdAt)}</dd></div>
-        <div><dt>Updated</dt><dd className="muted small">{fmtDateTime(ticket.updatedAt)}</dd></div>
-        {ticket.dueAt && <div><dt>SLA</dt><dd className="muted small">{fmtDateTime(ticket.dueAt)}</dd></div>}
-        {ticket.resolution && (
-          <div className="prop-resolution">
-            <dt>Resolution</dt>
-            <dd className="resolution-text" style={{ fontSize: 12.5, fontStyle: 'italic' }}>{ticket.resolution}</dd>
-          </div>
-        )}
-      </dl>
+          )}
+        </span>
+      </Row>
+
+      <Row label="Assigned to">
+        {ticket.assignedAgent ? (
+          <>
+            <span className="cell-agent">
+              <Avatar name={ticket.assignedAgent.name} size={22} />
+              <span className="insp-strong">{ticket.assignedAgent.name}</span>
+            </span>
+            {ticket.assignedAgent.skillLevel && (
+              <span className="insp-sub">{SKILL_LABEL[ticket.assignedAgent.skillLevel] || `L${ticket.assignedAgent.skillLevel}`}</span>
+            )}
+          </>
+        ) : <span className="unassigned-tag">Unassigned</span>}
+      </Row>
+
+      {requiredSkill != null && (
+        <Row label="Skill required">
+          <span>{SKILL_LABEL[requiredSkill] || `L${requiredSkill}`}</span>
+          {ticket.assignedAgent && ticket.assignedAgent.skillLevel < requiredSkill && (
+            <span className="insp-sub warn-text">Assignee is below the required level</span>
+          )}
+        </Row>
+      )}
+
+      <div className="insp-divider" />
+
+      <Row label="Created">
+        <span title={fmtDateTime(ticket.createdAt)}>{timeAgo(ticket.createdAt)}</span>
+        <span className="insp-sub">{fmtDateTime(ticket.createdAt)}</span>
+      </Row>
+      <Row label="Updated">
+        <span title={fmtDateTime(ticket.updatedAt)}>{timeAgo(ticket.updatedAt)}</span>
+      </Row>
+      {ticket.dueAt && (
+        <Row label="SLA target">
+          <span className={ticket.overdue ? 'warn-text' : ''}>{fmtDateTime(ticket.dueAt)}</span>
+        </Row>
+      )}
+
+      {ticket.resolution && (
+        <>
+          <div className="insp-divider" />
+          <Row label="Resolution" stack>
+            <span className="insp-resolution">{ticket.resolution}</span>
+          </Row>
+        </>
+      )}
     </section>
   );
 }
 
-function GroupsOptions({ current }) {
-  const [groups, setGroups] = useState([]);
-  useEffect(() => {
-    api.groups().then((g) => setGroups(g)).catch(() => {});
-  }, []);
+/* ------------------------------------------------------------------ */
+/* Header actions — exactly one primary, chosen by lifecycle position  */
+/* ------------------------------------------------------------------ */
+
+function PrimaryActions({
+  ticket, me, busy, canStart, canResolve, canClose, activeHandover,
+  onStart, onResolve, onClose, onTake, onReassign, onHandover,
+}) {
+  const mine = ticket.assignedAgentId === me.id;
+  const isAdmin = me.role === 'admin';
+  const canTake = ticket.assignedAgentId !== me.id
+    && (ticket.unattended || !ticket.assignedAgentId || isAdmin)
+    && !['RESOLVED', 'CLOSED'].includes(ticket.state);
+
+  // The single most likely next step. Everything else drops to secondary so
+  // the eye is not asked to choose between five equal buttons.
+  let primary = null;
+  if (canStart && ticket.state === 'NEW' && (mine || isAdmin)) {
+    primary = { label: 'Start working', onClick: onStart };
+  } else if (canResolve) {
+    primary = { label: 'Resolve…', onClick: onResolve };
+  } else if (canClose) {
+    primary = { label: 'Close ticket', onClick: onClose };
+  } else if (canTake) {
+    primary = { label: 'Take ticket', onClick: onTake };
+  }
+
+  const showHandover = ticket.assignedAgentId
+    && ticket.state !== 'RESOLVED' && ticket.state !== 'CLOSED'
+    && (mine || isAdmin);
+
+  if (!primary && !showHandover && ticket.state === 'CLOSED') {
+    return <div className="detail-actions"><span className="muted small">Closed — reopens if the requester replies.</span></div>;
+  }
+
   return (
-    <>
-      {groups.map((g) => <option key={g.key} value={g.key}>{g.name}</option>)}
-    </>
+    <div className="detail-actions">
+      {canTake && primary && primary.label !== 'Take ticket' && (
+        <button className="btn btn-secondary" disabled={busy} onClick={onTake}>Take</button>
+      )}
+      {ticket.state !== 'CLOSED' && (
+        <button className="btn btn-secondary" disabled={busy} onClick={onReassign}>
+          {ticket.assignedAgent ? 'Reassign' : 'Assign'}
+        </button>
+      )}
+      {showHandover && (
+        <button
+          className="btn btn-secondary"
+          disabled={busy || Boolean(activeHandover)}
+          title={activeHandover ? `Awaiting ${activeHandover.targetAgent.name}'s answer` : 'Ask a teammate to take this ticket'}
+          onClick={onHandover}
+        >
+          Handover
+        </button>
+      )}
+      {primary && (
+        <button className="btn btn-primary" disabled={busy} onClick={primary.onClick}>
+          {primary.label}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -616,103 +778,81 @@ function ActionsCard({
   onStart, onInProgress, onResolve, onClose, onReopen,
   onReassign, onHandover, onCancelHandover, onTake,
 }) {
-  return (
-    <section className="card">
-      <div className="card-head"><h2>Actions</h2></div>
+  const mine = ticket.assignedAgentId === me.id;
+  const isAdmin = me.role === 'admin';
 
-      <div className="action-block">
-        <h3 className="action-label">Workflow</h3>
-        <div className="btn-row">
-          {canStart && ticket.state === 'NEW' && (ticket.assignedAgentId === me.id || me.role === 'admin') && (
-            <button className="btn btn-primary btn-sm" disabled={busy} onClick={onStart}>
-              Start working
+  // Secondary moves only: the likely next step already sits in the header.
+  const secondary = [];
+  if (canResolve && canStart) secondary.push({ label: 'Start working', onClick: onStart });
+  if (canClose && canResolve) secondary.push({ label: 'Close ticket', onClick: onClose });
+  if (!open && nextStates.includes('IN_PROGRESS')) secondary.push({ label: 'Reopen', onClick: onReopen });
+  if (open && ticket.state !== 'NEW' && nextStates.includes('IN_PROGRESS')) {
+    secondary.push({ label: 'Back to in progress', onClick: onInProgress });
+  }
+
+  const waiting = ticket.assignedAgentId && !mine && !ticket.unattended
+    && ticket.state === 'NEW' && !isAdmin;
+
+  if (!secondary.length && !activeHandover && !waiting) return null;
+
+  return (
+    <section className="insp-section">
+      <h2 className="insp-title">More actions</h2>
+
+      {activeHandover && (
+        <div className="insp-note">
+          <strong>
+            {activeHandover.status === 'QUEUED'
+              ? `Queued for ${activeHandover.targetAgent.name}`
+              : `Awaiting ${activeHandover.targetAgent.name}`}
+          </strong>
+          <span className="muted small">
+            The ticket stays with its current owner until they accept.
+          </span>
+          {(activeHandover.requestedById === me.id || isAdmin) && (
+            <button className="btn-link" disabled={busy} onClick={() => onCancelHandover(activeHandover.id)}>
+              Cancel handover
             </button>
-          )}
-          {canResolve && (
-            <button className="btn btn-primary btn-sm" disabled={busy} onClick={onResolve}>
-              Resolve…
-            </button>
-          )}
-          {canClose && (
-            <button className="btn btn-secondary btn-sm" disabled={busy} onClick={onClose}>
-              Close ticket
-            </button>
-          )}
-          {!open && nextStates.includes('IN_PROGRESS') && (
-            <button className="btn btn-secondary btn-sm" disabled={busy} onClick={onReopen}>
-              Reopen
-            </button>
-          )}
-          {!canStart && !canResolve && !canClose && ticket.state === 'CLOSED' && (
-            <p className="muted small" style={{ margin: 0 }}>
-              Closed. Reopens automatically if the requester replies.
-            </p>
           )}
         </div>
-      </div>
+      )}
 
-      {ticket.state !== 'CLOSED' && (
-        <div className="action-block">
-          <h3 className="action-label">Assignment</h3>
-          <div className="btn-row">
-            <button className="btn btn-secondary btn-sm" disabled={busy} onClick={onReassign}>
-              {ticket.assignedAgent ? 'Reassign' : 'Assign'}
+      {waiting && (
+        <div className="insp-note">
+          <span className="muted small">
+            Available to teammates in{' '}
+            {ticket.hoursUntilClaimable >= 1
+              ? `${ticket.hoursUntilClaimable.toFixed(1)} hours`
+              : `${Math.ceil((ticket.hoursUntilClaimable || 0) * 60)} minutes`}.
+          </span>
+        </div>
+      )}
+
+      {secondary.length > 0 && (
+        <div className="insp-actions">
+          {secondary.map((a) => (
+            <button key={a.label} className="btn btn-secondary btn-sm btn-block" disabled={busy} onClick={a.onClick}>
+              {a.label}
             </button>
-            {ticket.assignedAgentId && ticket.state !== 'RESOLVED' && (ticket.assignedAgentId === me.id || me.role === 'admin') && (
-              <button
-                className="btn btn-secondary btn-sm"
-                disabled={busy || Boolean(activeHandover)}
-                title={activeHandover ? `Awaiting ${activeHandover.targetAgent.name}'s answer` : 'Ask a teammate to take this ticket'}
-                onClick={onHandover}
-              >
-                Request handover
-              </button>
-            )}
-            {ticket.assignedAgentId !== me.id && (ticket.unattended || !ticket.assignedAgentId || me.role === 'admin') && (
-              <button className="btn btn-primary btn-sm" disabled={busy} onClick={onTake}>
-                Take ticket
-              </button>
-            )}
-          </div>
-          {activeHandover && (
-            <p className="muted small" style={{ marginTop: 8 }}>
-              {activeHandover.status === 'QUEUED'
-                ? `Queued for ${activeHandover.targetAgent.name}.`
-                : `Awaiting ${activeHandover.targetAgent.name}'s answer.`}
-              {(activeHandover.requestedById === me.id || me.role === 'admin') && (
-                <>
-                  {' '}
-                  <button className="btn-link" disabled={busy} onClick={() => onCancelHandover(activeHandover.id)}>Cancel</button>
-                </>
-              )}
-            </p>
-          )}
-          {ticket.assignedAgentId && ticket.assignedAgentId !== me.id
-            && !ticket.unattended && ticket.state === 'NEW' && me.role !== 'admin' && (
-            <p className="muted small" style={{ marginTop: 8 }}>
-              Available to teammates in{' '}
-              {ticket.hoursUntilClaimable >= 1
-                ? `${ticket.hoursUntilClaimable.toFixed(1)} hours`
-                : `${Math.ceil((ticket.hoursUntilClaimable || 0) * 60)} minutes`}.
-            </p>
-          )}
+          ))}
         </div>
       )}
     </section>
   );
 }
 
+/** Destructive action, deliberately the quietest thing on the page. */
 function DeleteZone({ id, onDeleted }) {
   const [confirming, setConfirming] = useState(false);
   const [confirmText, setConfirmText] = useState('');
   return (
-    <div style={{ marginTop: 18 }}>
-      <div className="card-head" style={{ marginBottom: 6 }}>
-        <h2 className="muted" style={{ fontSize: 12, fontWeight: 600 }}>Administration</h2>
+    <div className="danger-zone">
+      <div className="danger-zone-text">
+        <strong>Delete this ticket</strong>
+        <span className="muted small">
+          Permanent, and it removes the audit history. Prefer closing the ticket.
+        </span>
       </div>
-      <p className="muted small" style={{ marginBottom: 8 }}>
-        Deleting is permanent and removes the audit history. Prefer closing the ticket.
-      </p>
       <button className="btn btn-ghost btn-sm" onClick={() => setConfirming(true)}>
         Delete ticket…
       </button>
@@ -770,13 +910,21 @@ function buildTimeline(ticket) {
       detail: c.body,
     });
   }
+  // The RESOLVED transition already produced an audit event. Carry the
+  // resolution text onto it rather than appending a second, near-identical
+  // entry — which is what left an empty bubble under "Resolved".
   if (ticket.resolvedAt && ticket.resolution) {
-    events.push({
-      kind: 'resolution',
-      at: ticket.resolvedAt,
-      title: 'Resolved',
-      detail: ticket.resolution,
-    });
+    const existing = events.find((e) => e.kind === 'resolution');
+    if (existing) {
+      if (!existing.detail) existing.detail = ticket.resolution;
+    } else {
+      events.push({
+        kind: 'resolution',
+        at: ticket.resolvedAt,
+        title: 'Resolved',
+        detail: ticket.resolution,
+      });
+    }
   }
   return events.sort((a, b) => new Date(a.at) - new Date(b.at));
 }
