@@ -52,18 +52,17 @@ export default function SimulateEmailPage({ onOpen }) {
 
   return (
     <div className="page page-narrow">
-      <header className="page-head">
+      <div className="hero" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 16 }}>
         <div>
-          <h1>
-            Simulate Incoming Email <span className="chip chip-dev">DEVELOPMENT</span>
+          <h1 className="hero-title">
+            Simulate Incoming Email <span className="chip chip-dev" style={{ marginLeft: 6 }}>DEV</span>
           </h1>
-          <p className="muted">
+          <p className="hero-sub">
             Stands in for the Microsoft 365 mailbox integration. Submission runs the
             production intake pipeline: dedupe → classify → route → assign → audit log.
-            No real email is sent.
           </p>
         </div>
-      </header>
+      </div>
 
       <form className="card form-card" onSubmit={handleSubmit}>
         <div className="form-grid-2">

@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api, getToken } from './api.js';
+import { avatarHue } from './components/ui.jsx';
 import Login from './components/Login.jsx';
 import ErrorBoundary from './components/ErrorBoundary.jsx';
 import Dashboard from './components/Dashboard.jsx';
@@ -12,13 +13,35 @@ import GroupsPage from './components/GroupsPage.jsx';
 import SimulateEmailPage from './components/SimulateEmailPage.jsx';
 import AvailabilityControl from './components/AvailabilityControl.jsx';
 import HandoversPage from './components/HandoversPage.jsx';
+import ThemeToggle from './components/ThemeToggle.jsx';
 
 const EMAIL_SIMULATOR_ENABLED = import.meta.env.VITE_ENABLE_EMAIL_SIMULATOR !== 'false';
 
+function NavIcon({ name }) {
+  const props = { width: 16, height: 16, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round' };
+  switch (name) {
+    case 'dashboard':
+      return <svg {...props}><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>;
+    case 'tickets':
+      return <svg {...props}><path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h7"/><circle cx="12.5" cy="11.5" r="1.5"/></svg>;
+    case 'handovers':
+      return <svg {...props}><path d="M2 8h11M9.5 4.5L13 8l-3.5 3.5"/><path d="M14 8h-2"/></svg>;
+    case 'agents':
+      return <svg {...props}><circle cx="6" cy="6" r="2.5"/><path d="M2 13c.5-2 2-3 4-3s3.5 1 4 3"/><circle cx="11.5" cy="5.5" r="1.8"/><path d="M10 9.5c1.5 0 3 1 3.5 2.5"/></svg>;
+    case 'routing':
+      return <svg {...props}><circle cx="3" cy="8" r="1.5"/><path d="M4.5 8h3M11.5 8H8"/><circle cx="13" cy="8" r="1.5"/><path d="M6 8l2-3M10 8L8 5M6 8l2 3M10 8l-2 3"/></svg>;
+    case 'groups':
+      return <svg {...props}><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>;
+    case 'mail':
+      return <svg {...props}><rect x="2" y="3.5" width="12" height="9" rx="1"/><path d="M2.5 4l5.5 4 5.5-4"/></svg>;
+    default:
+      return null;
+  }
+}
+
 export default function App() {
-  const [me, setMe] = useState(undefined); // undefined = checking, null = signed out
+  const [me, setMe] = useState(undefined);
   const [route, setRoute] = useState(() => parseHash());
-  // Handover requests waiting for this person to answer, shown on the nav.
   const [handoverCount, setHandoverCount] = useState(0);
 
   useEffect(() => {
@@ -38,8 +61,6 @@ export default function App() {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
-  // Handovers expire and queued ones activate on their own, so the badge is
-  // refreshed on a timer rather than only on navigation.
   useEffect(() => {
     if (!me) return undefined;
     let cancelled = false;
@@ -53,6 +74,32 @@ export default function App() {
     return () => { cancelled = true; clearInterval(t); };
   }, [me]);
 
+  const isAdmin = me?.role === 'admin';
+
+  const navGroups = useMemo(() => {
+    const operations = [
+      { path: '/', label: 'Dashboard', icon: 'dashboard' },
+      { path: '/tickets', label: 'Tickets', icon: 'tickets' },
+      { path: '/handovers', label: 'Handovers', icon: 'handovers', badge: handoverCount },
+    ];
+    const admin = isAdmin
+      ? [
+          { path: '/agents', label: 'Agents', icon: 'agents' },
+          { path: '/routing', label: 'Routing Rules', icon: 'routing' },
+        ]
+      : [];
+    const workspace = [{ path: '/groups', label: 'Assignment Groups', icon: 'groups' }];
+    const dev = EMAIL_SIMULATOR_ENABLED
+      ? [{ path: '/simulate-email', label: 'Simulate Email', icon: 'mail', dev: true }]
+      : [];
+    return [
+      { label: 'Operations', items: operations },
+      ...(admin.length ? [{ label: 'Administration', items: admin }] : []),
+      { label: 'Workspace', items: workspace },
+      ...(dev.length ? [{ label: 'Development', items: dev, dev: true }] : []),
+    ];
+  }, [isAdmin, handoverCount]);
+
   function navigate(path) {
     window.location.hash = path;
   }
@@ -65,23 +112,6 @@ export default function App() {
 
   if (me === undefined) return <div className="boot-screen"><span className="spinner" /></div>;
   if (me === null) return <Login onLogin={setMe} />;
-
-  const isAdmin = me.role === 'admin';
-  const nav = [
-    { path: '/', label: 'Dashboard', icon: '▤' },
-    { path: '/tickets', label: 'Tickets', icon: '🎫' },
-    { path: '/handovers', label: 'Handovers', icon: '🤝', badge: handoverCount },
-    ...(isAdmin
-      ? [
-          { path: '/agents', label: 'Agents', icon: '👤' },
-          { path: '/routing', label: 'Routing Rules', icon: '⇄' },
-        ]
-      : []),
-    { path: '/groups', label: 'Assignment Groups', icon: '⛁' },
-    ...(EMAIL_SIMULATOR_ENABLED
-      ? [{ path: '/simulate-email', label: 'Simulate Email', icon: '✉️', dev: true }]
-      : []),
-  ];
 
   let content;
   switch (route.name) {
@@ -132,8 +162,6 @@ export default function App() {
   }
 
   function refreshSignal() {
-    // detail page notifies listeners (e.g. dashboard counts) via storage bump;
-    // simple approach: dispatch a custom event other views may ignore.
     window.dispatchEvent(new CustomEvent('td:changed'));
   }
 
@@ -143,28 +171,37 @@ export default function App() {
         <div className="brand" onClick={() => navigate('/')} role="button" tabIndex={0}>
           <span className="brand-mark">IT</span>
           <span className="brand-text">
-            <strong>IT HELPDESK</strong>
-            <small>Service Desk</small>
+            <strong>Helpdesk</strong>
+            <small>Service Console</small>
           </span>
         </div>
         <nav className="side-nav">
-          {nav.map((item) => (
-            <button
-              key={item.path}
-              className={`nav-item ${currentPath(route) === item.path ? 'active' : ''}`}
-              onClick={() => navigate(item.path)}
-            >
-              <span className="nav-icon" aria-hidden="true">{item.icon}</span>
-              {item.label}
-              {item.badge > 0 && <span className="nav-badge">{item.badge}</span>}
-              {item.dev && <span className="chip chip-dev">DEV</span>}
-            </button>
+          {navGroups.map((group) => (
+            <div key={group.label} className={`side-group ${group.dev ? 'is-dev' : ''}`}>
+              <div className="side-group-label">{group.label}</div>
+              {group.items.map((item) => (
+                <button
+                  key={item.path}
+                  className={`nav-item ${currentPath(route) === item.path ? 'active' : ''}`}
+                  onClick={() => navigate(item.path)}
+                >
+                  <span className="nav-icon" aria-hidden="true"><NavIcon name={item.icon} /></span>
+                  <span>{item.label}</span>
+                  {item.badge > 0 && <span className="nav-badge">{item.badge}</span>}
+                  {item.dev && <span className="chip-dev">DEV</span>}
+                </button>
+              ))}
+            </div>
           ))}
         </nav>
         <div className="sidebar-footer">
           <AvailabilityControl me={me} onChanged={setMe} />
+          <div className="sidebar-row">
+            <span className="sidebar-row-label">Theme</span>
+            <ThemeToggle />
+          </div>
           <div className="user-card">
-            <span className={`avatar avatar-lg`} style={{ background: 'hsl(212 45% 26%)', color: 'hsl(212 90% 78%)' }}>
+            <span className="avatar avatar-lg" style={{ '--avatar-h': avatarHue(me.name || me.email) }}>
               {String(me.name || me.email || '?').split(/\s+/).map((p) => p[0]).slice(0, 2).join('').toUpperCase()}
             </span>
             <span className="user-meta">
@@ -177,7 +214,6 @@ export default function App() {
       </aside>
 
       <main className="content">
-        {/* keyed by route so navigating away clears a previous page error */}
         <ErrorBoundary key={route.name + (route.id ?? '')}>{content}</ErrorBoundary>
       </main>
     </div>
@@ -188,8 +224,10 @@ function Denied() {
   return (
     <div className="page">
       <div className="callout callout-error">
-        <strong>Access denied.</strong>
-        <div className="muted">Your account does not have permission to view this area.</div>
+        <div>
+          <strong>Access denied.</strong>
+          <div className="muted">Your account does not have permission to view this area.</div>
+        </div>
       </div>
     </div>
   );

@@ -5,152 +5,217 @@ import {
   Field, useToast, fmtDateTime, timeAgo,
 } from './ui.jsx';
 
-const SKILL_LABELS = { 1: 'L1 · Junior', 2: 'L2 · Standard', 3: 'L3 · Senior' };
+const SKILL_LABELS = { 1: 'Junior', 2: 'Standard', 3: 'Senior' };
+const SKILL_SHORT  = { 1: 'L1', 2: 'L2', 3: 'L3' };
 
 export default function AgentsPage({ me }) {
-  const [data, setData] = useState(null);
+  const [agents, setAgents] = useState(null);
+  const [teams, setTeams] = useState([]);
+  const [workload, setWorkload] = useState({}); // agentId -> {new, inProgress}
   const [error, setError] = useState('');
-  const [editorAgent, setEditorAgent] = useState(null); // null | 'new' | agent object
-  const [confirmToggle, setConfirmToggle] = useState(null); // agent being deactivated
+  const [editorAgent, setEditorAgent] = useState(null);
+  const [confirmToggle, setConfirmToggle] = useState(null);
+  const [confirmDeactivate, setConfirmDeactivate] = useState(null);
   const [showToast, toastNode] = useToast();
 
-  const load = useCallback(() => {
+  const load = useCallback(async () => {
     setError('');
-    return api.agents().then(setData).catch((e) => setError(e.message));
+    try {
+      const [a, d] = await Promise.all([api.agents(), api.dashboard()]);
+      setAgents(a.agents);
+      setTeams(a.teams);
+      // Aggregate the dashboard's recent tickets and queue into a per-agent
+      // NEW vs IN_PROGRESS breakdown. The dashboard already counts per agent.
+      const perAgent = {};
+      (d.ticketsPerAgent || []).forEach((row) => {
+        perAgent[row.agentId] = {
+          total: row.openTickets,
+          // dashboard doesn't break out states — show 0/0 as a fallback; load
+          // the workload API for richer data below if available.
+          new: 0,
+          inProgress: 0,
+        };
+      });
+      setWorkload(perAgent);
+      // Try to enrich with NEW/IN_PROGRESS using the workload API.
+      try {
+        const w = await api.workload();
+        const next = { ...perAgent };
+        (w.agents || []).forEach((row) => {
+          next[row.agentId] = {
+            total: row.openTickets,
+            new: row.newTickets ?? 0,
+            inProgress: row.inProgressTickets ?? 0,
+          };
+        });
+        setWorkload(next);
+      } catch { /* not admin / unavailable — keep totals only */ }
+    } catch (e) {
+      setError(e.message);
+    }
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
-  // Availability = accepting new work. Turning it off releases open tickets,
-  // so it is confirmed; turning it back on is immediate.
   async function toggleAvailability(agent, nextAvailable) {
-    if (!nextAvailable) {
-      setConfirmToggle(agent);
-      return;
-    }
+    if (!nextAvailable) { setConfirmToggle(agent); return; }
     try {
       await api.updateAgent(agent.id, { isAvailable: true });
       showToast(`${agent.name} is now available`);
       await load();
-    } catch (e) {
-      showToast(e.message, 'error');
-    }
+    } catch (e) { showToast(e.message, 'error'); }
   }
 
-  // Active = may sign in at all. Separate from availability, and guarded by
-  // the backend (the last administrator cannot be deactivated).
   async function setActive(agent, nextActive) {
+    if (!nextActive) { setConfirmDeactivate(agent); return; }
     try {
-      await api.updateAgent(agent.id, { isActive: nextActive });
-      showToast(`${agent.name} ${nextActive ? 'activated' : 'deactivated'}`);
+      await api.updateAgent(agent.id, { isActive: true });
+      showToast(`${agent.name} activated`);
       await load();
-    } catch (e) {
-      showToast(e.message, 'error');
-    }
+    } catch (e) { showToast(e.message, 'error'); }
   }
 
-  // Promotion / demotion. The backend refuses self-changes and protects the
-  // final administrator; this only surfaces the outcome.
   async function changeRole(agent, nextRole) {
     try {
       await api.updateAgent(agent.id, { role: nextRole });
       showToast(`${agent.name} is now ${nextRole.toUpperCase()}`);
       await load();
-    } catch (e) {
-      showToast(e.message, 'error');
-    }
+    } catch (e) { showToast(e.message, 'error'); }
   }
 
   if (error) return <div className="page"><ErrorState message={error} onRetry={load} /></div>;
-  if (!data) return <div className="page"><Spinner label="Loading agents…" /></div>;
+  if (!agents) return <div className="page"><Spinner label="Loading agents…" /></div>;
 
-  const teamName = (id) => data.teams.find((t) => t.id === id)?.name || 'No group';
+  const teamName = (id) => teams.find((t) => t.id === id)?.name || 'No group';
+
+  // Aggregate stats
+  const total = agents.length;
+  const active = agents.filter((a) => a.isActive).length;
+  const available = agents.filter((a) => a.isActive && a.isAvailable).length;
+  const totalOpen = Object.values(workload).reduce((s, w) => s + (w.total || 0), 0);
 
   return (
     <div className="page">
-      <header className="page-head">
+      <div className="hero" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 16 }}>
         <div>
-          <h1>Agents</h1>
-          <p className="muted">Availability and skill levels feed the assignment engine.</p>
+          <h1 className="hero-title">Agents</h1>
+          <p className="hero-sub">Availability, skill and workload for the assignment engine.</p>
         </div>
-        <button className="btn btn-primary" onClick={() => setEditorAgent('new')}>+ New Agent</button>
-      </header>
+        <button className="btn btn-primary" onClick={() => setEditorAgent('new')}>+ New agent</button>
+      </div>
 
-      {data.agents.length === 0 ? (
-        <EmptyState icon="👤" title="No agents yet" hint="Create the first agent to start routing tickets."
-          action={<button className="btn btn-primary" onClick={() => setEditorAgent('new')}>+ New Agent</button>} />
+      <div className="stat-strip" style={{ marginBottom: 18 }}>
+        <div className="stat-strip-cell">
+          <div className="stat-strip-label"><span className="stat-strip-dot is-primary" />Accounts</div>
+          <div className="stat-strip-value tnum">{active}<span className="muted small" style={{ marginLeft: 6 }}>/ {total}</span></div>
+          <div className="stat-strip-sub">Active</div>
+        </div>
+        <div className="stat-strip-cell">
+          <div className="stat-strip-label"><span className="stat-strip-dot is-success" />Available</div>
+          <div className="stat-strip-value tnum">{available}</div>
+          <div className="stat-strip-sub">Accepting new work</div>
+        </div>
+        <div className="stat-strip-cell">
+          <div className="stat-strip-label"><span className="stat-strip-dot is-warn" />Open workload</div>
+          <div className="stat-strip-value tnum">{totalOpen}</div>
+          <div className="stat-strip-sub">Across team</div>
+        </div>
+      </div>
+
+      {agents.length === 0 ? (
+        <EmptyState
+          icon="◇"
+          title="No agents yet"
+          hint="Create the first agent to start routing tickets."
+          action={<button className="btn btn-primary" onClick={() => setEditorAgent('new')}>+ New agent</button>}
+        />
       ) : (
-        <div className="table-wrap card">
+        <div className="table-wrap">
           <table className="table">
             <thead>
               <tr>
-                <th>Name</th>
-                <th>Email</th>
+                <th>Agent</th>
                 <th>Role</th>
-                <th>Assignment Group</th>
-                <th>Skill Level</th>
+                <th>Team</th>
+                <th>Skill</th>
                 <th>Availability</th>
-                <th>Account</th>
-                <th>Open Workload</th>
-                <th></th>
+                <th>Workload</th>
+                <th style={{ width: 1 }}></th>
               </tr>
             </thead>
             <tbody>
-              {data.agents.map((a) => (
-                <tr key={a.id} className={a.isActive ? '' : 'row-inactive'}>
-                  <td>
-                    <span className="cell-agent">
-                      <Avatar name={a.name} />
-                      <span>
-                        <strong>{a.name}</strong>
-                        {me && a.id === me.id && <span className="chip chip-you">you</span>}
+              {agents.map((a) => {
+                const w = workload[a.id] || { total: a.openWorkload || 0, new: 0, inProgress: 0 };
+                const hasSplit = w.new || w.inProgress;
+                return (
+                  <tr key={a.id} className={a.isActive ? '' : 'row-inactive'}>
+                    <td>
+                      <span className="cell-agent">
+                        <Avatar name={a.name} size={26} />
+                        <span style={{ minWidth: 0 }}>
+                          <strong>{a.name}</strong>
+                          <div className="muted small mono-sm" style={{ marginTop: 1, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.email}</div>
+                        </span>
+                        {me && a.id === me.id && <span className="chip chip-you" style={{ marginLeft: 6 }}>you</span>}
                       </span>
-                    </span>
-                  </td>
-                  <td className="mono-sm muted">{a.email}</td>
-                  <td><span className={`chip chip-role-${a.role}`}>{String(a.role || '').toUpperCase()}</span></td>
-                  <td>{teamName(a.teamId)}</td>
-                  <td><span className={`chip chip-skill-${a.skillLevel}`}>{SKILL_LABELS[a.skillLevel] || `L${a.skillLevel}`}</span></td>
-                  <td>
-                    <label className="switch" title={a.isAvailable ? 'Accepting new work' : 'Not accepting new work'}>
-                      <input
-                        type="checkbox"
-                        checked={Boolean(a.isAvailable)}
-                        disabled={!a.isActive}
-                        onChange={(e) => toggleAvailability(a, e.target.checked)}
-                      />
-                      <span className="switch-track" aria-hidden="true" />
-                      <span className={`switch-text ${a.isAvailable ? '' : 'muted'}`}>
-                        {a.isAvailable ? 'Available' : 'Unavailable'}
-                      </span>
-                    </label>
-                  </td>
-                  <td>
-                    <span className={`chip ${a.isActive ? 'chip-ok' : 'chip-off'}`}>
-                      {a.isActive ? 'Active' : 'Inactive'}
-                    </span>
-                  </td>
-                  <td><span className={`workload-pill ${a.openWorkload > 10 ? 'hot' : ''}`}>{a.openWorkload ?? 0}</span></td>
-                  <td className="nowrap">
-                    <button className="btn btn-ghost btn-sm" onClick={() => setEditorAgent(a)}>Edit</button>
-                    {/* Role and account actions are hidden on your own row -
-                        the backend refuses them regardless. */}
-                    {me && a.id !== me.id && (
-                      <>
-                        <button
-                          className="btn btn-ghost btn-sm"
-                          onClick={() => changeRole(a, a.role === 'admin' ? 'agent' : 'admin')}
-                        >
-                          {a.role === 'admin' ? 'Revoke admin' : 'Make admin'}
-                        </button>
-                        <button className="btn btn-ghost btn-sm" onClick={() => setActive(a, !a.isActive)}>
-                          {a.isActive ? 'Deactivate' : 'Activate'}
-                        </button>
-                      </>
-                    )}
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td><span className={`chip chip-role-${a.role}`}>{String(a.role || '').toUpperCase()}</span></td>
+                    <td>
+                      {a.assignmentGroup
+                        ? <span className="chip">{a.assignmentGroup}</span>
+                        : <span className="muted small">Triage</span>}
+                    </td>
+                    <td><span className={`chip chip-skill-${a.skillLevel}`}>{SKILL_SHORT[a.skillLevel]} · {SKILL_LABELS[a.skillLevel]}</span></td>
+                    <td>
+                      <label className="switch" title={a.isAvailable ? 'Accepting new work' : 'Not accepting new work'}>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(a.isAvailable)}
+                          disabled={!a.isActive}
+                          onChange={(e) => toggleAvailability(a, e.target.checked)}
+                        />
+                        <span className="switch-track" aria-hidden="true" />
+                        <span className={`switch-text ${a.isAvailable ? '' : 'muted'}`}>
+                          {a.isAvailable ? 'Available' : 'Unavailable'}
+                        </span>
+                      </label>
+                    </td>
+                    <td style={{ minWidth: 180 }}>
+                      {a.isActive ? (
+                        hasSplit ? (
+                          <WorkloadSplit newCount={w.new} inProgressCount={w.inProgress} total={w.total} />
+                        ) : (
+                          <span className="cell-agent" style={{ gap: 8 }}>
+                            <span className={`workload-pill ${w.total > 10 ? 'hot' : ''}`}>{w.total}</span>
+                            <span className="muted small">open</span>
+                          </span>
+                        )
+                      ) : (
+                        <span className="chip chip-off">Inactive</span>
+                      )}
+                    </td>
+                    <td className="nowrap" style={{ textAlign: 'right' }}>
+                      <button className="btn btn-ghost btn-sm" onClick={() => setEditorAgent(a)}>Edit</button>
+                      {me && a.id !== me.id && (
+                        <>
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => changeRole(a, a.role === 'admin' ? 'agent' : 'admin')}
+                          >
+                            {a.role === 'admin' ? 'Demote' : 'Promote'}
+                          </button>
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => setActive(a, !a.isActive)}
+                          >
+                            {a.isActive ? 'Deactivate' : 'Activate'}
+                          </button>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -159,7 +224,7 @@ export default function AgentsPage({ me }) {
       {(editorAgent === 'new' || editorAgent) && editorAgent !== null && (
         <AgentEditor
           agent={editorAgent === 'new' ? null : editorAgent}
-          teams={data.teams}
+          teams={teams}
           onClose={() => setEditorAgent(null)}
           onSaved={async (msg) => {
             setEditorAgent(null);
@@ -190,7 +255,43 @@ export default function AgentsPage({ me }) {
         />
       )}
 
+      {confirmDeactivate && (
+        <ConfirmDialog
+          title={`Deactivate ${confirmDeactivate.name}?`}
+          message="Their open tickets will be reassigned. The account cannot sign in."
+          confirmLabel="Deactivate"
+          danger
+          onCancel={() => setConfirmDeactivate(null)}
+          onConfirm={async () => {
+            try {
+              await api.updateAgent(confirmDeactivate.id, { isActive: false });
+              setConfirmDeactivate(null);
+              showToast(`${confirmDeactivate.name} deactivated`);
+              await load();
+            } catch (e) {
+              setConfirmDeactivate(null);
+              showToast(e.message, 'error');
+            }
+          }}
+        />
+      )}
+
       {toastNode}
+    </div>
+  );
+}
+
+function WorkloadSplit({ newCount, inProgressCount, total }) {
+  const newPct = total > 0 ? (newCount / total) * 100 : 0;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 160 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--muted)' }}>
+        <span><span style={{ color: 'var(--primary-2)' }}>●</span> NEW {newCount}</span>
+        <span><span style={{ color: 'var(--warning)' }}>●</span> IN PROGRESS {inProgressCount}</span>
+      </div>
+      <div className="bar-track" style={{ height: 4 }}>
+        <div className="bar-fill" style={{ width: `${newPct}%`, background: 'var(--primary)' }} />
+      </div>
     </div>
   );
 }
@@ -243,13 +344,13 @@ function AgentEditor({ agent, teams, onClose, onSaved }) {
   }
 
   return (
-    <Modal title={editing ? `Edit ${agent.name}` : 'New Agent'} onClose={onClose} width={480}>
+    <Modal title={editing ? `Edit ${agent.name}` : 'New agent'} onClose={onClose} width={480}>
       <form onSubmit={handleSubmit}>
         {error && <div className="callout callout-error">{error}</div>}
         <Field label="Full name" required>
-          <input value={form.name} onChange={set('name')} required />
+          <input value={form.name} onChange={set('name')} required autoFocus />
         </Field>
- {!editing && (
+        {!editing && (
           <>
             <Field label="Email" required hint="Used to sign in to this portal">
               <input type="email" value={form.email} onChange={set('email')} required placeholder="name@yourcompany.com" />
@@ -261,8 +362,7 @@ function AgentEditor({ agent, teams, onClose, onSaved }) {
         )}
         {editing && (
           <Field label="Reset password" hint="Leave blank to keep the current password">
-            <input type="password" value={form.password} onChange={set('password')} minLength={8}
-              placeholder="(unchanged)" />
+            <input type="password" value={form.password} onChange={set('password')} minLength={8} placeholder="(unchanged)" />
           </Field>
         )}
         <div className="form-grid-2">
@@ -274,9 +374,9 @@ function AgentEditor({ agent, teams, onClose, onSaved }) {
           </Field>
           <Field label="Skill level" hint="Drives eligibility in the assignment engine">
             <select value={form.skillLevel} onChange={set('skillLevel')}>
-              <option value="1">{SKILL_LABELS[1]}</option>
-              <option value="2">{SKILL_LABELS[2]}</option>
-              <option value="3">{SKILL_LABELS[3]}</option>
+              <option value="1">L1 · {SKILL_LABELS[1]}</option>
+              <option value="2">L2 · {SKILL_LABELS[2]}</option>
+              <option value="3">L3 · {SKILL_LABELS[3]}</option>
             </select>
           </Field>
         </div>

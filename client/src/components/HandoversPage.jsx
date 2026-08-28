@@ -1,14 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api.js';
-import { Spinner, ErrorState, EmptyState, Modal, useToast } from './ui.jsx';
+import { Spinner, ErrorState, EmptyState, Modal, useToast, fmtDateTime } from './ui.jsx';
 
-/**
- * The recipient's Pending Handovers screen, plus the requests they have sent.
- *
- * Every rule (who may answer, whether a request is still live, how long is
- * left) is decided by the backend; this screen renders the answer and posts
- * the three replies: Accept, Decline, Suggest Another.
- */
 export default function HandoversPage({ me, onCountChange }) {
   const [inbox, setInbox] = useState(null);
   const [outbox, setOutbox] = useState([]);
@@ -32,7 +25,6 @@ export default function HandoversPage({ me, onCountChange }) {
   useEffect(() => {
     load();
     api.handoverSettings().then(setSettings).catch(() => {});
-    // Requests expire and queued ones activate on their own, so refresh.
     const t = setInterval(load, 60000);
     return () => clearInterval(t);
   }, [load]);
@@ -55,107 +47,138 @@ export default function HandoversPage({ me, onCountChange }) {
   if (error && !inbox) return <div className="page"><ErrorState message={error} onRetry={load} /></div>;
   if (!inbox) return <div className="page"><Spinner label="Loading handovers…" /></div>;
 
+  const totalActive = inbox.pending.length;
+  const totalLimit = inbox.limit;
+  const queuedCount = inbox.queued.length;
+
   return (
     <div className="page">
-      <header className="page-head">
-        <div>
-          <h1>Handovers</h1>
-          <p className="muted">
-            A handover is an offer: a ticket only changes owner when you accept it.
-          </p>
+      <div className="hero">
+        <h1 className="hero-title">Handovers</h1>
+        <p className="hero-sub">
+          A handover is an offer — the ticket only changes owner when you accept it.
+        </p>
+      </div>
+
+      <div className="stat-strip" style={{ marginBottom: 22 }}>
+        <div className="stat-strip-cell">
+          <div className="stat-strip-label"><span className="stat-strip-dot is-warn" />Pending</div>
+          <div className="stat-strip-value tnum">{totalActive}<span className="muted small" style={{ marginLeft: 6 }}>/ {totalLimit}</span></div>
+          <div className="stat-strip-sub">Active requests waiting for you</div>
         </div>
-      </header>
+        <div className="stat-strip-cell">
+          <div className="stat-strip-label"><span className="stat-strip-dot" />Queued</div>
+          <div className="stat-strip-value tnum">{queuedCount}</div>
+          <div className="stat-strip-sub">Activate as slots free up</div>
+        </div>
+        <div className="stat-strip-cell">
+          <div className="stat-strip-label"><span className="stat-strip-dot is-primary" />Outbox</div>
+          <div className="stat-strip-value tnum">{outbox.length}</div>
+          <div className="stat-strip-sub">Requests you have sent</div>
+        </div>
+      </div>
 
       {error && <ErrorState message={error} />}
 
-      <section className="card">
+      <section className="card" style={{ paddingTop: 16, paddingBottom: 16 }}>
         <div className="card-head">
-          <h2>Pending Handovers</h2>
-          <span className="muted small">
-            {inbox.pending.length} of {inbox.limit} active
-          </span>
+          <h2>Incoming requests</h2>
+          <span className="muted small">{totalActive} active</span>
         </div>
-        {inbox.pending.length === 0 ? (
-          <EmptyState icon="🤝" title="Nothing waiting for you" hint="Requests from teammates appear here." />
+        {totalActive === 0 && queuedCount === 0 ? (
+          <EmptyState icon="◇" title="Nothing waiting for you" hint="Requests from teammates appear here." />
         ) : (
           <ul className="handover-list">
             {inbox.pending.map((h) => (
               <li key={h.id} className="handover-item">
                 <div className="handover-main">
                   <a className="handover-ticket" href={`#/tickets/${h.ticket.id}`}>
-                    <strong className="mono">{h.ticket.ticketNumber}</strong> {h.ticket.shortDescription}
+                    <span className="cell-id">{h.ticket.ticketNumber}</span>
+                    <strong>{h.ticket.shortDescription}</strong>
                   </a>
                   <div className="muted small">
-                    From <strong>{h.requestedBy.name}</strong> · {timeRemaining(h)}
+                    From <strong style={{ color: 'var(--text-dim)' }}>{h.requestedBy.name}</strong>
+                    <span style={{ margin: '0 6px', color: 'var(--border-strong)' }}>·</span>
+                    {timeRemaining(h)}
                   </div>
                   {h.note && <div className="handover-note">“{h.note}”</div>}
                 </div>
                 <div className="btn-row">
-                  <button className="btn btn-primary btn-sm" disabled={busy}
-                    onClick={() => run(() => api.acceptHandover(h.id), `${h.ticket.ticketNumber} is now yours`)}>
-                    ✓ Accept
+                  <button
+                    className="btn btn-primary btn-sm"
+                    disabled={busy}
+                    onClick={() => run(() => api.acceptHandover(h.id), `${h.ticket.ticketNumber} is now yours`)}
+                  >
+                    Accept
                   </button>
-                  <button className="btn btn-ghost btn-sm" disabled={busy}
-                    onClick={() => run(() => api.declineHandover(h.id), 'Handover declined')}>
-                    ✕ Decline
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    disabled={busy}
+                    onClick={() => run(() => api.declineHandover(h.id), 'Handover declined')}
+                  >
+                    Decline
                   </button>
-                  <button className="btn btn-secondary btn-sm" disabled={busy}
-                    onClick={() => setSuggestFor(h)}>
-                    ↗ Suggest Another
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    disabled={busy}
+                    onClick={() => setSuggestFor(h)}
+                  >
+                    Suggest
                   </button>
                 </div>
               </li>
             ))}
-          </ul>
-        )}
-
-        {inbox.queued.length > 0 && (
-          <>
-            <h3 className="action-label" style={{ marginTop: 18 }}>
-              Queued — activated automatically as slots free up
-            </h3>
-            <ul className="handover-list">
-              {inbox.queued.map((h) => (
-                <li key={h.id} className="handover-item is-queued">
-                  <div className="handover-main">
-                    <a className="handover-ticket" href={`#/tickets/${h.ticket.id}`}>
-                      <strong className="mono">{h.ticket.ticketNumber}</strong> {h.ticket.shortDescription}
-                    </a>
-                    <div className="muted small">
-                      From <strong>{h.requestedBy.name}</strong> · queue position {h.queuePosition}
-                    </div>
+            {inbox.queued.map((h) => (
+              <li key={h.id} className="handover-item is-queued">
+                <div className="handover-main">
+                  <a className="handover-ticket" href={`#/tickets/${h.ticket.id}`}>
+                    <span className="cell-id">{h.ticket.ticketNumber}</span>
+                    <strong>{h.ticket.shortDescription}</strong>
+                  </a>
+                  <div className="muted small">
+                    From <strong style={{ color: 'var(--text-dim)' }}>{h.requestedBy.name}</strong>
+                    <span style={{ margin: '0 6px', color: 'var(--border-strong)' }}>·</span>
+                    queue position {h.queuePosition}
                   </div>
-                  <span className="chip">queued</span>
-                </li>
-              ))}
-            </ul>
-          </>
+                </div>
+                <span className="chip">queued</span>
+              </li>
+            ))}
+          </ul>
         )}
       </section>
 
-      <section className="card">
+      <section className="card" style={{ paddingTop: 16, paddingBottom: 16 }}>
         <div className="card-head">
-          <h2>Requests you have sent</h2>
+          <h2>Outbox</h2>
+          <span className="muted small">{outbox.length} open</span>
         </div>
         {outbox.length === 0 ? (
-          <p className="muted">You have no handovers waiting for an answer.</p>
+          <p className="muted small" style={{ marginTop: 4 }}>No handovers waiting for an answer.</p>
         ) : (
           <ul className="handover-list">
             {outbox.map((h) => (
               <li key={h.id} className="handover-item">
                 <div className="handover-main">
                   <a className="handover-ticket" href={`#/tickets/${h.ticket.id}`}>
-                    <strong className="mono">{h.ticket.ticketNumber}</strong> {h.ticket.shortDescription}
+                    <span className="cell-id">{h.ticket.ticketNumber}</span>
+                    <strong>{h.ticket.shortDescription}</strong>
                   </a>
                   <div className="muted small">
-                    Waiting on <strong>{h.targetAgent.name}</strong> ·{' '}
+                    Waiting on <strong style={{ color: 'var(--text-dim)' }}>{h.targetAgent.name}</strong>
+                    <span style={{ margin: '0 6px', color: 'var(--border-strong)' }}>·</span>
                     {h.status === 'QUEUED' ? 'queued behind their other requests' : timeRemaining(h)}
                   </div>
                 </div>
-                <button className="btn btn-ghost btn-sm" disabled={busy}
-                  onClick={() => run(() => api.cancelHandover(h.id), 'Handover cancelled')}>
-                  Cancel
-                </button>
+                <div className="btn-row">
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    disabled={busy}
+                    onClick={() => run(() => api.cancelHandover(h.id), 'Handover cancelled')}
+                  >
+                    Cancel
+                  </button>
+                </div>
               </li>
             ))}
           </ul>
@@ -189,7 +212,6 @@ export default function HandoversPage({ me, onCountChange }) {
   );
 }
 
-/** Time left before the request expires, or why the clock is stopped. */
 function timeRemaining(h) {
   if (h.paused) return 'timer paused while the recipient is unavailable';
   if (h.remainingMinutes === null || h.remainingMinutes === undefined) return 'no expiry';
@@ -200,10 +222,6 @@ function timeRemaining(h) {
   return `${Math.round(hours / 24)} days left`;
 }
 
-/**
- * Suggest a teammate instead. Deliberately worded so it is clear this only
- * proposes somebody — no request is sent on their behalf.
- */
 function SuggestDialog({ handover, onClose, onSubmit, busy }) {
   const [candidates, setCandidates] = useState(null);
   const [error, setError] = useState('');
@@ -229,14 +247,12 @@ function SuggestDialog({ handover, onClose, onSubmit, busy }) {
       </p>
       {error && <div className="callout callout-error">{error}</div>}
       {!candidates && !error && <Spinner label="Loading team…" />}
-      {candidates && options.length === 0 && <p className="muted">Nobody else is available in this group.</p>}
+      {candidates && options.length === 0 && <p className="muted small">Nobody else is available in this group.</p>}
       <div className="reassign-list">
         {options.map((c) => (
           <label key={c.id} className={`reassign-option ${String(c.id) === pick ? 'is-selected' : ''}`}>
             <input
-              type="radio"
-              name="suggest-target"
-              value={c.id}
+              type="radio" name="suggest-target" value={c.id}
               checked={String(c.id) === pick}
               onChange={() => setPick(String(c.id))}
             />
@@ -271,14 +287,13 @@ function SuggestDialog({ handover, onClose, onSubmit, busy }) {
   );
 }
 
-/** Administrator controls for the pending limit and the expiry window. */
 function AdminSettings({ settings, onSaved, onError }) {
   const [draft, setDraft] = useState(settings.settings);
   const [busy, setBusy] = useState(false);
   const dirty = Object.keys(draft).some((k) => draft[k] !== settings.settings[k]);
 
   return (
-    <section className="card">
+    <section className="card" style={{ paddingTop: 16 }}>
       <div className="card-head">
         <h2>Handover settings</h2>
         <span className="chip chip-dev">admin</span>
@@ -294,7 +309,7 @@ function AdminSettings({ settings, onSaved, onError }) {
               value={draft[def.key]}
               onChange={(e) => setDraft({ ...draft, [def.key]: Number(e.target.value) })}
             />
-            <small className="muted">{def.help} Default {def.default}.</small>
+            <small className="field-hint">{def.help} Default {def.default}.</small>
           </label>
         ))}
       </div>

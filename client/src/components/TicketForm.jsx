@@ -61,16 +61,14 @@ export default function TicketForm({ ticketId, onSaved, onCancel }) {
 
   return (
     <div className="page page-narrow">
-      <header className="page-head">
-        <div>
-          <h1>{editing ? `Edit ${loadedTicket?.ticketNumber || ''}` : 'New Ticket'}</h1>
-          <p className="muted">
-            {editing
-              ? 'Subject and description can be corrected; status and assignment are managed on the ticket.'
-              : 'Log a walk-up or phone request. The assignment engine will route it automatically.'}
-          </p>
-        </div>
-      </header>
+      <div className="hero">
+        <h1 className="hero-title">{editing ? `Edit ${loadedTicket?.ticketNumber || ''}` : 'New Ticket'}</h1>
+        <p className="hero-sub">
+          {editing
+            ? 'Subject and description can be corrected; status and assignment are managed on the ticket.'
+            : 'Log a walk-up or phone request. The assignment engine will route it automatically.'}
+        </p>
+      </div>
 
       {error && <ErrorState message={error} />}
 

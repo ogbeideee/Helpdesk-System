@@ -56,10 +56,9 @@ export function Avatar({ name, size = 28 }) {
   return (
     <span
       className="avatar"
-      style={{
-        width: size, height: size, fontSize: size * 0.38,
-        background: `hsl(${hue} 45% 26%)`, color: `hsl(${hue} 90% 78%)`,
-      }}
+      // Only the hue is seeded from the name; saturation and lightness are
+      // theme tokens, so the same avatar reads correctly in light and dark.
+      style={{ width: size, height: size, fontSize: size * 0.38, '--avatar-h': hue }}
       title={name}
     >
       {label}

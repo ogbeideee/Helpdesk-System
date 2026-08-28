@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { api } from '../api.js';
-import { STATES, PRIORITIES, CATEGORIES, OPEN_STATES } from '../constants.js';
+import { STATES, PRIORITIES, CATEGORIES } from '../constants.js';
 import {
   Spinner, ErrorState, EmptyState, StateBadge, PriorityBadge,
   SlaBadge, Avatar, fmtDateTime,
@@ -20,16 +20,13 @@ export default function TicketsPage({ onOpen }) {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
 
-  // Debounce the free-text search so we do not hammer the API.
   useEffect(() => {
-    const t = setTimeout(() => setDebouncedQ(filters.q), 300);
+    const t = setTimeout(() => setDebouncedQ(filters.q), 250);
     return () => clearTimeout(t);
   }, [filters.q]);
 
   useEffect(() => {
     api.groups().then(setGroups).catch(() => {});
-    // Agent options for the filter: any authenticated user can read the
-    // dashboard aggregate (the /agents admin listing is admin-only).
     api.dashboard().then((d) => setAgentOptions(d.ticketsPerAgent || [])).catch(() => {});
   }, []);
 
@@ -70,46 +67,45 @@ export default function TicketsPage({ onOpen }) {
 
   return (
     <div className="page">
-      <header className="page-head">
-        <div>
-          <h1>Tickets</h1>
-          <p className="muted">
-            {tickets === null ? 'Loading…' : `${sorted.length} ticket${sorted.length === 1 ? '' : 's'} match`}
-            {activeFilterCount > 0 && ' · filters active'}
-          </p>
-        </div>
-      </header>
+      <div className="hero">
+        <h1 className="hero-title">Tickets</h1>
+        <p className="hero-sub">
+          {tickets === null ? 'Loading…' : `${sorted.length} ticket${sorted.length === 1 ? '' : 's'}`}
+          {activeFilterCount > 0 && ' · filters active'}
+        </p>
+      </div>
 
-      <div className="filter-bar card">
+      <div className="filter-bar" role="search">
         <input
           className="filter-search"
-          placeholder="Search subject, body, requester or ticket #…"
+          placeholder="Search ticket, subject, requester…"
           value={filters.q}
           onChange={(e) => setFilter('q', e.target.value)}
           aria-label="Search tickets"
         />
+        <span className="filter-divider" />
         <select value={filters.status} onChange={(e) => setFilter('status', e.target.value)} aria-label="Status filter">
           <option value="">All statuses</option>
           {STATES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
         </select>
         <select value={filters.priority} onChange={(e) => setFilter('priority', e.target.value)} aria-label="Priority filter">
-          <option value="">All priorities</option>
+          <option value="">Any priority</option>
           {PRIORITIES.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
         </select>
         <select value={filters.category} onChange={(e) => setFilter('category', e.target.value)} aria-label="Category filter">
-          <option value="">All categories</option>
+          <option value="">Any category</option>
           {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
         <select value={filters.group} onChange={(e) => setFilter('group', e.target.value)} aria-label="Assignment group filter">
-          <option value="">All groups</option>
+          <option value="">Any group</option>
           {groups.map((g) => <option key={g.key} value={g.key}>{g.name}</option>)}
         </select>
         <select value={filters.agentId} onChange={(e) => setFilter('agentId', e.target.value)} aria-label="Assigned agent filter">
-          <option value="">All agents</option>
+          <option value="">Any agent</option>
           {agentOptions.map((a) => <option key={a.agentId} value={a.agentId}>{a.name}</option>)}
         </select>
         {activeFilterCount > 0 && (
-          <button className="btn btn-ghost" onClick={() => setFilters(EMPTY_FILTERS)}>Clear</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => setFilters(EMPTY_FILTERS)}>Clear</button>
         )}
       </div>
 
@@ -119,7 +115,7 @@ export default function TicketsPage({ onOpen }) {
 
       {!error && tickets !== null && tickets.length === 0 && (
         <EmptyState
-          icon="🔍"
+          icon="∅"
           title="No tickets match"
           hint={activeFilterCount ? 'Try adjusting or clearing the filters.' : 'Submit a simulated email or create a ticket manually.'}
         />
@@ -127,48 +123,60 @@ export default function TicketsPage({ onOpen }) {
 
       {!error && tickets !== null && tickets.length > 0 && (
         <>
-          <div className="table-wrap card">
+          <div className="table-wrap">
             <table className="table table-clickable">
               <thead>
                 <tr>
-                  <th>Ticket #</th>
+                  <th style={{ width: 110 }}>Ticket</th>
                   <th>Subject</th>
                   <th>Requester</th>
-                  <th>Requester Email</th>
-                  <th>Category</th>
+                  <th>Group</th>
+                  <th>Assigned to</th>
                   <th>Priority</th>
                   <th>Status</th>
-                  <th>Group</th>
-                  <th>Assigned Agent</th>
                   <th>SLA</th>
-                  <th>Created</th>
                   <th>Updated</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((t) => (
                   <tr key={t.id} onClick={() => onOpen(t.id)}>
-                    <td className="mono nowrap">{t.ticketNumber}</td>
+                    <td className="cell-id">{t.ticketNumber}</td>
                     <td className="cell-subject" title={t.shortDescription}>
-                      {t.awaitingAssignment && <span className="chip chip-warn">awaiting</span>}
+                      {t.awaitingAssignment && <span className="chip chip-warn" style={{ marginRight: 6 }}>awaiting</span>}
                       {t.shortDescription}
                     </td>
-                    <td className="nowrap">{t.requesterName || <span className="muted">—</span>}</td>
-                    <td className="muted">{t.requesterEmail}</td>
-                    <td><span className="chip">{t.category}</span></td>
-                    <td><PriorityBadge priority={t.priority} /></td>
-                    <td><StateBadge state={t.state} /></td>
-                    <td>{t.team?.name || <span className="muted">Triage</span>}</td>
+                    <td>
+                      <div className="cell-agent" style={{ minWidth: 0 }}>
+                        <span style={{ minWidth: 0, overflow: 'hidden' }}>
+                          <div style={{ fontWeight: 500, fontSize: 13, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {t.requesterName || <span className="muted">—</span>}
+                          </div>
+                          <div className="muted small" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 180 }}>
+                            {t.requesterEmail}
+                          </div>
+                        </span>
+                      </div>
+                    </td>
+                    <td>
+                      {t.team?.name
+                        ? <span className="chip">{t.team.name}</span>
+                        : <span className="muted small">Triage</span>}
+                    </td>
                     <td>
                       {t.assignedAgent ? (
-                        <span className="cell-agent"><Avatar name={t.assignedAgent.name} size={22} /> {t.assignedAgent.name}</span>
+                        <span className="cell-agent">
+                          <Avatar name={t.assignedAgent.name} size={22} />
+                          <strong>{t.assignedAgent.name}</strong>
+                        </span>
                       ) : (
-                        <span className="muted">Unassigned</span>
+                        <span className="muted small">Unassigned</span>
                       )}
                     </td>
+                    <td><PriorityBadge priority={t.priority} /></td>
+                    <td><StateBadge state={t.state} /></td>
                     <td><SlaBadge ticket={t} /></td>
-                    <td className="muted nowrap">{fmtDateTime(t.createdAt)}</td>
-                    <td className="muted nowrap">{fmtDateTime(t.updatedAt)}</td>
+                    <td className="muted small nowrap">{fmtDateTime(t.updatedAt)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -176,13 +184,13 @@ export default function TicketsPage({ onOpen }) {
           </div>
 
           <div className="pagination">
-            <span className="muted">
+            <span className="muted small">
               Showing {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, sorted.length)} of {sorted.length}
             </span>
             <div className="pagination-controls">
-              <button className="btn btn-ghost" disabled={safePage <= 1} onClick={() => setPage(safePage - 1)}>← Prev</button>
-              <span>Page {safePage} / {pageCount}</span>
-              <button className="btn btn-ghost" disabled={safePage >= pageCount} onClick={() => setPage(safePage + 1)}>Next →</button>
+              <button className="btn btn-ghost btn-sm" disabled={safePage <= 1} onClick={() => setPage(safePage - 1)}>Prev</button>
+              <span className="muted small tnum">Page {safePage} / {pageCount}</span>
+              <button className="btn btn-ghost btn-sm" disabled={safePage >= pageCount} onClick={() => setPage(safePage + 1)}>Next</button>
             </div>
           </div>
         </>

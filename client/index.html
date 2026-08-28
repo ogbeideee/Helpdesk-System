@@ -3,7 +3,31 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
     <title>IT HELPDESK</title>
+    <script>
+      /* Resolve the theme BEFORE first paint so there is never a flash of the
+         wrong one. Kept inline and dependency-free on purpose: a bundled
+         module would run too late. Mirrors src/theme.js — change both. */
+      (function () {
+        var el = document.documentElement;
+        var theme = 'dark';
+        try {
+          var stored = localStorage.getItem('td_theme');
+          if (stored === 'light' || stored === 'dark') {
+            theme = stored;
+          } else if (window.matchMedia('(prefers-color-scheme: light)').matches) {
+            theme = 'light';
+          }
+        } catch (e) {
+          /* private mode / storage blocked — fall through to dark */
+        }
+        el.setAttribute('data-theme', theme);
+        /* Suppresses the colour transition for the very first paint;
+           removed by src/theme.js once the app has mounted. */
+        el.classList.add('theme-boot');
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -25,16 +25,13 @@ export default function GroupsPage() {
 
   return (
     <div className="page">
-      <header className="page-head">
-        <div>
-          <h1>Assignment Groups</h1>
-          <p className="muted">
-            Routing targets for the assignment engine. Rules (category → group,
-            minimum skill levels, priority boosts) are configured in{' '}
-            <code className="mono-sm">server/config/assignment.config.json</code>.
-          </p>
-        </div>
-      </header>
+      <div className="hero">
+        <h1 className="hero-title">Assignment Groups</h1>
+        <p className="hero-sub">
+          Routing targets for the assignment engine. Rules (category → group,
+          minimum skill levels, priority boosts) live under Routing Rules.
+        </p>
+      </div>
 
       {groups.length === 0 ? (
         <div className="callout callout-error">No assignment groups found — run <code>npm run db:init</code>.</div>
@@ -43,10 +40,10 @@ export default function GroupsPage() {
           {groups.map((g) => (
             <section key={g.key} className="card group-card">
               <div className="group-head">
-                <span className="group-icon" aria-hidden="true">{GROUP_ICONS[g.key] || '⛁'}</span>
+                <span className="group-icon" aria-hidden="true">{GROUP_ICONS[g.key] || '◇'}</span>
                 <div>
                   <h2>{g.name}</h2>
-                  <span className="muted mono-sm">{g.key} · min skill L{g.minSkillLevel}</span>
+                  <span className="muted small">{g.key} · min skill L{g.minSkillLevel}</span>
                 </div>
               </div>
               <div className="group-stats">
@@ -64,10 +61,10 @@ export default function GroupsPage() {
                 </div>
               </div>
               {g.unassignedTickets > 0 && (
-                <p className="group-note">⚠ Tickets waiting for an available agent with the required skill level.</p>
+                <p className="group-note">Tickets waiting for an available agent with the required skill level.</p>
               )}
               {g.activeAgents === 0 && (
-                <p className="group-note">No active agents — new tickets will await manual assignment.</p>
+                <p className="group-note" style={{ color: 'var(--muted)' }}>No active agents — new tickets will await manual assignment.</p>
               )}
             </section>
           ))}
