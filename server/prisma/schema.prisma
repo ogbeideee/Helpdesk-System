@@ -97,6 +97,7 @@ model Agent {
   comments        Comment[]
   auditEvents     UserAuditLog[] @relation("UserAuditSubject")
   preferredForRules RoutingRule[]  @relation("RoutingPreferredAgent")
+  notifications   Notification[] @relation("AgentNotifications")
 }
 
 // Administrative history for user records: creation, role changes,
@@ -154,6 +155,7 @@ model Ticket {
   updatedAt           DateTime         @updatedAt
   auditLogs           TicketAuditLog[]
   comments            Comment[]
+  notifications       Notification[]
 
   @@index([state])
   @@index([graphConversationId])
@@ -205,4 +207,25 @@ model GraphSubscription {
   lastRenewedAt      DateTime?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
+}
+
+// In-app notification for an agent. Email is sent separately through the
+// existing notification service (src/mailer.js); this is the in-product feed,
+// so an agent who was not watching their inbox still sees what happened to
+// their tickets.
+model Notification {
+  id        Int       @id @default(autoincrement())
+  agentId   Int
+  agent     Agent     @relation("AgentNotifications", fields: [agentId], references: [id], onDelete: Cascade)
+  ticketId  Int?
+  ticket    Ticket?   @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+  // ticket_taken | ticket_reassigned | ticket_rebalanced | availability_forced
+  type      String
+  title     String
+  body      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([agentId, readAt])
+  @@index([ticketId])
 }

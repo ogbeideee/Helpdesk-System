@@ -768,3 +768,32 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
 .chip-you        { background: rgba(250, 204, 21, 0.18); color: hsl(48 96% 70%); margin-left: 6px; }
 .chip-ok         { background: rgba(52, 211, 153, 0.18); color: hsl(160 64% 62%); }
 .chip-off        { background: rgba(148, 163, 184, 0.18); color: hsl(215 16% 68%); }
+
+/* --- Availability + notifications (sidebar) -------------------------- */
+.availability-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.09));
+  border-radius: 8px;
+}
+.notif-button { position: relative; padding: 2px 6px; }
+.notif-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: hsl(0 72% 55%);
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+}
+.plain-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.plain-list li { padding: 8px 10px; border-radius: 7px; background: rgba(255, 255, 255, 0.03); }
+.notif-list { max-height: 340px; overflow-y: auto; }

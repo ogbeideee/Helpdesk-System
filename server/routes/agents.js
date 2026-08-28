@@ -4,6 +4,7 @@ const prisma = require('../src/lib/prisma');
 const { requireAdmin, sanitizeAgent } = require('../src/authMiddleware');
 const { OPEN_STATES } = require('../src/states');
 const userService = require('../src/services/userService');
+const workloadService = require('../src/services/workloadService');
 
 const router = express.Router();
 router.use(requireAdmin);
@@ -162,19 +163,42 @@ router.patch('/:id', async (req, res) => {
     const verdict = await userService.checkUserUpdate(existing, req.agent, changes);
     if (!verdict.ok) return res.status(verdict.status).json({ error: verdict.error });
 
+    // Requirement 9: an administrator CAN force an agent off even with work in
+    // progress, but it is disruptive, so it takes an explicit `force` flag.
+    // Deactivation is already an explicit act and needs no second confirmation.
+    if (changes.isAvailable === false && existing.isAvailable && req.body.force !== true) {
+      const preview = await workloadService.previewUnavailability(id);
+      if (preview.blocked) {
+        return res.status(409).json({
+          error:
+            `${existing.name} has ${preview.inProgress.length} ticket(s) in progress. ` +
+            'Re-send with { "force": true } to override and reassign them.',
+          blocked: true,
+          inProgress: preview.inProgress,
+          newTickets: preview.newTickets,
+        });
+      }
+    }
+
     const { user: updated } = await userService.applyUserUpdate(existing, req.agent, changes);
 
-    // Releasing work follows availability, not just the account flag: an agent
-    // who is deactivated OR marked unavailable should not keep open tickets.
-    const nowUnavailable =
-      (changes.isActive === false && existing.isActive) ||
-      (changes.isAvailable === false && existing.isAvailable);
-    if (nowUnavailable) {
-      await prisma.ticket.updateMany({
-        where: { assignedAgentId: id, state: { in: OPEN_STATES } },
-        data: { assignedAgentId: null },
+    // Work is handed on through the normal assignment algorithm rather than
+    // simply dropped, so tickets keep an owner wherever one exists.
+    let reassigned = null;
+    const deactivated = changes.isActive === false && existing.isActive;
+    const forcedUnavailable = changes.isAvailable === false && existing.isAvailable;
+
+    if (deactivated || forcedUnavailable) {
+      reassigned = await workloadService.reassignOpenTicketsFor(id, {
+        actor: req.agent,
+        reason: deactivated
+          ? `${existing.name} was deactivated by an administrator`
+          : `${existing.name} was marked unavailable by an administrator`,
+        notificationType: 'availability_forced',
       });
-    } else if (changes.teamId !== undefined && changes.teamId !== existing.teamId) {
+    }
+
+    if (changes.teamId !== undefined && changes.teamId !== existing.teamId && !deactivated && !forcedUnavailable) {
       await prisma.ticket.updateMany({
         where: { assignedAgentId: id, state: 'NEW' },
         data: { assignedAgentId: null },
@@ -185,6 +209,8 @@ router.patch('/:id', async (req, res) => {
       isActive: updated.isActive,
       isAvailable: updated.isAvailable,
       skillLevel: updated.skillLevel,
+      // Present when this change handed work on to other agents.
+      reassigned,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

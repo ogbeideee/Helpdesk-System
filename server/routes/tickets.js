@@ -16,6 +16,7 @@ const notificationService = require('../src/mailer');
 const { intakeEmailMessage, IntakeValidationError } = require('../src/services/ticketIntake');
 const { classify } = require('../src/graph/categoryRules');
 const assignmentPolicy = require('../src/services/assignmentPolicy');
+const workloadService = require('../src/services/workloadService');
 
 const router = express.Router();
 
@@ -58,9 +59,15 @@ function actorLabel(agent) {
 
 /** Decorate tickets with derived fields for clients. */
 function serializeTicket(t) {
+  const hoursLeft = workloadService.hoursUntilClaimable(t);
   return {
     ...t,
     awaitingAssignment: !t.assignedAgentId && isOpenState(t.state),
+    // A NEW ticket becomes takeable by a teammate once it has gone unattended
+    // for the configured threshold. Surfaced so the UI reflects the rule the
+    // backend enforces rather than re-deriving it.
+    unattended: workloadService.isUnattended(t),
+    hoursUntilClaimable: hoursLeft,
     overdue: Boolean(t.dueAt && isOpenState(t.state) && new Date(t.dueAt) < new Date()),
   };
 }
@@ -606,37 +613,53 @@ router.post('/:id/start', async (req, res) => {
   }
 });
 
-// POST /api/tickets/:id/claim — convenience: assign to self
-router.post('/:id/claim', async (req, res) => {
+// POST /api/tickets/:id/claim — "Take Ticket"
+//
+// An agent may take an unassigned ticket in their own group at any time, or
+// one already assigned to a colleague only once it has been NEW and untouched
+// for the unattended threshold (4h by default). Administrators are exempt.
+// The move is concurrency-safe: two agents racing for the same ticket cannot
+// both win.
+async function takeTicket(req, res) {
   try {
     const ticket = await loadTicketOr404(req.params.id, res, {
       assignedAgent: true,
       team: true,
     });
     if (!ticket) return;
-    if (['RESOLVED', 'CLOSED'].includes(ticket.state)) {
-      return res.status(400).json({ error: `Cannot claim a ${ticket.state.toLowerCase()} ticket` });
+
+    const verdict = workloadService.checkClaim(ticket, req.agent);
+    if (!verdict.ok) return res.status(verdict.status).json({ error: verdict.error });
+
+    const outcome = await workloadService.moveTicket({
+      ticket,
+      toAgentId: req.agent.id,
+      actor: req.agent,
+      note: `taken by ${req.agent.name} (${verdict.reason})`,
+      notificationType: 'ticket_taken',
+      // The previous assignee is told their ticket was taken.
+      notifyPrevious: true,
+    });
+
+    if (!outcome.moved) {
+      // Somebody else got there first.
+      return res.status(409).json({ error: 'Another agent took this ticket first' });
     }
-    const updated = await prisma.ticket.update({
+
+    const fresh = await prisma.ticket.findUnique({
       where: { id: ticket.id },
-      data: {
-        assignedAgentId: req.agent.id,
-        auditLogs: {
-          create: {
-            fromState: ticket.state,
-            toState: ticket.state,
-            actor: actorLabel(req.agent),
-            note: 'Claimed via portal',
-          },
-        },
-      },
       include: DETAIL_INCLUDE,
     });
-    res.json(serializeTicket(updated));
+    res.json(serializeTicket(fresh));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
-});
+}
+
+// One handler, two names: "claim" is the historical path, "take" is what the
+// UI calls the action.
+router.post('/:id/claim', takeTicket);
+router.post('/:id/take', takeTicket);
 
 // Shared handler for internal notes and requester-facing updates.
 async function addNote(req, res) {

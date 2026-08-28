@@ -242,7 +242,7 @@ export default function TicketDetail({ id, me, onChanged }) {
             <div className="action-block">
               <h3 className="action-label">Workflow</h3>
               <div className="btn-row">
-                {canStart && ticket.state === 'NEW' && (
+                {canStart && ticket.state === 'NEW' && (ticket.assignedAgentId === me.id || me.role === 'admin') && (
                   <button className="btn btn-primary" disabled={busy}
                     onClick={() => run(async () => api.startTicket(id), 'Work started')}>
                     ▶ Start working
@@ -289,6 +289,28 @@ export default function TicketDetail({ id, me, onChanged }) {
                 >
                   ⇄ {ticket.assignedAgent ? 'Reassign' : 'Assign'}
                 </button>
+
+                {/* Taking a ticket from a colleague is only offered once it has
+                    gone unattended; the backend enforces the same rule. */}
+                {ticket.assignedAgentId !== me.id && (ticket.unattended || !ticket.assignedAgentId || me.role === 'admin') && (
+                  <button
+                    className="btn btn-primary btn-sm"
+                    disabled={busy}
+                    onClick={() => run(async () => api.takeTicket(id), 'Ticket is now yours')}
+                  >
+                    ✋ Take Ticket
+                  </button>
+                )}
+
+                {ticket.assignedAgentId && ticket.assignedAgentId !== me.id
+                  && !ticket.unattended && ticket.state === 'NEW' && me.role !== 'admin' && (
+                  <p className="muted small" style={{ marginTop: 6 }}>
+                    Available to the team in{' '}
+                    {ticket.hoursUntilClaimable >= 1
+                      ? `${ticket.hoursUntilClaimable.toFixed(1)} hours`
+                      : `${Math.ceil((ticket.hoursUntilClaimable || 0) * 60)} minutes`}.
+                  </p>
+                )}
               </div>
             )}
 

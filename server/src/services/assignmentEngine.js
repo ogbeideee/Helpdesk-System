@@ -136,7 +136,11 @@ async function decide({ category, priority, text, forceTeamId }, client = prisma
  *   { groupKey, groupName, teamId, minSkillLevel, agent|null, rule info,
  *     candidatesConsidered, crossTeam, reason, awaitingAssignment }
  */
-async function assign({ category, priority, text, forceTeamId }, client = prisma, logger = console) {
+async function assign(
+  { category, priority, text, forceTeamId, excludeAgentIds = [] },
+  client = prisma,
+  logger = console
+) {
   const config = loadConfig();
   const cap = config.maxActiveTicketsPerAgent || FALLBACK_CONFIG.maxActiveTicketsPerAgent;
   const { STAFF_ROLES } = require('./userService');
@@ -161,6 +165,9 @@ async function assign({ category, priority, text, forceTeamId }, client = prisma
     isAvailable: true,
     role: { in: STAFF_ROLES },
     skillLevel: { gte: minSkillLevel },
+    // Used when moving work away from a specific agent: they must not be
+    // handed the same ticket straight back.
+    ...(excludeAgentIds.length ? { id: { notIn: excludeAgentIds } } : {}),
   };
 
   /* ---- 1. preferred agent named by the rule ------------------------ */
@@ -219,12 +226,13 @@ async function assign({ category, priority, text, forceTeamId }, client = prisma
   // Nobody in the group can take it. Rather than leave the ticket unassigned,
   // find the lowest-workload qualified agent anywhere. The ticket KEEPS its
   // assignment group: only the person working it comes from elsewhere.
-  const anywhere = forceTeamId
-    ? []
-    : await client.agent.findMany({
-        where: { ...eligibilityBase, ...(team ? { NOT: { teamId: team.id } } : {}) },
-        include: WORKLOAD_COUNT,
-      });
+  // Applies even when the group is pinned: pinning fixes which group OWNS the
+  // ticket, not who may work it. Callers that require a same-group agent check
+  // the returned agent's teamId themselves.
+  const anywhere = await client.agent.findMany({
+    where: { ...eligibilityBase, ...(team ? { NOT: { teamId: team.id } } : {}) },
+    include: WORKLOAD_COUNT,
+  });
   const globalEligible = anywhere.filter((a) => a._count.assignedTickets < cap);
 
   if (globalEligible.length) {

@@ -74,6 +74,16 @@ export const api = {
     request(`/tickets/${id}/notes`, body({ body: text, isInternal })),
   simulateEmail: (payload) => request('/tickets/from-email', body(payload)),
 
+  // ---- workload, availability, notifications ----
+  workload: () => request('/workload'),
+  myWorkload: () => request('/workload/me'),
+  availabilityPreview: () => request('/workload/availability/preview'),
+  setAvailability: (payload) => request('/workload/availability', body(payload)),
+  notifications: () => request('/workload/notifications'),
+  markNotificationsRead: (ids) => request('/workload/notifications/read', body(ids ? { ids } : {})),
+  rebalance: (payload = {}) => request('/workload/rebalance', body(payload)),
+  takeTicket: (id) => request(`/tickets/${id}/take`, body({})),
+
   // ---- routing rules (admin) ----
   routingRules: () => request('/routing/rules'),
   routingGroups: () => request('/routing/groups'),

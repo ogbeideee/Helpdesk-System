@@ -10,6 +10,7 @@ import AgentsPage from './components/AgentsPage.jsx';
 import RoutingPage from './components/RoutingPage.jsx';
 import GroupsPage from './components/GroupsPage.jsx';
 import SimulateEmailPage from './components/SimulateEmailPage.jsx';
+import AvailabilityControl from './components/AvailabilityControl.jsx';
 
 const EMAIL_SIMULATOR_ENABLED = import.meta.env.VITE_ENABLE_EMAIL_SIMULATOR !== 'false';
 
@@ -138,6 +139,7 @@ export default function App() {
           ))}
         </nav>
         <div className="sidebar-footer">
+          <AvailabilityControl me={me} onChanged={setMe} />
           <div className="user-card">
             <span className={`avatar avatar-lg`} style={{ background: 'hsl(212 45% 26%)', color: 'hsl(212 90% 78%)' }}>
               {String(me.name || me.email || '?').split(/\s+/).map((p) => p[0]).slice(0, 2).join('').toUpperCase()}
