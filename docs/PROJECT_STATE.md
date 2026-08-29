@@ -7,10 +7,12 @@ _Last updated: 2026-08-29_
 
 ## Current Phase
 
-Client UI redesign — second pass, working toward the supplied reference
-composition. **Uncommitted work in the working tree.** Frontend only: the
-backend, the database and every API are untouched (`git status -- server/` is
-clean and `dev.db` is byte-for-byte unchanged).
+**The client UI is finished and signed off.** The redesign, the light/dark
+theme and the reference-led visual polish are all complete, committed
+(`7ae07c3` on `ui-polish`) and **approved as the baseline**.
+
+No UI work is in flight, and none is planned. The next phase is backend:
+Microsoft Graph against live credentials, then Prisma migrations.
 
 ## Completed
 
@@ -23,48 +25,20 @@ clean and `dev.db` is byte-for-byte unchanged).
 - Agent-to-agent handovers
 - Demo-data removal and move to a real installation
 - Per-suite test database isolation
-- Client shell: navigation rail + application header + workspace
+- **Client UI redesign — complete.** Every screen: dashboard, tickets queue,
+  ticket detail, handovers, agents, routing rules, assignment groups, simulate
+  email, sign-in.
+- **Light / dark theme — complete.** One component implementation, tokens only;
+  `light` / `dark` / `system`, flash-free before first paint, WCAG AA text in
+  both palettes, and no hardcoded colour outside the token blocks.
+- **Reference-based visual polish — complete.** Application header (title,
+  global search, appearance, notifications, account), five-card KPI row,
+  operational Recent Tickets table, metered breakdowns, right utility rail,
+  collapsible navigation rail, one card language across the product.
 
 ## In Progress
 
-Nothing in flight. The client work is finished but **uncommitted**.
-
-Modified but not committed:
-
-- `client/src/App.jsx`, `client/src/index.css`, `client/src/components/ui.jsx`
-  and 9 screen components
-- New: `client/src/pageHeader.js`, `client/src/components/TopBar.jsx`,
-  `client/src/components/NotificationBell.jsx`
-- Untracked helpers: `client/live-check.mjs`, `client/ssr-check.mjs` — both are
-  **stale**: their `document` mock no longer satisfies React 18, so they fail
-  before evaluating the bundle. Replaced in practice by the jsdom check
-  described under Last Verified.
-
-What the second pass changed:
-
-- **Application header.** Page title/subtitle, global search (Ctrl-K over
-  tickets, people and categories), appearance, notifications and the account
-  menu. Each of those controls now exists exactly once.
-- **Page titles** move to the header via `usePageHeader` (`src/pageHeader.js`).
-  The shell renders a per-route default; a screen overrides it when it knows
-  better (live queue count, ticket number). Screens no longer draw their own
-  `h1`.
-- **Dashboard** rebuilt to the reference composition: five KPI cards, a
-  full-width Recent Tickets table (ID / Subject / Requester / Status /
-  Priority / Assigned to / Age), Priority / Category / Group meters, Agent
-  Workload, and a right utility rail (Quick Actions, System Status, My Stats).
-- **Hash routing takes a query string** — `#/tickets?agentId=4`,
-  `?agentId=unassigned`, `?category=Software` — so a link can carry queue
-  filters. Only keys the queue already filters on are honoured.
-- **Navigation rail collapses** to an icon rail (persisted in `td_sidebar`) and
-  collapses automatically below 900px.
-- **Notifications moved** out of the sidebar availability switch into the
-  header bell (`NotificationBell.jsx`); the sidebar control is now availability
-  only.
-- Ctrl-K belongs to the global header search; the Tickets filter field took
-  `/`.
-
-To finish: commit.
+No feature or UI work in flight. The only uncommitted change is this file.
 
 ## Next
 
@@ -72,8 +46,11 @@ Not started, no order committed to:
 
 1. Verify Microsoft Graph against live credentials
 2. Introduce Prisma migrations
-3. Retire or repair `client/live-check.mjs` / `client/ssr-check.mjs` — the jsdom
-   harness supersedes them
+3. Maintenance: retire or repair `client/live-check.mjs` /
+   `client/ssr-check.mjs`. Both are stale — their `document` mock no longer
+   satisfies React 18, so they fail before evaluating the bundle, and they
+   failed that way before the redesign too. A jsdom harness supersedes them.
+   Deferred deliberately; not a blocker.
 
 ## Important Decisions
 
@@ -97,17 +74,25 @@ Not started, no order committed to:
   `client/index.html` is what makes that flash-free.
 - **`INITIAL_ADMIN_EMAIL` is configuration, not business logic** — no address is
   hardcoded, and a test asserts that.
+- **The current UI is the approved baseline (2026-08-29).** Feature work adds to
+  it in its existing visual language; it does **not** redesign or substantially
+  alter it. No new layout system, no re-theming, no restyling of screens that a
+  feature merely touches, and no third re-do of the dashboard — unless the
+  owner explicitly asks for it. Extending the baseline is expected: a new screen
+  reuses `ui.jsx`, the `Icon` set, `usePopover`, `usePageHeader` and the
+  existing tokens.
 
 ## Known Issues
 
-- **The Agents table needs horizontal scrolling** at ~1440px to reach the row
-  actions. It no longer clips them, but the column layout should be tightened
-  when that screen is redesigned. The narrower rail buys back ~180px; the
-  column widths themselves are still untouched.
-- **The dashboard KPI cards carry no trend line.** The reference design shows a
-  sparkline per figure; nothing in this system stores history, so the slot
-  carries the figure's real share of the open queue instead. Restoring a trend
-  line means storing snapshots first — a backend change, deliberately not made.
+- **The dashboard KPI cards carry no trend line.** _Accepted, not a defect._
+  The reference design shows a sparkline per figure; nothing in this system
+  stores history, so the slot carries the figure's real share of the open queue
+  instead. A trend line would need snapshot storage first — a backend change.
+  Leave as is.
+- **The Agents table scrolls horizontally at ~1440px** to reach the row actions.
+  _Accepted, not a defect._ Nothing is clipped and every action is reachable;
+  the current responsive behaviour stands unless a real usability problem is
+  reported.
 - **Microsoft Graph has never run against live credentials.** Auth, mailbox
   access and subscription renewal are verified only against mocks.
 - **Background workers run in every server process.** The rebalancer and the
