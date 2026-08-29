@@ -38,14 +38,6 @@ export default function GroupsPage() {
 
   return (
     <div className="page">
-      <div className="hero">
-        <h1 className="hero-title">Assignment Groups</h1>
-        <p className="hero-sub">
-          Routing targets for the assignment engine. Rules (category → group,
-          minimum skill levels, priority boosts) live under Routing Rules.
-        </p>
-      </div>
-
       {groups.length === 0 ? (
         <div className="callout callout-error">No assignment groups found — run <code>npm run db:init</code>.</div>
       ) : (

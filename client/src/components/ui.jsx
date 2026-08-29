@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { OPEN_STATES } from '../constants.js';
 
 /* ------------------------------------------------------------------ */
@@ -102,6 +102,107 @@ export function EmptyState({ icon = '🗂️', title, hint, action }) {
 
 export function Skeleton({ height = 16, width = '100%' }) {
   return <span className="skeleton" style={{ height, width }} aria-hidden="true" />;
+}
+
+/* ------------------------------------------------------------------ */
+/* Icons                                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * One line-icon set for the whole application: a single 16-unit grid, one
+ * stroke weight, `currentColor` throughout. Icons were previously drawn inline
+ * wherever they were needed, which is how a set drifts.
+ */
+const ICON_PATHS = {
+  dashboard: <><rect x="2" y="2" width="5" height="5" rx="1.2" /><rect x="9" y="2" width="5" height="5" rx="1.2" /><rect x="2" y="9" width="5" height="5" rx="1.2" /><rect x="9" y="9" width="5" height="5" rx="1.2" /></>,
+  tickets: <><path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h7" /><circle cx="12.5" cy="11.5" r="1.5" /></>,
+  handovers: <><path d="M2 8h10M8.5 4.5L12 8l-3.5 3.5" /><path d="M14 5v6" /></>,
+  agents: <><circle cx="6" cy="6" r="2.5" /><path d="M2 13c.5-2 2-3 4-3s3.5 1 4 3" /><circle cx="11.5" cy="5.5" r="1.8" /><path d="M10 9.5c1.5 0 3 1 3.5 2.5" /></>,
+  routing: <><circle cx="3" cy="8" r="1.5" /><path d="M4.5 8h3M11.5 8H8" /><circle cx="13" cy="8" r="1.5" /><path d="M6 8l2-3M10 8L8 5M6 8l2 3M10 8l-2 3" /></>,
+  groups: <><rect x="2" y="2.5" width="5" height="5" rx="1.2" /><rect x="9" y="2.5" width="5" height="5" rx="1.2" /><rect x="5.5" y="9" width="5" height="4.5" rx="1.2" /></>,
+  mail: <><rect x="2" y="3.5" width="12" height="9" rx="1.2" /><path d="M2.5 4.5l5.5 4 5.5-4" /></>,
+  search: <><circle cx="7" cy="7" r="4.5" /><path d="M10.5 10.5L14 14" /></>,
+  sun: <><circle cx="8" cy="8" r="3" /><path d="M8 1.5v1.2M8 13.3v1.2M14.5 8h-1.2M2.7 8H1.5M12.6 3.4l-.85.85M4.25 11.75l-.85.85M12.6 12.6l-.85-.85M4.25 4.25l-.85-.85" /></>,
+  moon: <path d="M13.5 9.6A5.8 5.8 0 0 1 6.4 2.5a5.8 5.8 0 1 0 7.1 7.1z" />,
+  monitor: <><rect x="1.75" y="3" width="12.5" height="8.5" rx="1.2" /><path d="M6 14h4" /></>,
+  bell: <><path d="M4.5 6.8a3.5 3.5 0 0 1 7 0c0 3 1 3.9 1 3.9h-9s1-.9 1-3.9z" /><path d="M6.7 13a1.5 1.5 0 0 0 2.6 0" /></>,
+  chevronDown: <path d="M4 6.25l4 3.5 4-3.5" />,
+  chevronRight: <path d="M6 3l5 5-5 5" />,
+  plus: <path d="M8 3.25v9.5M3.25 8h9.5" />,
+  userPlus: <><circle cx="6.5" cy="5.5" r="2.5" /><path d="M2 13c.4-2.2 2.2-3.4 4.5-3.4" /><path d="M11.5 8.5v4M9.5 10.5h4" /></>,
+  check: <path d="M3 8.4l3.2 3.1L13 4.8" />,
+  zap: <path d="M8.8 1.5L3.7 9h3.6l-.9 5.5L12.3 7H8.7z" />,
+  folder: <path d="M1.9 4.2c0-.7.5-1.2 1.2-1.2h2.6l1.3 1.6h4.9c.7 0 1.2.5 1.2 1.2v5.6c0 .7-.5 1.2-1.2 1.2H3.1c-.7 0-1.2-.5-1.2-1.2z" />,
+  key: <><circle cx="5" cy="7.4" r="2.6" /><path d="M7 8.6l5.6 3.2M11 10.5l-.7 1.6M12.9 11.6l-.8 1.5" /></>,
+  laptop: <><rect x="3" y="3.5" width="10" height="7" rx="1" /><path d="M1.5 12.5h13" /></>,
+  helpCircle: <><circle cx="8" cy="8" r="5.8" /><path d="M6.4 6.3a1.7 1.7 0 0 1 3.3.5c0 1.2-1.7 1.4-1.7 2.5" /><path d="M8 11.4h.01" /></>,
+  clock: <><circle cx="8" cy="8" r="5.8" /><path d="M8 4.7V8l2.2 1.4" /></>,
+  inbox: <><path d="M2 8.5h3l1 2h4l1-2h3" /><path d="M3.4 3.2h9.2l1.4 5.3v3.4c0 .6-.5 1.1-1.1 1.1H3.1c-.6 0-1.1-.5-1.1-1.1V8.5z" /></>,
+  arrowRight: <path d="M2.5 8h10M9 4.5L12.5 8 9 11.5" />,
+  collapse: <><rect x="2" y="2.5" width="12" height="11" rx="1.5" /><path d="M6.5 2.5v11" /><path d="M11.5 6.2L9.7 8l1.8 1.8" /></>,
+  dots: <><circle cx="8" cy="3.5" r="1" /><circle cx="8" cy="8" r="1" /><circle cx="8" cy="12.5" r="1" /></>,
+  logout: <><path d="M6 13.5H3.4c-.6 0-1.1-.5-1.1-1.1V3.6c0-.6.5-1.1 1.1-1.1H6" /><path d="M10.4 11L13.5 8l-3.1-3M13 8H6.2" /></>,
+  shieldCheck: <><path d="M8 1.9l4.8 1.7v4c0 3-2 5.2-4.8 6.5C5.2 12.8 3.2 10.6 3.2 7.6v-4z" /><path d="M5.9 7.9l1.6 1.6 2.8-3" /></>,
+  activity: <path d="M1.8 8h2.6l1.8-4.8L9 12.4l1.7-4.4h3.5" />,
+};
+
+export function Icon({ name, size = 16, className = '', strokeWidth = 1.5 }) {
+  const shape = ICON_PATHS[name];
+  if (!shape) return null;
+  return (
+    <svg
+      className={`icon ${className}`.trim()}
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {shape}
+    </svg>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Popover                                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Shared open/close behaviour for the header menus: a pointer press outside
+ * the anchor closes it, so does Escape, and focus returns to the trigger.
+ * Spread `anchorProps` on the wrapping element.
+ */
+export function usePopover() {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onPointer = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      setOpen(false);
+      ref.current?.querySelector('button, [href]')?.focus();
+    };
+    document.addEventListener('mousedown', onPointer);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onPointer);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const close = useCallback(() => setOpen(false), []);
+  const toggle = useCallback(() => setOpen((v) => !v), []);
+
+  return { open, setOpen, close, toggle, anchorProps: { ref, className: 'popover-anchor' } };
 }
 
 /* Badges ------------------------------------------------------------ */

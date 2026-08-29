@@ -72,8 +72,25 @@ parser), `src/graph/` (M365), `src/authMiddleware.js`.
 handovers, dashboard, stats, webhooks, dev`.
 
 **Client** (`client/src/components/`) — one component per screen plus
-`ui.jsx` (shared primitives: `Modal`, `Spinner`, `EmptyState`, `useToast`, …).
-Import from `ui.jsx` rather than rebuilding.
+`ui.jsx` (shared primitives: `Modal`, `Spinner`, `EmptyState`, `Icon`,
+`usePopover`, `useToast`, …). Import from `ui.jsx` rather than rebuilding;
+`Icon` is the only icon set, so no screen inlines its own SVG.
+
+**Client shell** — `App.jsx` renders a navigation rail plus `TopBar.jsx`
+(the application header) around the routed screen. Anything that acts on the
+product as a whole — global search, appearance, notifications, the account
+menu — lives in the header and lives there **once**; the rail carries
+navigation, availability and identity only.
+
+**Page titles** come from the header, not the screen: `App.jsx` holds a
+per-route default and a screen overrides it through `usePageHeader`
+(`src/pageHeader.js`) when it knows better — a live queue count, the ticket
+number. No screen draws its own `h1`.
+
+**Hash routing takes a query string** — `#/tickets?agentId=4`,
+`?agentId=unassigned`, `?category=Software` — so a link can carry queue
+filters. `parseHash()` splits it off before matching the path, and only keys
+the queue already filters on are honoured.
 
 ## Database
 

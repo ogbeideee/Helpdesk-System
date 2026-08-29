@@ -96,11 +96,7 @@ export default function AgentsPage({ me }) {
 
   return (
     <div className="page">
-      <div className="hero" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 16 }}>
-        <div>
-          <h1 className="hero-title">Agents</h1>
-          <p className="hero-sub">Availability, skill and workload for the assignment engine.</p>
-        </div>
+      <div className="page-actions">
         <button className="btn btn-primary" onClick={() => setEditorAgent('new')}>New agent</button>
       </div>
 

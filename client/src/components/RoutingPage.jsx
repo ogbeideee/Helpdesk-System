@@ -71,13 +71,7 @@ export default function RoutingPage() {
 
   return (
     <div className="page">
-      <div className="hero" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 16 }}>
-        <div>
-          <h1 className="hero-title">Routing Rules</h1>
-          <p className="hero-sub">
-            Rules are evaluated in order — the lowest priority number that matches wins. Unmatched tickets go to the default group.
-          </p>
-        </div>
+      <div className="page-actions">
         <button className="btn btn-primary" onClick={() => setEditing('new')}>New rule</button>
       </div>
 

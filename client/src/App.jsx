@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, getToken } from './api.js';
-import { avatarHue } from './components/ui.jsx';
+import { PageHeaderContext } from './pageHeader.js';
+import { Avatar, Icon } from './components/ui.jsx';
 import Login from './components/Login.jsx';
 import ErrorBoundary from './components/ErrorBoundary.jsx';
 import Dashboard from './components/Dashboard.jsx';
@@ -13,36 +14,40 @@ import GroupsPage from './components/GroupsPage.jsx';
 import SimulateEmailPage from './components/SimulateEmailPage.jsx';
 import AvailabilityControl from './components/AvailabilityControl.jsx';
 import HandoversPage from './components/HandoversPage.jsx';
-import ThemeToggle from './components/ThemeToggle.jsx';
+import TopBar from './components/TopBar.jsx';
 
 const EMAIL_SIMULATOR_ENABLED = import.meta.env.VITE_ENABLE_EMAIL_SIMULATOR !== 'false';
+const SIDEBAR_KEY = 'td_sidebar';
 
-function NavIcon({ name }) {
-  const props = { width: 16, height: 16, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round' };
-  switch (name) {
-    case 'dashboard':
-      return <svg {...props}><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>;
-    case 'tickets':
-      return <svg {...props}><path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h7"/><circle cx="12.5" cy="11.5" r="1.5"/></svg>;
-    case 'handovers':
-      return <svg {...props}><path d="M2 8h11M9.5 4.5L13 8l-3.5 3.5"/><path d="M14 8h-2"/></svg>;
-    case 'agents':
-      return <svg {...props}><circle cx="6" cy="6" r="2.5"/><path d="M2 13c.5-2 2-3 4-3s3.5 1 4 3"/><circle cx="11.5" cy="5.5" r="1.8"/><path d="M10 9.5c1.5 0 3 1 3.5 2.5"/></svg>;
-    case 'routing':
-      return <svg {...props}><circle cx="3" cy="8" r="1.5"/><path d="M4.5 8h3M11.5 8H8"/><circle cx="13" cy="8" r="1.5"/><path d="M6 8l2-3M10 8L8 5M6 8l2 3M10 8l-2 3"/></svg>;
-    case 'groups':
-      return <svg {...props}><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>;
-    case 'mail':
-      return <svg {...props}><rect x="2" y="3.5" width="12" height="9" rx="1"/><path d="M2.5 4l5.5 4 5.5-4"/></svg>;
-    default:
-      return null;
-  }
-}
+/**
+ * Default header text per route. A screen with something better to say — a live
+ * count, the ticket it is showing — overrides it through `usePageHeader`.
+ */
+const ROUTE_META = {
+  dashboard: { title: 'Service Desk Overview', subtitle: 'Live operations view of the IT helpdesk' },
+  list: { title: 'Tickets', subtitle: 'Every request in the queue' },
+  detail: { title: 'Ticket', subtitle: null },
+  new: { title: 'New Ticket', subtitle: 'Log a walk-up or phone request — the assignment engine routes it automatically.' },
+  edit: { title: 'Edit Ticket', subtitle: 'Subject and description can be corrected here.' },
+  handovers: { title: 'Handovers', subtitle: 'A handover is an offer — the ticket only changes owner when you accept it.' },
+  agents: { title: 'Agents', subtitle: 'Availability, skill and workload for the assignment engine.' },
+  routing: { title: 'Routing Rules', subtitle: 'Evaluated in order — the lowest priority number that matches wins.' },
+  groups: { title: 'Assignment Groups', subtitle: 'Routing targets for the assignment engine.' },
+  'simulate-email': {
+    title: 'Simulate Incoming Email',
+    subtitle: 'Stands in for the Microsoft 365 mailbox. Submission runs the production intake pipeline.',
+    dev: true,
+  },
+};
 
 export default function App() {
   const [me, setMe] = useState(undefined);
   const [route, setRoute] = useState(() => parseHash());
   const [handoverCount, setHandoverCount] = useState(0);
+  const [pageMeta, setPageMeta] = useState(null);
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem(SIDEBAR_KEY) === '1'; } catch { return false; }
+  });
 
   useEffect(() => {
     if (!getToken()) {
@@ -110,13 +115,25 @@ export default function App() {
     navigate('/');
   }
 
+  function toggleSidebar() {
+    setCollapsed((v) => {
+      const next = !v;
+      try { localStorage.setItem(SIDEBAR_KEY, next ? '1' : '0'); } catch { /* storage blocked */ }
+      return next;
+    });
+  }
+
+  const refreshSignal = useCallback(() => {
+    window.dispatchEvent(new CustomEvent('td:changed'));
+  }, []);
+
   if (me === undefined) return <div className="boot-screen"><span className="spinner" /></div>;
   if (me === null) return <Login onLogin={setMe} />;
 
   let content;
   switch (route.name) {
     case 'list':
-      content = <TicketsPage onOpen={(id) => navigate(`/tickets/${id}`)} />;
+      content = <TicketsPage initialFilters={route.query} onOpen={(id) => navigate(`/tickets/${id}`)} />;
       break;
     case 'detail':
       content = <TicketDetail id={route.id} me={me} onChanged={refreshSignal} />;
@@ -158,64 +175,93 @@ export default function App() {
       );
       break;
     default:
-      content = <Dashboard onOpen={(id) => navigate(`/tickets/${id}`)} />;
+      content = <Dashboard me={me} handoverCount={handoverCount} onOpen={(id) => navigate(`/tickets/${id}`)} />;
   }
 
-  function refreshSignal() {
-    window.dispatchEvent(new CustomEvent('td:changed'));
-  }
+  const meta = ROUTE_META[route.name] || ROUTE_META.dashboard;
+  const title = pageMeta?.title || meta.title;
+  const subtitle = pageMeta?.subtitle ?? meta.subtitle;
+  const userLabel = me.name || me.email;
 
   return (
-    <div className="shell">
+    <div className={`shell ${collapsed ? 'is-collapsed' : ''}`}>
       <aside className="sidebar">
-        <div className="brand" onClick={() => navigate('/')} role="button" tabIndex={0}>
-          <span className="brand-mark">IT</span>
-          <span className="brand-text">
-            <strong>Helpdesk</strong>
-            <small>Service Console</small>
-          </span>
+        <div className="sidebar-top">
+          <div className="brand" onClick={() => navigate('/')} role="button" tabIndex={0}
+            onKeyDown={(e) => { if (e.key === 'Enter') navigate('/'); }}>
+            <span className="brand-mark">IT</span>
+            <span className="brand-text">
+              <strong>Helpdesk</strong>
+              <small>Service Console</small>
+            </span>
+          </div>
+          <button
+            type="button"
+            className="sidebar-collapse"
+            onClick={toggleSidebar}
+            aria-label={collapsed ? 'Expand navigation' : 'Collapse navigation'}
+            title={collapsed ? 'Expand navigation' : 'Collapse navigation'}
+          >
+            <Icon name="collapse" size={16} />
+          </button>
         </div>
+
         <nav className="side-nav">
           {navGroups.map((group) => (
             <div key={group.label} className={`side-group ${group.dev ? 'is-dev' : ''}`}>
               <div className="side-group-label">{group.label}</div>
-              {group.items.map((item) => (
-                <button
-                  key={item.path}
-                  className={`nav-item ${currentPath(route) === item.path ? 'active' : ''}`}
-                  onClick={() => navigate(item.path)}
-                >
-                  <span className="nav-icon" aria-hidden="true"><NavIcon name={item.icon} /></span>
-                  <span>{item.label}</span>
-                  {item.badge > 0 && <span className="nav-badge">{item.badge}</span>}
-                  {item.dev && <span className="chip-dev">DEV</span>}
-                </button>
-              ))}
+              {group.items.map((item) => {
+                const active = currentPath(route) === item.path;
+                return (
+                  <button
+                    key={item.path}
+                    className={`nav-item ${active ? 'active' : ''}`}
+                    onClick={() => navigate(item.path)}
+                    aria-current={active ? 'page' : undefined}
+                    title={collapsed ? item.label : undefined}
+                  >
+                    <span className="nav-icon" aria-hidden="true"><Icon name={item.icon} size={16} /></span>
+                    <span className="nav-label">{item.label}</span>
+                    {item.badge > 0 && <span className="nav-badge">{item.badge}</span>}
+                    {item.dev && <span className="chip-dev">DEV</span>}
+                  </button>
+                );
+              })}
             </div>
           ))}
         </nav>
+
         <div className="sidebar-footer">
           <AvailabilityControl me={me} onChanged={setMe} />
-          <div className="sidebar-row">
-            <span className="sidebar-row-label">Theme</span>
-            <ThemeToggle />
-          </div>
           <div className="user-card">
-            <span className="avatar avatar-lg" style={{ '--avatar-h': avatarHue(me.name || me.email) }}>
-              {String(me.name || me.email || '?').split(/\s+/).map((p) => p[0]).slice(0, 2).join('').toUpperCase()}
-            </span>
+            <Avatar name={userLabel} size={32} />
             <span className="user-meta">
-              <strong>{me.name || me.email}</strong>
+              <strong>{userLabel}</strong>
               <small>{isAdmin ? 'Administrator' : me.team?.name || 'Agent'}</small>
             </span>
           </div>
-          <button className="btn btn-ghost btn-block" onClick={handleLogout}>Sign out</button>
+          <button className="btn btn-ghost btn-block sidebar-signout" onClick={handleLogout}>
+            <Icon name="logout" size={15} />
+            <span className="nav-label">Sign out</span>
+          </button>
         </div>
       </aside>
 
-      <main className="content">
-        <ErrorBoundary key={route.name + (route.id ?? '')}>{content}</ErrorBoundary>
-      </main>
+      <div className="workspace">
+        <TopBar
+          title={title}
+          subtitle={subtitle}
+          dev={!pageMeta?.title && meta.dev}
+          me={me}
+          isAdmin={isAdmin}
+          onLogout={handleLogout}
+        />
+        <main className="content">
+          <PageHeaderContext.Provider value={setPageMeta}>
+            <ErrorBoundary key={route.name + (route.id ?? '') + (route.search || '')}>{content}</ErrorBoundary>
+          </PageHeaderContext.Provider>
+        </main>
+      </div>
     </div>
   );
 }
@@ -233,21 +279,33 @@ function Denied() {
   );
 }
 
+/**
+ * Hash routing, with an optional query string so a link can carry queue
+ * filters — `#/tickets?agentId=4`. The path in front of `?` is what decides
+ * the screen and the active navigation item.
+ */
 function parseHash() {
-  const hash = window.location.hash.replace(/^#/, '') || '/';
+  const raw = window.location.hash.replace(/^#/, '') || '/';
+  const qIndex = raw.indexOf('?');
+  const hash = qIndex === -1 ? raw : raw.slice(0, qIndex);
+  const search = qIndex === -1 ? '' : raw.slice(qIndex + 1);
+  const query = Object.fromEntries(new URLSearchParams(search));
+
   const detailMatch = /^\/tickets\/(\d+)$/.exec(hash);
-  if (detailMatch) return { name: 'detail', id: Number(detailMatch[1]), path: `/tickets/${detailMatch[1]}` };
+  if (detailMatch) return { name: 'detail', id: Number(detailMatch[1]), path: `/tickets/${detailMatch[1]}`, search, query };
   const editMatch = /^\/tickets\/(\d+)\/edit$/.exec(hash);
-  if (editMatch) return { name: 'edit', id: Number(editMatch[1]), path: `/tickets/${editMatch[1]}` };
+  if (editMatch) return { name: 'edit', id: Number(editMatch[1]), path: `/tickets/${editMatch[1]}`, search, query };
+
+  const base = { search, query };
   switch (hash) {
-    case '/tickets': return { name: 'list', path: '/tickets' };
-    case '/tickets/new': return { name: 'new', path: '/tickets' };
-    case '/handovers': return { name: 'handovers', path: '/handovers' };
-    case '/agents': return { name: 'agents', path: '/agents' };
-    case '/routing': return { name: 'routing', path: '/routing' };
-    case '/groups': return { name: 'groups', path: '/groups' };
-    case '/simulate-email': return { name: 'simulate-email', path: '/simulate-email' };
-    default: return { name: 'dashboard', path: '/' };
+    case '/tickets': return { ...base, name: 'list', path: '/tickets' };
+    case '/tickets/new': return { ...base, name: 'new', path: '/tickets' };
+    case '/handovers': return { ...base, name: 'handovers', path: '/handovers' };
+    case '/agents': return { ...base, name: 'agents', path: '/agents' };
+    case '/routing': return { ...base, name: 'routing', path: '/routing' };
+    case '/groups': return { ...base, name: 'groups', path: '/groups' };
+    case '/simulate-email': return { ...base, name: 'simulate-email', path: '/simulate-email' };
+    default: return { ...base, name: 'dashboard', path: '/' };
   }
 }
 

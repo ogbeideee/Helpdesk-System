@@ -1,53 +1,28 @@
 import { useEffect, useState } from 'react';
 import { getPreference, setPreference, resolveTheme, watchSystem } from '../theme.js';
+import { Icon, usePopover } from './ui.jsx';
 
 /**
- * Light / System / Dark segmented control.
+ * Appearance control in the application header.
  *
- * Three options rather than a two-state switch, so "follow the operating
- * system" stays reachable after the user has picked something — a plain toggle
- * makes that choice unrecoverable.
+ * The visible part is an indicator, not a switch: a sun, a track with the knob
+ * on the side of the theme actually in effect, and a moon. Pressing it opens
+ * the Appearance menu.
  *
- * Exposed as a radiogroup: arrow keys move between options, and each option
- * reports its own pressed state to assistive technology.
+ * The menu carries three choices rather than two, so "follow the operating
+ * system" stays reachable after an explicit pick — a plain toggle would make
+ * that choice unrecoverable.
  */
 const OPTIONS = [
-  { value: 'light', label: 'Light' },
-  { value: 'system', label: 'System' },
-  { value: 'dark', label: 'Dark' },
+  { value: 'light', label: 'Light mode', icon: 'sun' },
+  { value: 'dark', label: 'Dark mode', icon: 'moon' },
+  { value: 'system', label: 'System', icon: 'monitor' },
 ];
-
-function Glyph({ name }) {
-  const p = {
-    width: 14, height: 14, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor',
-    strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true,
-  };
-  if (name === 'light') {
-    return (
-      <svg {...p}>
-        <circle cx="8" cy="8" r="3" />
-        <path d="M8 1.5v1.2M8 13.3v1.2M14.5 8h-1.2M2.7 8H1.5M12.6 3.4l-.85.85M4.25 11.75l-.85.85M12.6 12.6l-.85-.85M4.25 4.25l-.85-.85" />
-      </svg>
-    );
-  }
-  if (name === 'dark') {
-    return (
-      <svg {...p}>
-        <path d="M13.5 9.6A5.8 5.8 0 0 1 6.4 2.5a5.8 5.8 0 1 0 7.1 7.1z" />
-      </svg>
-    );
-  }
-  return (
-    <svg {...p}>
-      <rect x="1.75" y="3" width="12.5" height="8.5" rx="1.2" />
-      <path d="M6 14h4" />
-    </svg>
-  );
-}
 
 export default function ThemeToggle() {
   const [preference, setPref] = useState(getPreference);
   const [resolved, setResolved] = useState(() => resolveTheme());
+  const { open, toggle, close, anchorProps } = usePopover();
 
   // Follow the OS while the preference is 'system'.
   useEffect(() => watchSystem((theme) => setResolved(theme)), []);
@@ -56,48 +31,55 @@ export default function ThemeToggle() {
     setPreference(value);
     setPref(value);
     setResolved(resolveTheme(value));
+    close();
   }
 
-  function onKeyDown(e) {
-    const i = OPTIONS.findIndex((o) => o.value === preference);
-    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
-      e.preventDefault();
-      choose(OPTIONS[(i + 1) % OPTIONS.length].value);
-    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
-      e.preventDefault();
-      choose(OPTIONS[(i - 1 + OPTIONS.length) % OPTIONS.length].value);
-    }
-  }
+  const current = OPTIONS.find((o) => o.value === preference);
 
   return (
-    <div
-      className="theme-toggle"
-      role="radiogroup"
-      aria-label="Colour theme"
-      onKeyDown={onKeyDown}
-    >
-      {OPTIONS.map((o) => {
-        const selected = preference === o.value;
-        return (
-          <button
-            key={o.value}
-            type="button"
-            role="radio"
-            aria-checked={selected}
-            tabIndex={selected ? 0 : -1}
-            className={`theme-option ${selected ? 'is-selected' : ''}`}
-            onClick={() => choose(o.value)}
-            title={
-              o.value === 'system'
-                ? `Follow the system (currently ${resolved})`
-                : `${o.label} theme`
-            }
-          >
-            <Glyph name={o.value} />
-            <span className="sr-only">{o.label}</span>
-          </button>
-        );
-      })}
+    <div {...anchorProps}>
+      <button
+        type="button"
+        className={`theme-control ${resolved === 'dark' ? 'is-dark' : 'is-light'}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`Appearance: ${current?.label || preference}`}
+        title={
+          preference === 'system'
+            ? `Following the system (currently ${resolved})`
+            : `${current?.label}`
+        }
+        onClick={toggle}
+      >
+        <Icon name="sun" size={15} className="theme-glyph" />
+        <span className="theme-track" aria-hidden="true"><span className="theme-knob" /></span>
+        <Icon name="moon" size={15} className="theme-glyph" />
+      </button>
+
+      {open && (
+        <div className="menu menu-right" role="menu" aria-label="Appearance">
+          <div className="menu-label">Appearance</div>
+          {OPTIONS.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              role="menuitemradio"
+              aria-checked={preference === o.value}
+              className={`menu-item ${preference === o.value ? 'is-selected' : ''}`}
+              onClick={() => choose(o.value)}
+            >
+              <Icon name={o.icon} size={15} className="menu-item-icon" />
+              <span>{o.label}</span>
+              {preference === o.value && <Icon name="check" size={14} className="menu-check" />}
+            </button>
+          ))}
+          <div className="menu-foot">
+            {preference === 'system'
+              ? `Following your operating system — currently ${resolved}.`
+              : 'Applies to every screen and is remembered on this device.'}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

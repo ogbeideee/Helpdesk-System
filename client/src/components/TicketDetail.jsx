@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
+import { usePageHeader } from '../pageHeader.js';
 import {
   STATES, PRIORITIES, CATEGORIES,
   STATE_TRANSITIONS,
@@ -84,6 +85,13 @@ export default function TicketDetail({ id, me, onChanged }) {
   const events = useMemo(
     () => (ticket ? buildTimeline(ticket) : []),
     [ticket]
+  );
+
+  usePageHeader(
+    ticket?.ticketNumber || 'Ticket',
+    ticket
+      ? `${ticket.category} · ${STATE_LABELS[ticket.state] || ticket.state} · ${PRIORITY_LABELS[ticket.priority] || ticket.priority} priority`
+      : 'Loading…'
   );
 
   if (error && !ticket) return <div className="page"><ErrorState message={error} onRetry={load} /></div>;

@@ -53,13 +53,6 @@ export default function HandoversPage({ me, onCountChange }) {
 
   return (
     <div className="page">
-      <div className="hero">
-        <h1 className="hero-title">Handovers</h1>
-        <p className="hero-sub">
-          A handover is an offer — the ticket only changes owner when you accept it.
-        </p>
-      </div>
-
       <div className="stat-strip" style={{ marginBottom: 22 }}>
         <div className="stat-strip-cell">
           <div className="stat-strip-label"><span className="stat-strip-dot is-warn" />Pending</div>

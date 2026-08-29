@@ -3,15 +3,14 @@
 Current checkpoint. Update this at the end of every task.
 Architecture and conventions live in `../CLAUDE.md`.
 
-_Last updated: 2026-08-28_
+_Last updated: 2026-08-29_
 
 ## Current Phase
 
-Client UI redesign, continuing M3's first pass. **Uncommitted work in the
-working tree.** Frontend only — no backend, database or API change.
-
-Redesign complete across all screens, closed with a consistency and
-accessibility polish pass.
+Client UI redesign — second pass, working toward the supplied reference
+composition. **Uncommitted work in the working tree.** Frontend only: the
+backend, the database and every API are untouched (`git status -- server/` is
+clean and `dev.db` is byte-for-byte unchanged).
 
 ## Completed
 
@@ -24,6 +23,7 @@ accessibility polish pass.
 - Agent-to-agent handovers
 - Demo-data removal and move to a real installation
 - Per-suite test database isolation
+- Client shell: navigation rail + application header + workspace
 
 ## In Progress
 
@@ -31,25 +31,49 @@ Nothing in flight. The client work is finished but **uncommitted**.
 
 Modified but not committed:
 
-- `client/src/index.css` and 11 components under `client/src/components/`
-  (`App.jsx`, `Dashboard`, `TicketsPage`, `TicketDetail`, `TicketForm`,
-  `AgentsPage`, `GroupsPage`, `RoutingPage`, `HandoversPage`, `Login`,
-  `SimulateEmailPage`)
-- Untracked helpers: `client/live-check.mjs`, `client/ssr-check.mjs` — SSR/
-  hydration checks that catch the "Rendered more hooks than during the previous
-  render" class of bug
+- `client/src/App.jsx`, `client/src/index.css`, `client/src/components/ui.jsx`
+  and 9 screen components
+- New: `client/src/pageHeader.js`, `client/src/components/TopBar.jsx`,
+  `client/src/components/NotificationBell.jsx`
+- Untracked helpers: `client/live-check.mjs`, `client/ssr-check.mjs` — both are
+  **stale**: their `document` mock no longer satisfies React 18, so they fail
+  before evaluating the bundle. Replaced in practice by the jsdom check
+  described under Last Verified.
 
-To finish: confirm each screen renders with no console errors, run
-`npx vite build`, run the full suite, then commit.
+What the second pass changed:
+
+- **Application header.** Page title/subtitle, global search (Ctrl-K over
+  tickets, people and categories), appearance, notifications and the account
+  menu. Each of those controls now exists exactly once.
+- **Page titles** move to the header via `usePageHeader` (`src/pageHeader.js`).
+  The shell renders a per-route default; a screen overrides it when it knows
+  better (live queue count, ticket number). Screens no longer draw their own
+  `h1`.
+- **Dashboard** rebuilt to the reference composition: five KPI cards, a
+  full-width Recent Tickets table (ID / Subject / Requester / Status /
+  Priority / Assigned to / Age), Priority / Category / Group meters, Agent
+  Workload, and a right utility rail (Quick Actions, System Status, My Stats).
+- **Hash routing takes a query string** — `#/tickets?agentId=4`,
+  `?agentId=unassigned`, `?category=Software` — so a link can carry queue
+  filters. Only keys the queue already filters on are honoured.
+- **Navigation rail collapses** to an icon rail (persisted in `td_sidebar`) and
+  collapses automatically below 900px.
+- **Notifications moved** out of the sidebar availability switch into the
+  header bell (`NotificationBell.jsx`); the sidebar control is now availability
+  only.
+- Ctrl-K belongs to the global header search; the Tickets filter field took
+  `/`.
+
+To finish: commit.
 
 ## Next
 
 Not started, no order committed to:
 
-1. Fix the Agents edit-dialog password autofill bug (see Known Issues) — small
-   and it is actively corrupting passwords
-3. Verify Microsoft Graph against live credentials
-4. Introduce Prisma migrations
+1. Verify Microsoft Graph against live credentials
+2. Introduce Prisma migrations
+3. Retire or repair `client/live-check.mjs` / `client/ssr-check.mjs` — the jsdom
+   harness supersedes them
 
 ## Important Decisions
 
@@ -76,13 +100,14 @@ Not started, no order committed to:
 
 ## Known Issues
 
-- **Agents edit dialog lets the browser autofill the password field**, which is
-  then PATCHed — it silently changes an agent's password. Needs
-  `autoComplete="new-password"` and to send `password` only when typed. This has
-  already corrupted one account.
 - **The Agents table needs horizontal scrolling** at ~1440px to reach the row
   actions. It no longer clips them, but the column layout should be tightened
-  when that screen is redesigned.
+  when that screen is redesigned. The narrower rail buys back ~180px; the
+  column widths themselves are still untouched.
+- **The dashboard KPI cards carry no trend line.** The reference design shows a
+  sparkline per figure; nothing in this system stores history, so the slot
+  carries the figure's real share of the open queue instead. Restoring a trend
+  line means storing snapshots first — a backend change, deliberately not made.
 - **Microsoft Graph has never run against live credentials.** Auth, mailbox
   access and subscription renewal are verified only against mocks.
 - **Background workers run in every server process.** The rebalancer and the
@@ -93,6 +118,23 @@ Not started, no order committed to:
   a real gmail address via the email simulator. Delete it if it was only a test.
 
 ## Last Verified
+
+**2026-08-29**, after the reference-led second pass of the client redesign:
+
+- 63 browser checks pass in a jsdom harness driving the production bundle
+  against a live API on a throw-away database: the shell, every KPI, the
+  Recent Tickets columns, the utility rail, global search, the appearance menu
+  in both directions, theme persistence, notifications, the account menu,
+  sidebar collapse and its persistence, all nine screens, link-borne queue
+  filters and the sign-out path. **0 console errors.**
+- `npx vite build` succeeds
+- All 12 server suites pass — 1049 checks, 0 failures
+- Backend untouched: `git status -- server/` clean, `dev.db` md5 unchanged
+- No hardcoded colour remains outside the token blocks in `index.css`
+  (`--on-solid` now drives filled buttons; the two toasts and the neutral tint
+  became tokens)
+
+Earlier checkpoints:
 
 **2026-08-28**, after the demo cleanup:
 

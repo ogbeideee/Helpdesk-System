@@ -1,13 +1,25 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { api } from '../api.js';
 import { STATES, PRIORITIES, CATEGORIES } from '../constants.js';
+import { usePageHeader } from '../pageHeader.js';
 import {
   ErrorState, EmptyState, StateBadge, PriorityBadge,
-  Avatar, timeAgo, fmtDateTime,
+  Avatar, Icon, timeAgo, fmtDateTime,
 } from './ui.jsx';
 
 const PAGE_SIZE = 25;
 const EMPTY_FILTERS = { q: '', status: '', priority: '', category: '', group: '', agentId: '' };
+
+/* A link may arrive carrying queue filters - `#/tickets?agentId=4`. Only keys
+   the queue actually filters on are honoured; anything else is ignored. */
+function fromQuery(query) {
+  const out = { ...EMPTY_FILTERS };
+  if (!query) return out;
+  for (const key of Object.keys(EMPTY_FILTERS)) {
+    if (typeof query[key] === 'string') out[key] = query[key];
+  }
+  return out;
+}
 
 /* Sorting is client-side over the loaded page, so it never changes which
    tickets the backend returned — only the order they are read in. */
@@ -20,15 +32,6 @@ const SORTS = {
   status: { label: 'Status', get: (t) => STATE_RANK[t.state] ?? 9 },
   ticket: { label: 'Ticket number', get: (t) => String(t.ticketNumber) },
 };
-
-function SearchIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor"
-      strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
-      <circle cx="7" cy="7" r="4.5" /><path d="M10.5 10.5L14 14" />
-    </svg>
-  );
-}
 
 function SortArrow({ dir }) {
   return (
@@ -79,8 +82,8 @@ function SkeletonRows({ rows = 6 }) {
   );
 }
 
-export default function TicketsPage({ onOpen }) {
-  const [filters, setFilters] = useState(EMPTY_FILTERS);
+export default function TicketsPage({ onOpen, initialFilters }) {
+  const [filters, setFilters] = useState(() => fromQuery(initialFilters));
   const [debouncedQ, setDebouncedQ] = useState('');
   const [tickets, setTickets] = useState(null);
   const [groups, setGroups] = useState([]);
@@ -102,14 +105,17 @@ export default function TicketsPage({ onOpen }) {
     api.dashboard().then((d) => setAgentOptions(d.ticketsPerAgent || [])).catch(() => {});
   }, []);
 
-  // Ctrl/Cmd-K focuses search, matching the shortcut shown in the field.
+  // Ctrl/Cmd-K belongs to the global search in the header. This field filters
+  // the queue rather than searching the product, so it takes "/" - the
+  // convention for an in-page filter - and says so in the field.
   useEffect(() => {
     const onKey = (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault();
-        searchRef.current?.focus();
-        searchRef.current?.select();
-      }
+      if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return;
+      const tag = document.activeElement?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      e.preventDefault();
+      searchRef.current?.focus();
+      searchRef.current?.select();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -125,7 +131,8 @@ export default function TicketsPage({ onOpen }) {
         priority: filters.priority || undefined,
         category: filters.category || undefined,
         group: filters.group || undefined,
-        agentId: filters.agentId || undefined,
+        agentId: filters.agentId === 'unassigned' ? undefined : filters.agentId || undefined,
+        unassigned: filters.agentId === 'unassigned' ? '1' : undefined,
         limit: 200,
       })
       .then((list) => {
@@ -167,26 +174,19 @@ export default function TicketsPage({ onOpen }) {
   const secondaryCount = secondaryFilters.filter((k) => filters[k]).length;
   const anyFilter = Object.values(filters).some(Boolean);
 
+  usePageHeader(
+    null,
+    tickets === null
+      ? 'Loading the queue…'
+      : `${sorted.length} ticket${sorted.length === 1 ? '' : 's'}${anyFilter ? ' matching your filters' : ' in the queue'}`
+  );
+
   return (
     <div className="page">
-      <header className="page-bar">
-        <div>
-          <h1 className="hero-title">Tickets</h1>
-          <p className="hero-sub">
-            {tickets === null
-              ? 'Loading the queue…'
-              : `${sorted.length} ticket${sorted.length === 1 ? '' : 's'}${anyFilter ? ' matching your filters' : ' in the queue'}`}
-          </p>
-        </div>
-        <button className="btn btn-primary" onClick={() => { window.location.hash = '/tickets/new'; }}>
-          New ticket
-        </button>
-      </header>
-
       {/* Search + status segments read as one control strip, not a form. */}
       <div className="queue-controls">
         <div className="search-field">
-          <span className="search-icon"><SearchIcon /></span>
+          <span className="search-icon"><Icon name="search" size={15} /></span>
           <input
             ref={searchRef}
             type="search"
@@ -195,7 +195,7 @@ export default function TicketsPage({ onOpen }) {
             onChange={(e) => setFilter('q', e.target.value)}
             aria-label="Search tickets"
           />
-          <kbd className="kbd-hint" aria-hidden="true">Ctrl K</kbd>
+          <kbd className="kbd-hint" aria-hidden="true">/</kbd>
         </div>
 
         <div className="segmented" role="group" aria-label="Filter by status">
@@ -230,6 +230,14 @@ export default function TicketsPage({ onOpen }) {
           Filters
           {secondaryCount > 0 && <span className="count-dot">{secondaryCount}</span>}
         </button>
+
+        <button
+          className="btn btn-primary btn-sm queue-new"
+          onClick={() => { window.location.hash = '/tickets/new'; }}
+        >
+          <Icon name="plus" size={14} />
+          New ticket
+        </button>
       </div>
 
       {(moreOpen || secondaryCount > 0) && (
@@ -259,6 +267,7 @@ export default function TicketsPage({ onOpen }) {
             <span>Assigned to</span>
             <select value={filters.agentId} onChange={(e) => setFilter('agentId', e.target.value)}>
               <option value="">Anyone</option>
+              <option value="unassigned">Unassigned</option>
               {agentOptions.map((a) => <option key={a.agentId} value={a.agentId}>{a.name}</option>)}
             </select>
           </label>

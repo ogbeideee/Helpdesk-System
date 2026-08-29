@@ -1,33 +1,25 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../api.js';
-import { Modal, useToast } from './ui.jsx';
+import { Icon, Modal, usePopover, useToast } from './ui.jsx';
 
 /**
- * Sidebar availability switch plus the in-app notification feed.
+ * Sidebar availability control.
  *
  * The backend decides whether going unavailable is allowed; this component
  * only renders the answer. Two refusals are expected and handled:
  *   409 blocked              — IN_PROGRESS work must be dealt with first
  *   409 confirmationRequired — NEW tickets will be handed over
+ *
+ * The notification feed used to live here too. It now sits in the header,
+ * where an inbox belongs — see NotificationBell.
  */
 export default function AvailabilityControl({ me, onChanged }) {
   const [available, setAvailable] = useState(Boolean(me.isAvailable));
   const [busy, setBusy] = useState(false);
   const [blocked, setBlocked] = useState(null);
   const [confirm, setConfirm] = useState(null);
-  const [feed, setFeed] = useState({ unread: 0, notifications: [] });
-  const [feedOpen, setFeedOpen] = useState(false);
   const [showToast, toastNode] = useToast();
-
-  const loadFeed = useCallback(() => {
-    api.notifications().then(setFeed).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    loadFeed();
-    const t = setInterval(loadFeed, 60000);
-    return () => clearInterval(t);
-  }, [loadFeed]);
+  const { open, toggle, close, anchorProps } = usePopover();
 
   useEffect(() => setAvailable(Boolean(me.isAvailable)), [me.isAvailable]);
 
@@ -47,7 +39,6 @@ export default function AvailabilityControl({ me, onChanged }) {
             ? `You are unavailable — ${moved.moved} ticket(s) reassigned, ${moved.unassigned} sent to triage`
             : 'You are now unavailable'
       );
-      loadFeed();
     } catch (err) {
       // The API returns structured detail for the two expected refusals; the
       // shared request helper only surfaces the message, so re-fetch detail.
@@ -64,29 +55,62 @@ export default function AvailabilityControl({ me, onChanged }) {
     }
   }
 
+  function choose(next) {
+    close();
+    if (next !== available) apply(next);
+  }
+
   return (
     <>
-      <div className="availability-bar">
-        <label className="switch" title={available ? 'Accepting new tickets' : 'Not accepting new tickets'}>
-          <input
-            type="checkbox"
-            checked={available}
-            disabled={busy}
-            onChange={(e) => apply(e.target.checked)}
-          />
-          <span className="switch-track" aria-hidden="true" />
-          <span className={`switch-text ${available ? '' : 'muted'}`}>
-            {available ? 'Available' : 'Unavailable'}
-          </span>
-        </label>
-
+      <div {...anchorProps}>
         <button
-          className="btn btn-ghost btn-sm notif-button"
-          onClick={() => { setFeedOpen(true); loadFeed(); }}
-          aria-label="Notifications"
+          type="button"
+          className={`availability-btn ${available ? 'is-on' : 'is-off'}`}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          disabled={busy}
+          onClick={toggle}
+          title={available ? 'Accepting new tickets' : 'Not accepting new tickets'}
         >
-          🔔{feed.unread > 0 && <span className="notif-badge">{feed.unread}</span>}
+          <span className="availability-dot" aria-hidden="true" />
+          <span className="availability-text">
+            <strong>{available ? 'Available' : 'Unavailable'}</strong>
+            <small>{available ? "You're set to receive tickets" : 'New tickets route elsewhere'}</small>
+          </span>
+          <Icon name="chevronDown" size={14} className="availability-caret" />
         </button>
+
+        {open && (
+          <div className="menu menu-up" role="menu" aria-label="Availability">
+            <div className="menu-label">Availability</div>
+            <button
+              type="button"
+              role="menuitemradio"
+              aria-checked={available}
+              className={`menu-item ${available ? 'is-selected' : ''}`}
+              onClick={() => choose(true)}
+            >
+              <span className="availability-dot is-on" aria-hidden="true" />
+              <span>Available</span>
+              {available && <Icon name="check" size={14} className="menu-check" />}
+            </button>
+            <button
+              type="button"
+              role="menuitemradio"
+              aria-checked={!available}
+              className={`menu-item ${!available ? 'is-selected' : ''}`}
+              onClick={() => choose(false)}
+            >
+              <span className="availability-dot is-off" aria-hidden="true" />
+              <span>Unavailable</span>
+              {!available && <Icon name="check" size={14} className="menu-check" />}
+            </button>
+            <div className="menu-foot">
+              Going unavailable hands your new tickets to the group; work already
+              in progress has to be resolved or handed over first.
+            </div>
+          </div>
+        )}
       </div>
 
       {blocked && (
@@ -134,37 +158,6 @@ export default function AvailabilityControl({ me, onChanged }) {
             <button className="btn btn-primary" disabled={busy} onClick={() => apply(false, true)}>
               Go unavailable
             </button>
-          </div>
-        </Modal>
-      )}
-
-      {feedOpen && (
-        <Modal title="Notifications" onClose={() => setFeedOpen(false)} width={560}>
-          {feed.notifications.length === 0 ? (
-            <p className="muted">Nothing yet.</p>
-          ) : (
-            <ul className="plain-list notif-list">
-              {feed.notifications.map((n) => (
-                <li key={n.id} className={n.readAt ? 'muted' : ''}>
-                  <strong>{n.title}</strong>
-                  {n.body && <div className="small">{n.body}</div>}
-                  {n.ticket && (
-                    <a href={`#/tickets/${n.ticket.id}`} onClick={() => setFeedOpen(false)} className="small">
-                      Open {n.ticket.ticketNumber}
-                    </a>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-          <div className="modal-actions">
-            <button
-              className="btn btn-ghost"
-              onClick={async () => { await api.markNotificationsRead(); loadFeed(); }}
-            >
-              Mark all read
-            </button>
-            <button className="btn btn-primary" onClick={() => setFeedOpen(false)}>Close</button>
           </div>
         </Modal>
       )}

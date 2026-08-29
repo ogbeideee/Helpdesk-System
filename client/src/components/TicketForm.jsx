@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { PRIORITIES, CATEGORIES } from '../constants.js';
+import { usePageHeader } from '../pageHeader.js';
 import { ErrorState, Field } from './ui.jsx';
 
 const EMPTY = {
@@ -34,6 +35,13 @@ export default function TicketForm({ ticketId, onSaved, onCancel }) {
     }).catch((e) => setError(e.message));
   }, [ticketId, editing]);
 
+  usePageHeader(
+    editing ? `Edit ${loadedTicket?.ticketNumber || 'Ticket'}` : 'New Ticket',
+    editing
+      ? 'Subject and description can be corrected; status and assignment are managed on the ticket.'
+      : 'Log a walk-up or phone request. The assignment engine will route it automatically.'
+  );
+
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
   async function handleSubmit(e) {
@@ -61,15 +69,6 @@ export default function TicketForm({ ticketId, onSaved, onCancel }) {
 
   return (
     <div className="page page-narrow">
-      <div className="hero">
-        <h1 className="hero-title">{editing ? `Edit ${loadedTicket?.ticketNumber || ''}` : 'New Ticket'}</h1>
-        <p className="hero-sub">
-          {editing
-            ? 'Subject and description can be corrected; status and assignment are managed on the ticket.'
-            : 'Log a walk-up or phone request. The assignment engine will route it automatically.'}
-        </p>
-      </div>
-
       {error && <ErrorState message={error} />}
 
       <form className="card form-card" onSubmit={handleSubmit}>
