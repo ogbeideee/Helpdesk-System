@@ -1,0 +1,5 @@
+Found PostgreSQL 16 [PostgreSQL.PostgreSQL.16] Version 16.15-3
+This application is licensed to you by its owner.
+Microsoft is not responsible for, nor does it grant any licenses to, third-party packages.
+Downloading https://get.enterprisedb.com/postgresql/postgresql-16.15-3-windows-x64.exe
+Cancelled

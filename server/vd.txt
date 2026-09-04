@@ -1,0 +1,12 @@
+tables found: 15 (expected 15)
+tables: Agent, AuditEvent, Comment, GraphSubscription, HandoverRequest, Notification, RoutingRule, RoutingRuleAuditLog, Setting, Team, TeamMembership, Ticket, TicketAuditLog, TicketSequence, UserAuditLog
+missing: NONE
+prisma system tables: _prisma_migrations
+
+TeamMembership_single_lead: EXISTS
+  def: CREATE UNIQUE INDEX "TeamMembership_single_lead" ON public."TeamMembership" USING btree ("teamId") WHERE ("isLead" = true)
+
+_prisma_migrations rows: 1
+  00000000000000_init | finished=true | steps=1
+
+row counts across all tables (estimated): 1 (DATA PRESENT!)

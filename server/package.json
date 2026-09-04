@@ -7,8 +7,10 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "db:push": "prisma db push",
+    "db:deploy": "prisma migrate deploy",
     "db:init": "node scripts/init-db.js",
     "db:migrate-v2": "node scripts/migrate-v2.js",
+    "db:migrate-assignment-groups": "node scripts/migrate-assignment-groups.js",
     "seed:demo": "node scripts/seed-demo.js",
     "db:purge-demo": "node scripts/purge-demo-data.js",
     "test:graph": "node scripts/test-graph.js",
@@ -23,8 +25,9 @@
     "test:routing": "node scripts/test-routing.js",
     "test:workload": "node scripts/test-workload.js",
     "test:handover": "node scripts/test-handover.js",
+    "test:assignment-groups": "node scripts/test-assignment-groups.js",
     "graph:check": "node scripts/graph-check.js",
-    "test": "npm run test:parser && npm run test:ingest && npm run test:mailbox && npm run test:graph && npm run test:webhook && npm run test:api && npm run test:lifecycle && npm run test:users && npm run test:routing && npm run test:workload && npm run test:handover && npm run test:e2e"
+    "test": "npm run test:parser && npm run test:ingest && npm run test:mailbox && npm run test:graph && npm run test:webhook && npm run test:api && npm run test:lifecycle && npm run test:users && npm run test:routing && npm run test:workload && npm run test:handover && npm run test:assignment-groups && npm run test:e2e"
   },
   "dependencies": {
     "@azure/msal-node": "^3.2.0",

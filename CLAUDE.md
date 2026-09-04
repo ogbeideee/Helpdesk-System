@@ -188,7 +188,12 @@ seeded accounts exist.
 - **Attachment storage.** Attachments are parsed as metadata only — no file is
   stored anywhere.
 - **Supabase / Firebase.** Not used. SQLite is the database.
-- **Prisma migrations.** Schema changes go through `db push`.
+- **Prisma migration history is minimal.** `server/prisma/migrations/` holds
+  one baseline migration for the assignment-group membership change. Day-to-day
+  schema changes still go through `db push`; `prisma migrate dev/reset` is
+  deliberately unused because it can reset the database. For `db push`-updated
+  databases, `npm run db:migrate-assignment-groups` re-creates the partial
+  unique index Prisma cannot express on SQLite.
 
 ## Known issues
 

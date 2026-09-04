@@ -1,15 +1,29 @@
 const jwt = require('jsonwebtoken');
 const prisma = require('./lib/prisma');
 
-const JWT_SECRET =
-  process.env.JWT_SECRET || 'dev-insecure-secret-change-me';
-const TOKEN_TTL = '12h';
+// JWT signing secret. Production must be started with a real JWT_SECRET set in
+// the environment; we fail safely (refuse to start) rather than silently run on
+// the known, publicly-documented development fallback. The fallback exists only
+// for the local/test workflow and is never an acceptable production secret.
+const NODE_ENV = process.env.NODE_ENV || 'development';
+const DEV_JWT_FALLBACK = 'dev-insecure-secret-change-me';
 
 if (!process.env.JWT_SECRET) {
+  if (NODE_ENV === 'production') {
+    throw new Error(
+      '[auth] Refusing to start in production without JWT_SECRET. ' +
+        'Set a strong random secret in server/.env, e.g. ' +
+        "node -e \"console.log(require('crypto').randomBytes(48).toString('hex'))\""
+    );
+  }
   console.warn(
-    '[auth] JWT_SECRET not set — using an insecure development default. Set JWT_SECRET in server/.env before production.'
+    `[auth] JWT_SECRET not set (NODE_ENV=${NODE_ENV}) — using the DEVELOPMENT-only fallback. ` +
+      'Set JWT_SECRET in server/.env before any production deployment.'
   );
 }
+
+const JWT_SECRET = process.env.JWT_SECRET || DEV_JWT_FALLBACK;
+const TOKEN_TTL = '12h';
 
 function sanitizeAgent(agent) {
   if (!agent) return null;

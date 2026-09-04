@@ -1,0 +1,144 @@
+==========================================================================
+SQLite -> PostgreSQL DATA MIGRATION VERIFICATION REPORT
+==========================================================================
+SOURCE: C:\Users\dogbeide\TICKETING SYSTEM\server\prisma\dev.db  (opened READ-ONLY; never modified)
+TARGET: postgresql://***@aws-0-us-east-2.pooler.supabase.com:5432/postgres
+
+[1] SOURCE ROW COUNTS (15 application tables)
+  Table                   Rows
+  Team                    5
+  Agent                   3
+  UserAuditLog            13
+  TeamMembership          3
+  RoutingRule             6
+  RoutingRuleAuditLog     7
+  TicketSequence          2
+  Ticket                  1
+  TicketAuditLog          1
+  Comment                 0
+  GraphSubscription       0
+  Notification            0
+  HandoverRequest         0
+  AuditEvent              0
+  Setting                 0
+
+[2] SQLite integrity                   : ok
+[3] Duplicate values vs UNIQUE         : NONE
+[4] NULLs in NOT NULL columns          : NONE
+[5] FK violations (foreign_key_check)  : NONE
+[6] Multiple leads per team            : NONE
+[7] TeamMembership_single_lead index   : present in source
+
+[8] Boolean columns (distinct raw values)
+  Team.isActive: [1]  (0/1 -> false/true)
+  Team.isDefault: [1, 0]  (0/1 -> false/true)
+  Agent.isActive: [1]  (0/1 -> false/true)
+  Agent.isAvailable: [1]  (0/1 -> false/true)
+  TeamMembership.isLead: [0]  (0/1 -> false/true)
+  RoutingRule.isActive: [1]  (0/1 -> false/true)
+  Comment.isRequester: []  (0/1 -> false/true)
+  Comment.isInternal: []  (0/1 -> false/true)
+  Comment.viaEmail: []  (0/1 -> false/true)
+
+[9] DATETIME columns (sample + parseability)
+  Team.createdAt: "2026-08-27 18:09:11" -> 2026-08-27T18:09:11.000Z
+  Team.updatedAt: "1787901778296" -> 2026-08-28T07:22:58.296Z
+  Agent.lastAssignedAt: "1787918554578" -> 2026-08-28T12:02:34.578Z
+  Agent.createdAt: "1787838034839" -> 2026-08-27T13:40:34.839Z
+  Agent.updatedAt: "1788252194438" -> 2026-09-01T08:43:14.438Z
+  UserAuditLog.createdAt: "1787838034845" -> 2026-08-27T13:40:34.845Z
+  TeamMembership.createdAt: "1788251803533" -> 2026-09-01T08:36:43.533Z
+  TeamMembership.updatedAt: "1788251803533" -> 2026-09-01T08:36:43.533Z
+  RoutingRule.createdAt: "1787854496057" -> 2026-08-27T18:14:56.057Z
+  RoutingRule.updatedAt: "1787895434523" -> 2026-08-28T05:37:14.523Z
+  RoutingRuleAuditLog.createdAt: "1787854496064" -> 2026-08-27T18:14:56.064Z
+  Ticket.dueAt: "1787902333088" -> 2026-08-28T07:32:13.088Z
+  Ticket.createdAt: "1787815933089" -> 2026-08-27T07:32:13.089Z
+  Ticket.updatedAt: "1787901777574" -> 2026-08-28T07:22:57.574Z
+  TicketAuditLog.createdAt: "1787815933089" -> 2026-08-27T07:32:13.089Z
+
+[10] JSON-as-string columns (first sample each, truncated)
+  AuditEvent.fromValue: (all NULL)
+  AuditEvent.toValue: (all NULL)
+  AuditEvent.metadata: (all NULL)
+  RoutingRuleAuditLog.changes: "{"seeded":true}"
+
+[11] TicketSequence rows (year=0 = global ticket-number continuity)
+  year=0  last=1691
+  year=2026  last=6
+
+[12] GraphSubscription records          : 0
+
+[13] SEQUENCE PLAN (setval statements PREPARED, NOT executed)
+  setval(pg_get_serial_sequence('"public"."Team"','id'), 379, true)   [maxId=9, sqliteSeq=379]
+  setval(pg_get_serial_sequence('"public"."Agent"','id'), 400, true)   [maxId=400, sqliteSeq=400]
+  setval(pg_get_serial_sequence('"public"."UserAuditLog"','id'), 691, true)   [maxId=691, sqliteSeq=691]
+  setval(pg_get_serial_sequence('"public"."TeamMembership"','id'), 3, true)   [maxId=3, sqliteSeq=3]
+  setval(pg_get_serial_sequence('"public"."RoutingRule"','id'), 52, true)   [maxId=12, sqliteSeq=52]
+  setval(pg_get_serial_sequence('"public"."RoutingRuleAuditLog"','id'), 69, true)   [maxId=69, sqliteSeq=69]
+  setval(pg_get_serial_sequence('"public"."Ticket"','id'), 1581, true)   [maxId=730, sqliteSeq=1581]
+  setval(pg_get_serial_sequence('"public"."TicketAuditLog"','id'), 2489, true)   [maxId=1243, sqliteSeq=2489]
+  setval(pg_get_serial_sequence('"public"."Comment"','id'), 513, true)   [maxId=0, sqliteSeq=513]
+  setval(pg_get_serial_sequence('"public"."GraphSubscription"','id'), 120, true)   [maxId=0, sqliteSeq=120]
+  setval(pg_get_serial_sequence('"public"."Notification"','id'), 266, true)   [maxId=0, sqliteSeq=266]
+  setval(pg_get_serial_sequence('"public"."HandoverRequest"','id'), 93, true)   [maxId=0, sqliteSeq=93]
+  setval(pg_get_serial_sequence('"public"."AuditEvent"','id'), 0, true)   [maxId=0, sqliteSeq=0]
+
+[14] FK-SAFE INSERT ORDER
+  Team -> Agent -> UserAuditLog -> TeamMembership -> RoutingRule -> RoutingRuleAuditLog -> TicketSequence -> Ticket -> TicketAuditLog -> Comment -> GraphSubscription -> Notification -> HandoverRequest -> AuditEvent -> Setting
+[14b] FK order vs insert order         : OK — every parent is inserted before its children
+
+[15] TARGET EMPTINESS + GUARD
+  Team                     0
+  Agent                    0
+  UserAuditLog             0
+  TeamMembership           0
+  RoutingRule              0
+  RoutingRuleAuditLog      0
+  TicketSequence           0
+  Ticket                   0
+  TicketAuditLog           0
+  Comment                  0
+  GraphSubscription        0
+  Notification             0
+  HandoverRequest          0
+  AuditEvent               0
+  Setting                  0
+  -> target is EMPTY. Proceeding inside ONE transaction.
+
+[16] COPYING (single transaction, chunks of 200)
+  inserting Team: 5
+  inserting Agent: 3
+  inserting UserAuditLog: 13
+  inserting TeamMembership: 3
+  inserting RoutingRule: 6
+  inserting RoutingRuleAuditLog: 7
+  inserting TicketSequence: 2
+  inserting Ticket: 1
+  inserting TicketAuditLog: 1
+  inserting Comment: 0
+  inserting GraphSubscription: 0
+  inserting Notification: 0
+  inserting HandoverRequest: 0
+  inserting AuditEvent: 0
+  inserting Setting: 0
+  restoring sequences via setval(...)
+
+[17] VERIFICATION (source vs target)
+  Team                     source=5  target=5  OK
+  Agent                    source=3  target=3  OK
+  UserAuditLog             source=13  target=13  OK
+  TeamMembership           source=3  target=3  OK
+  RoutingRule              source=6  target=6  OK
+  RoutingRuleAuditLog      source=7  target=7  OK
+  TicketSequence           source=2  target=2  OK
+  Ticket                   source=1  target=1  OK
+  TicketAuditLog           source=1  target=1  OK
+  Comment                  source=0  target=0  OK
+  GraphSubscription        source=0  target=0  OK
+  Notification             source=0  target=0  OK
+  HandoverRequest          source=0  target=0  OK
+  AuditEvent               source=0  target=0  OK
+  Setting                  source=0  target=0  OK
+
+ALL TABLES MATCH. Migration committed successfully.

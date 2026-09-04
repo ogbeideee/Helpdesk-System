@@ -1,0 +1,103 @@
+==========================================================================
+SQLite -> PostgreSQL DATA MIGRATION DRY-RUN/VALIDATION REPORT
+==========================================================================
+SOURCE: C:\Users\dogbeide\TICKETING SYSTEM\server\prisma\dev.db  (opened READ-ONLY; never modified)
+TARGET: postgresql://***@aws-0-us-east-2.pooler.supabase.com:5432/postgres
+
+[1] SOURCE ROW COUNTS (15 application tables)
+  Table                   Rows
+  Team                    5
+  Agent                   3
+  UserAuditLog            13
+  TeamMembership          3
+  RoutingRule             6
+  RoutingRuleAuditLog     7
+  TicketSequence          2
+  Ticket                  1
+  TicketAuditLog          1
+  Comment                 0
+  GraphSubscription       0
+  Notification            0
+  HandoverRequest         0
+  AuditEvent              0
+  Setting                 0
+
+[2] SQLite integrity                   : ok
+[3] Duplicate values vs UNIQUE         : NONE
+[4] NULLs in NOT NULL columns          : NONE
+[5] FK violations (foreign_key_check)  : NONE
+[6] Multiple leads per team            : NONE
+[7] TeamMembership_single_lead index   : present in source
+
+[8] Boolean columns (distinct raw values)
+  Team.isActive: [1]  (0/1 -> false/true)
+  Team.isDefault: [1, 0]  (0/1 -> false/true)
+  Agent.isActive: [1]  (0/1 -> false/true)
+  Agent.isAvailable: [1]  (0/1 -> false/true)
+  TeamMembership.isLead: [0]  (0/1 -> false/true)
+  RoutingRule.isActive: [1]  (0/1 -> false/true)
+  Comment.isRequester: []  (0/1 -> false/true)
+  Comment.isInternal: []  (0/1 -> false/true)
+  Comment.viaEmail: []  (0/1 -> false/true)
+
+[9] DATETIME columns (sample + parseability)
+  Team.createdAt: "2026-08-27 18:09:11" -> 2026-08-27T18:09:11.000Z
+  Team.updatedAt: "1787901778296" -> 2026-08-28T07:22:58.296Z
+  Agent.lastAssignedAt: "1787918554578" -> 2026-08-28T12:02:34.578Z
+  Agent.createdAt: "1787838034839" -> 2026-08-27T13:40:34.839Z
+  Agent.updatedAt: "1788252194438" -> 2026-09-01T08:43:14.438Z
+  UserAuditLog.createdAt: "1787838034845" -> 2026-08-27T13:40:34.845Z
+  TeamMembership.createdAt: "1788251803533" -> 2026-09-01T08:36:43.533Z
+  TeamMembership.updatedAt: "1788251803533" -> 2026-09-01T08:36:43.533Z
+  RoutingRule.createdAt: "1787854496057" -> 2026-08-27T18:14:56.057Z
+  RoutingRule.updatedAt: "1787895434523" -> 2026-08-28T05:37:14.523Z
+  RoutingRuleAuditLog.createdAt: "1787854496064" -> 2026-08-27T18:14:56.064Z
+  Ticket.dueAt: "1787902333088" -> 2026-08-28T07:32:13.088Z
+  Ticket.createdAt: "1787815933089" -> 2026-08-27T07:32:13.089Z
+  Ticket.updatedAt: "1787901777574" -> 2026-08-28T07:22:57.574Z
+  TicketAuditLog.createdAt: "1787815933089" -> 2026-08-27T07:32:13.089Z
+
+[10] JSON-as-string columns (first sample each, truncated)
+  AuditEvent.fromValue: (all NULL)
+  AuditEvent.toValue: (all NULL)
+  AuditEvent.metadata: (all NULL)
+  RoutingRuleAuditLog.changes: "{"seeded":true}"
+
+[11] TicketSequence rows (year=0 = global ticket-number continuity)
+  year=0  last=1691
+  year=2026  last=6
+
+[12] GraphSubscription records          : 0
+
+[13] SEQUENCE PLAN (setval statements PREPARED, NOT executed)
+  setval(pg_get_serial_sequence('"public"."Team"','id'), 379, true)   [maxId=9, sqliteSeq=379]
+  setval(pg_get_serial_sequence('"public"."Agent"','id'), 400, true)   [maxId=400, sqliteSeq=400]
+  setval(pg_get_serial_sequence('"public"."UserAuditLog"','id'), 691, true)   [maxId=691, sqliteSeq=691]
+  setval(pg_get_serial_sequence('"public"."TeamMembership"','id'), 3, true)   [maxId=3, sqliteSeq=3]
+  setval(pg_get_serial_sequence('"public"."RoutingRule"','id'), 52, true)   [maxId=12, sqliteSeq=52]
+  setval(pg_get_serial_sequence('"public"."RoutingRuleAuditLog"','id'), 69, true)   [maxId=69, sqliteSeq=69]
+  setval(pg_get_serial_sequence('"public"."Ticket"','id'), 1581, true)   [maxId=730, sqliteSeq=1581]
+  setval(pg_get_serial_sequence('"public"."TicketAuditLog"','id'), 2489, true)   [maxId=1243, sqliteSeq=2489]
+  setval(pg_get_serial_sequence('"public"."Comment"','id'), 513, true)   [maxId=0, sqliteSeq=513]
+  setval(pg_get_serial_sequence('"public"."GraphSubscription"','id'), 120, true)   [maxId=0, sqliteSeq=120]
+  setval(pg_get_serial_sequence('"public"."Notification"','id'), 266, true)   [maxId=0, sqliteSeq=266]
+  setval(pg_get_serial_sequence('"public"."HandoverRequest"','id'), 93, true)   [maxId=0, sqliteSeq=93]
+  setval(pg_get_serial_sequence('"public"."AuditEvent"','id'), 0, true)   [maxId=0, sqliteSeq=0]
+
+[14] FK-SAFE INSERT ORDER
+  Team -> Agent -> UserAuditLog -> TeamMembership -> RoutingRule -> RoutingRuleAuditLog -> TicketSequence -> Ticket -> TicketAuditLog -> Comment -> GraphSubscription -> Notification -> HandoverRequest -> AuditEvent -> Setting
+[14b] FK order vs insert order         : OK — every parent is inserted before its children
+
+[15] TARGET EMPTINESS (read-only counts on Supabase)
+
+FATAL: 
+Invalid `prisma[t.prisma].count()` invocation in
+C:\Users\dogbeide\TICKETING SYSTEM\server\scripts\migrate-sqlite-to-pg.cjs:211:61
+
+  208 }
+  209 async function targetCounts() {
+  210   const o = {};
+→ 211   for (const t of TABLES) o[t.sql] = await prisma[t.prisma].count(
+Can't reach database server at `aws-0-us-east-2.pooler.supabase.com:5432`
+
+Please make sure your database server is running at `aws-0-us-east-2.pooler.supabase.com:5432`.

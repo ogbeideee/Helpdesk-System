@@ -15,6 +15,9 @@ node_modules/
 *.sqlite
 *.sqlite3
 
+# --- database backups ---
+backups/
+
 # --- build output ---
 dist/
 build/

@@ -3,7 +3,7 @@
 Current checkpoint. Update this at the end of every task.
 Architecture and conventions live in `../CLAUDE.md`.
 
-_Last updated: 2026-08-29_
+_Last updated: 2026-09-01_
 
 ## Current Phase
 
@@ -35,17 +35,32 @@ Microsoft Graph against live credentials, then Prisma migrations.
   global search, appearance, notifications, account), five-card KPI row,
   operational Recent Tickets table, metered breakdowns, right utility rail,
   collapsible navigation rail, one card language across the product.
+- **Assignment-group membership model (database layer) — complete.** New
+  `TeamMembership` join table (agentId, teamId, isLead) as the source of
+  truth for multi-group membership. Rules: max 3 groups per agent, exactly
+  one lead per group (partial unique index + transactional service logic),
+  a lead must be a member, leading never grants ADMIN. The effective group set is deduplicated (`getEffectiveGroupIds` / `countEffectiveGroups`):the legacy `Agent.teamId` counts toward the max-3 but is never counted twice. Legacy single-group
+  `Agent.teamId` data was migrated through the new baseline migration
+  (`server/prisma/migrations/…_add_assignment_group_memberships`) and the
+  idempotent runner `npm run db:migrate-assignment-groups`. Focused suite:
+  `npm run test:assignment-groups`. `Agent.teamId` is retained as a
+  transition field for this phase only.
 
 ## In Progress
 
-No feature or UI work in flight. The only uncommitted change is this file.
+The next phase continues (not started): flip routing / workload / UI over to
+`TeamMembership` and drop the legacy `Agent.teamId` column.
 
 ## Next
 
 Not started, no order committed to:
 
 1. Verify Microsoft Graph against live credentials
-2. Introduce Prisma migrations
+2. **Flip the assignment-group readers over to `TeamMembership`.** Routing,
+   workload, the Agents/Assignment-Groups APIs and the UI should read/write
+   multi-group membership (max 3, per-group leads) through
+   `groupMembershipService`, then the transition field `Agent.teamId` and its
+   `Team.agents` relation are dropped.
 3. Maintenance: retire or repair `client/live-check.mjs` /
    `client/ssr-check.mjs`. Both are stale — their `document` mock no longer
    satisfies React 18, so they fail before evaluating the bundle, and they
@@ -54,10 +69,15 @@ Not started, no order committed to:
 
 ## Important Decisions
 
-- **SQLite + `prisma db push`**, no migrations directory. `prisma migrate dev`
-  would reset the database.
+- **SQLite + `prisma db push`** as the daily schema workflow. A minimal
+  migration history exists for the assignment-group membership change; use
+  `npm run db:migrate-assignment-groups` to (re)apply its data backfill and
+  the partial "one lead per group" index to a `db push`-managed database.
+  `prisma migrate dev` would reset the database.
 - **`Team` is the assignment group; `Agent` is every account** (roles `user` /
   `agent` / `admin`). Historical table names, deliberately not renamed.
+- **Multi-group membership lives in `TeamMembership`.** `Agent.teamId` is a
+  transitional primary-group pointer only, kept in sync until readers flip.
 - **Business rules live in services, never in routes or the frontend.** The UI
   renders backend decisions; it never re-derives a rule.
 - **All ownership changes go through `workloadService.moveTicket`** — one

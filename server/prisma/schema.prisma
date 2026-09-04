@@ -3,27 +3,65 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 // Assignment group (IT team). "Team" is the historical table name; it is the
 // AssignmentGroup entity the routing rules and tickets refer to.
 model Team {
-  id          Int      @id @default(autoincrement())
-  key         String   @unique
-  name        String
-  description String?
+  id           Int              @id @default(autoincrement())
+  key          String           @unique
+  name         String
+  description  String?
   // An inactive group is kept for history but is never a routing target.
-  isActive    Boolean  @default(true)
+  isActive     Boolean          @default(true)
   // The fallback group when no routing rule matches (General IT Support).
-  isDefault   Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @default(now()) @updatedAt
-  agents      Agent[]
-  tickets     Ticket[] @relation("TicketCurrentGroup")
-  originated  Ticket[] @relation("TicketOriginGroup")
+  isDefault    Boolean          @default(false)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @default(now()) @updatedAt
+  agents       Agent[]
+  memberships  TeamMembership[]
+  tickets      Ticket[]         @relation("TicketCurrentGroup")
+  originated   Ticket[]         @relation("TicketOriginGroup")
   routingRules RoutingRule[]
+}
+
+// Agent ↔ Assignment Group membership (the join table for multi-group).
+//
+// This is the single source of truth for "who belongs to which group, and who
+// leads it". An agent can belong to up to `MAX_GROUPS_PER_AGENT` groups and can
+// lead several of them at once; lead status lives HERE, on the membership row —
+// never on Agent (there is no "lead" role) and never on Team (no lead column).
+// Leading a group does not make the account an ADMIN.
+//
+// Business rules enforced in src/services/groupMembershipService.js:
+//   - at most MAX_GROUPS_PER_AGENT memberships per agent (SQLite cannot
+//     express this as a table constraint)
+//   - a group has exactly one lead — additionally guarded by the partial
+//     unique index `TeamMembership_single_lead` created in the migration
+//     (one row with isLead = 1 per team)
+//   - only an existing member can be a group's lead
+//
+// The legacy single-column `Agent.teamId` is retained for the transition
+// phase because routing and workload still read it. Every path that writes
+// memberships keeps it in sync; the next phase flips readers over to this
+// table and drops the column.
+model TeamMembership {
+  id        Int      @id @default(autoincrement())
+  agentId   Int
+  agent     Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  teamId    Int
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  // Lead status belongs to the user↔group relationship.
+  isLead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  // The same (agent, group) pair can only ever exist once.
+  @@unique([agentId, teamId])
+  @@index([teamId])
 }
 
 // Configurable routing rule: keywords + category -> assignment group,
@@ -57,7 +95,7 @@ model RoutingRuleAuditLog {
   id        Int      @id @default(autoincrement())
   ruleId    Int?
   ruleName  String
-  action    String   // created | updated | activated | deactivated | deleted
+  action    String // created | updated | activated | deactivated | deleted
   changes   String?
   actor     String   @default("system")
   createdAt DateTime @default(now())
@@ -70,37 +108,42 @@ model RoutingRuleAuditLog {
 // table name; it holds every person who can sign in, whatever their role.
 // There is deliberately no second user system.
 model Agent {
-  id              Int       @id @default(autoincrement())
-  name            String
-  email           String    @unique
-  passwordHash    String?   // null once an account is Entra-only
+  id                  Int               @id @default(autoincrement())
+  name                String
+  email               String            @unique
+  passwordHash        String? // null once an account is Entra-only
   // "user" | "agent" | "admin" — see src/services/userService.js (ROLES).
   // New sign-ins default to "agent"; "admin" is only ever granted by an
   // existing admin or the one-time initial-admin bootstrap.
-  role            String    @default("agent")
+  role                String            @default("agent")
   // Account enabled. An inactive account cannot sign in and receives no work.
-  isActive        Boolean   @default(true)
+  isActive            Boolean           @default(true)
   // Currently accepting new assignments. Distinct from isActive: an agent on
   // leave stays active (can sign in) but unavailable (gets no new tickets).
-  isAvailable     Boolean   @default(true)
-  teamId          Int?
-  team            Team?     @relation(fields: [teamId], references: [id])
-  skillLevel      Int       @default(1) // 1 = junior, 2 = standard, 3 = senior
-  lastAssignedAt  DateTime?
+  isAvailable         Boolean           @default(true)
+  // Transition field: the agent's primary assignment group. Routing and
+  // workload still read this; the membership join table (TeamMembership) is
+  // the source of truth for multi-group membership. See TeamMembership.
+  teamId              Int?
+  team                Team?             @relation(fields: [teamId], references: [id])
+  memberships         TeamMembership[]
+  skillLevel          Int               @default(1) // 1 = junior, 2 = standard, 3 = senior
+  lastAssignedAt      DateTime?
   // Identity-provider linkage, ready for Microsoft Entra ID. Not used yet:
   // no Entra authentication is implemented.
-  externalId       String?  @unique
-  externalProvider String?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @default(now()) @updatedAt
-  assignedTickets Ticket[]
-  comments        Comment[]
-  auditEvents     UserAuditLog[] @relation("UserAuditSubject")
-  preferredForRules RoutingRule[]  @relation("RoutingPreferredAgent")
-  notifications   Notification[] @relation("AgentNotifications")
-  handoversRaised    HandoverRequest[] @relation("HandoverRequester")
-  handoversReceived  HandoverRequest[] @relation("HandoverTarget")
-  handoversSuggested HandoverRequest[] @relation("HandoverSuggested")
+  externalId          String?           @unique
+  externalProvider    String?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @default(now()) @updatedAt
+  assignedTickets     Ticket[]
+  comments            Comment[]
+  auditEvents         UserAuditLog[]    @relation("UserAuditSubject")
+  preferredForRules   RoutingRule[]     @relation("RoutingPreferredAgent")
+  notifications       Notification[]    @relation("AgentNotifications")
+  handoversRaised     HandoverRequest[] @relation("HandoverRequester")
+  handoversReceived   HandoverRequest[] @relation("HandoverTarget")
+  handoversSuggested  HandoverRequest[] @relation("HandoverSuggested")
+  authoredAuditEvents AuditEvent[]      @relation("AuditEventActor")
 }
 
 // Administrative history for user records: creation, role changes,
@@ -110,7 +153,7 @@ model UserAuditLog {
   id        Int      @id @default(autoincrement())
   agentId   Int
   agent     Agent    @relation("UserAuditSubject", fields: [agentId], references: [id], onDelete: Cascade)
-  action    String   // created | role_changed | activated | deactivated | availability_changed | group_changed | skill_changed
+  action    String // created | role_changed | activated | deactivated | availability_changed | group_changed | skill_changed
   field     String?
   fromValue String?
   toValue   String?
@@ -125,38 +168,39 @@ model UserAuditLog {
 // Sequence counter backing human-readable ticket numbers (INC-000001).
 // year = 0 row is the global counter for the current numbering scheme.
 model TicketSequence {
-  year Int  @id
-  last Int  @default(0)
+  year Int @id
+  last Int @default(0)
 }
 
 model Ticket {
-  id                  Int              @id @default(autoincrement())
-  ticketNumber        String           @unique // e.g. HD-2026-000042
+  id                  Int               @id @default(autoincrement())
+  ticketNumber        String            @unique // e.g. HD-2026-000042
   shortDescription    String
-  body                String           @default("")
-  category            String           @default("Inquiry / Help")
-  priority            String           @default("medium")
-  state               String           @default("NEW")
-  source              String           @default("email") // "email" | "portal"
+  body                String            @default("")
+  category            String            @default("Inquiry / Help")
+  priority            String            @default("medium")
+  state               String            @default("NEW")
+  source              String            @default("email") // "email" | "portal"
   resolution          String?
   requesterEmail      String
   requesterName       String?
-  graphMessageId      String?          @unique
+  graphMessageId      String?           @unique
   graphConversationId String?
   teamId              Int?
-  team                Team?            @relation("TicketCurrentGroup", fields: [teamId], references: [id])
+  team                Team?             @relation("TicketCurrentGroup", fields: [teamId], references: [id])
   // The group the ticket was first routed to. Set once at creation and never
   // changed, even when the current assignment group moves.
   originatingTeamId   Int?
-  originatingTeam     Team?            @relation("TicketOriginGroup", fields: [originatingTeamId], references: [id])
+  originatingTeam     Team?             @relation("TicketOriginGroup", fields: [originatingTeamId], references: [id])
   assignedAgentId     Int?
-  assignedAgent       Agent?           @relation(fields: [assignedAgentId], references: [id])
+  assignedAgent       Agent?            @relation(fields: [assignedAgentId], references: [id])
   dueAt               DateTime?
   resolvedAt          DateTime?
   closedAt            DateTime?
-  createdAt           DateTime         @default(now())
-  updatedAt           DateTime         @updatedAt
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
   auditLogs           TicketAuditLog[]
+  auditEvents         AuditEvent[]      @relation("TicketAuditEvents")
   comments            Comment[]
   notifications       Notification[]
   handovers           HandoverRequest[]
@@ -180,21 +224,21 @@ model TicketAuditLog {
 }
 
 model Comment {
-  id           Int      @id @default(autoincrement())
-  ticketId     Int
-  ticket       Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
-  authorAgentId Int?
-  authorAgent  Agent?   @relation(fields: [authorAgentId], references: [id])
-  authorName   String   @default("")
-  authorEmail  String   @default("")
-  isRequester Boolean  @default(false)
-  isInternal  Boolean  @default(false)
-  viaEmail    Boolean  @default(false)
-  body        String
+  id             Int      @id @default(autoincrement())
+  ticketId       Int
+  ticket         Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorAgentId  Int?
+  authorAgent    Agent?   @relation(fields: [authorAgentId], references: [id])
+  authorName     String   @default("")
+  authorEmail    String   @default("")
+  isRequester    Boolean  @default(false)
+  isInternal     Boolean  @default(false)
+  viaEmail       Boolean  @default(false)
+  body           String
   // Set for activities created from an inbound Graph/email message. Unique so a
   // redelivered notification can never append the same reply twice.
-  graphMessageId String? @unique
-  createdAt   DateTime @default(now())
+  graphMessageId String?  @unique
+  createdAt      DateTime @default(now())
 
   @@index([ticketId])
 }
@@ -202,15 +246,15 @@ model Comment {
 // Microsoft Graph change-notification subscription state. Persisted so a
 // restart reuses (and renews) the live subscription instead of orphaning it.
 model GraphSubscription {
-  id                 Int      @id @default(autoincrement())
-  subscriptionId     String   @unique
+  id                 Int       @id @default(autoincrement())
+  subscriptionId     String    @unique
   resource           String
   notificationUrl    String
   clientState        String
   expirationDateTime DateTime
   lastRenewedAt      DateTime?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 }
 
 // In-app notification for an agent. Email is sent separately through the
@@ -244,40 +288,40 @@ model Notification {
 // status: PENDING | QUEUED | ACCEPTED | DECLINED | CANCELLED | EXPIRED
 // Completed rows are never deleted: the ticket history is the chain of them.
 model HandoverRequest {
-  id               Int      @id @default(autoincrement())
+  id               Int    @id @default(autoincrement())
   ticketId         Int
-  ticket           Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  ticket           Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
   // The agent giving the ticket away (its owner at the time of the request).
   requestedById    Int
-  requestedBy      Agent    @relation("HandoverRequester", fields: [requestedById], references: [id])
+  requestedBy      Agent  @relation("HandoverRequester", fields: [requestedById], references: [id])
   // The agent being asked to take it.
   targetAgentId    Int
-  targetAgent      Agent    @relation("HandoverTarget", fields: [targetAgentId], references: [id])
+  targetAgent      Agent  @relation("HandoverTarget", fields: [targetAgentId], references: [id])
   // Set when the target proposes somebody else instead. Advisory only: no
   // request is created for them, the original agent decides.
   suggestedAgentId Int?
-  suggestedAgent   Agent?   @relation("HandoverSuggested", fields: [suggestedAgentId], references: [id])
+  suggestedAgent   Agent? @relation("HandoverSuggested", fields: [suggestedAgentId], references: [id])
 
-  status           String   @default("PENDING")
-  note             String?
-  responseNote     String?
+  status       String  @default("PENDING")
+  note         String?
+  responseNote String?
   // Who ended the request, for the history line ("Cancelled by ...").
-  resolvedBy       String?
+  resolvedBy   String?
 
   // Queue position is FIFO by id among QUEUED rows for the same target, so it
   // is derived rather than stored and can never drift.
-  queuedAt         DateTime?
+  queuedAt    DateTime?
   // When the request became PENDING; the expiry clock starts here.
-  activatedAt      DateTime?
-  expiresAt        DateTime?
+  activatedAt DateTime?
+  expiresAt   DateTime?
   // Expiry is paused while the target is unavailable: expiresAt is cleared and
   // the remaining time parked here until they are available again.
-  pausedAt         DateTime?
-  remainingMs      Int?
-  respondedAt      DateTime?
+  pausedAt    DateTime?
+  remainingMs Int?
+  respondedAt DateTime?
 
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([targetAgentId, status])
   @@index([ticketId])
@@ -292,4 +336,57 @@ model Setting {
   value     String
   updatedBy String?
   updatedAt DateTime @default(now()) @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Unified audit trail — one append-only record of every important action.
+//
+// Rows are written ONLY by trusted backend code (src/services/auditService.js)
+// inside the same transaction as the business operation. The frontend cannot
+// create audit events and calling the API another way cannot bypass them,
+// because every instrumented write path goes through a service that records
+// the event itself.
+//
+// Append-only from the application's normal interfaces: nothing in the
+// service layer or the API updates or deletes these rows.
+//
+// Sensitive values never reach this table: before anything is stored,
+// auditService redacts credential-shaped keys (password, token, secret, hash,
+// ...) and truncates long free text. The full text belongs to the entity,
+// not to the trail.
+//
+// ticketId is a soft link that makes "audit history for this ticket" a cheap
+// indexed lookup. It is SetNull, so even deleting a ticket leaves the record
+// that the deletion happened.
+model AuditEvent {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  // Who performed the action. actorId is SetNull: the trail survives account
+  // deletion and actorLabel keeps the human-readable name either way.
+  actorId     Int?
+  actor       Agent?   @relation("AuditEventActor", fields: [actorId], references: [id], onDelete: SetNull)
+  actorLabel  String   @default("system")
+  // What happened, e.g. ticket.created | ticket.assigned | handover.accepted
+  action      String
+  // What it happened to.
+  entityType  String // Ticket | Comment | HandoverRequest | Agent | Team | RoutingRule | Setting
+  entityId    Int?
+  // Human-readable entity reference that survives deletion (INC-…, rule name…)
+  entityLabel String?
+  // Per-ticket retrieval (ticket-related events only).
+  ticketId    Int?
+  ticket      Ticket?  @relation("TicketAuditEvents", fields: [ticketId], references: [id], onDelete: SetNull)
+  // Before/after snapshots of the changed fields (JSON strings, redacted).
+  fromValue   String?
+  toValue     String?
+  // Human-readable one-line description.
+  description String
+  // Extra structured context (JSON string, redacted).
+  metadata    String?
+
+  @@index([ticketId, createdAt])
+  @@index([entityType, entityId])
+  @@index([action])
+  @@index([actorId])
+  @@index([createdAt])
 }
