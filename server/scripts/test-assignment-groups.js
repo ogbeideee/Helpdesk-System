@@ -392,8 +392,13 @@ async function main() {
     eq('tickets: assigned agent intact', after.assignedAgentId, owner.id);
 
     // Still a single-group structure — never a many-to-many.
-    const ticketCols = await prisma.$queryRawUnsafe("SELECT name FROM pragma_table_info('Ticket')");
-    const names = ticketCols.map((c) => c.name);
+    // information_schema is the PostgreSQL equivalent of SQLite's
+    // pragma_table_info (identifier case is preserved because Prisma quotes
+    // its columns, so 'teamId' matches exactly).
+    const ticketCols = await prisma.$queryRawUnsafe(
+      "SELECT column_name FROM information_schema.columns WHERE table_name = 'Ticket'"
+    );
+    const names = ticketCols.map((c) => c.column_name);
     check('tickets: keeps the single current-group column', names.includes('teamId'));
     check('tickets: keeps the single originating-group column', names.includes('originatingTeamId'));
 

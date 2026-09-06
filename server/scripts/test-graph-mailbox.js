@@ -358,7 +358,7 @@ async function main() {
     eq('parse: plain-text body preserved', parsedText.body, 'The 3rd floor printer is offline.\n\nThanks,\nBob');
     eq('parse: isHtml false for text mail', parsedText.isHtml, false);
     check('parse: normalized shape is the shared model', Object.keys(parsedText).sort().join(',') ===
-      'attachments,body,conversationId,isHtml,messageId,receivedAt,senderEmail,senderName,subject');
+      'attachments,body,cleanBody,conversationId,inReplyTo,internetMessageId,isHtml,messageId,quotedText,receivedAt,recipients,references,senderEmail,senderName,signature,subject');
   }
 
   /* ================================================================== */

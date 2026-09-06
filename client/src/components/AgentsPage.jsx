@@ -2,11 +2,77 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api.js';
 import {
   Spinner, ErrorState, EmptyState, Avatar, Modal, ConfirmDialog,
-  Field, useToast, fmtDateTime, timeAgo,
+  Field, Icon, usePopover, useToast, fmtDateTime, timeAgo,
 } from './ui.jsx';
+import { availabilityStateOf, stateMeta } from '../poolView.js';
 
 const SKILL_LABELS = { 1: 'Junior', 2: 'Standard', 3: 'Senior' };
 const SKILL_SHORT  = { 1: 'L1', 2: 'L2', 3: 'L3' };
+
+/**
+ * The per-agent availability state cell (admin).
+ *
+ * A presence change only: online / unavailable / offline through the
+ * availability-state API. No ticket is reassigned by it — automatic
+ * assignment simply stops (or resumes) picking the agent, and tickets keep
+ * their owner. The disruptive hand-on flows stay with Deactivate, which says
+ * so explicitly.
+ */
+function AvailabilityStateCell({ agent, isSelf, busy, onSet }) {
+  const { open, toggle, close, anchorProps } = usePopover();
+  const state = availabilityStateOf(agent);
+  const meta = stateMeta(state);
+
+  function pick(next) {
+    close();
+    if (next !== state) onSet(agent, next);
+  }
+
+  return (
+    <div {...anchorProps} className="state-cell popover-anchor" style={{ position: 'relative' }}>
+      <button
+        type="button"
+        className={`availability-btn ${state === 'online' ? 'is-on' : 'is-off'}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        disabled={busy}
+        onClick={toggle}
+        title={meta.hint}
+      >
+        <span className="availability-dot" aria-hidden="true" />
+        <span className="availability-text"><strong>{meta.label}</strong></span>
+        <Icon name="chevronDown" size={13} className="availability-caret" />
+      </button>
+      {open && (
+        <div className="menu" role="menu" aria-label={`Availability for ${agent.name}`}>
+          {['online', 'unavailable', 'offline'].map((s) => {
+            const m = stateMeta(s);
+            const disabled = s === 'offline' && isSelf;
+            return (
+              <button
+                key={s}
+                type="button"
+                role="menuitemradio"
+                aria-checked={state === s}
+                className={`menu-item ${state === s ? 'is-selected' : ''}`}
+                disabled={disabled}
+                title={disabled ? 'You cannot take your own account offline.' : m.hint}
+                onClick={() => pick(s)}
+              >
+                <span className={`availability-dot ${m.dot}`} aria-hidden="true" />
+                <span>{m.label}</span>
+                {state === s && <Icon name="check" size={14} className="menu-check" />}
+              </button>
+            );
+          })}
+          <div className="menu-foot">
+            A presence change only — nobody's tickets move.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function AgentsPage({ me }) {
   const [agents, setAgents] = useState(null);
@@ -14,8 +80,8 @@ export default function AgentsPage({ me }) {
   const [workload, setWorkload] = useState({}); // agentId -> {new, inProgress}
   const [error, setError] = useState('');
   const [editorAgent, setEditorAgent] = useState(null);
-  const [confirmToggle, setConfirmToggle] = useState(null);
   const [confirmDeactivate, setConfirmDeactivate] = useState(null);
+  const [busyAgentId, setBusyAgentId] = useState(null);
   const [showToast, toastNode] = useToast();
 
   const load = useCallback(async () => {
@@ -57,13 +123,17 @@ export default function AgentsPage({ me }) {
 
   useEffect(() => { load(); }, [load]);
 
-  async function toggleAvailability(agent, nextAvailable) {
-    if (!nextAvailable) { setConfirmToggle(agent); return; }
+  async function setAgentState(agent, state) {
+    setBusyAgentId(agent.id);
     try {
-      await api.updateAgent(agent.id, { isAvailable: true });
-      showToast(`${agent.name} is now available`);
+      await api.setAvailabilityState({ state, agentId: agent.id });
+      showToast(`${agent.name} is now ${stateMeta(state).label.toLowerCase()}`);
       await load();
-    } catch (e) { showToast(e.message, 'error'); }
+    } catch (e) {
+      showToast(e.message, 'error');
+    } finally {
+      setBusyAgentId(null);
+    }
   }
 
   async function setActive(agent, nextActive) {
@@ -163,18 +233,12 @@ export default function AgentsPage({ me }) {
                     </td>
                     <td><span className={`chip chip-skill-${a.skillLevel}`}>{SKILL_SHORT[a.skillLevel]} · {SKILL_LABELS[a.skillLevel]}</span></td>
                     <td>
-                      <label className="switch" title={a.isAvailable ? 'Accepting new work' : 'Not accepting new work'}>
-                        <input
-                          type="checkbox"
-                          checked={Boolean(a.isAvailable)}
-                          disabled={!a.isActive}
-                          onChange={(e) => toggleAvailability(a, e.target.checked)}
-                        />
-                        <span className="switch-track" aria-hidden="true" />
-                        <span className={`switch-text ${a.isAvailable ? '' : 'muted'}`}>
-                          {a.isAvailable ? 'Available' : 'Unavailable'}
-                        </span>
-                      </label>
+                      <AvailabilityStateCell
+                        agent={a}
+                        isSelf={me && a.id === me.id}
+                        busy={busyAgentId === a.id}
+                        onSet={setAgentState}
+                      />
                     </td>
                     <td style={{ minWidth: 180 }}>
                       {a.isActive ? (
@@ -226,27 +290,6 @@ export default function AgentsPage({ me }) {
             setEditorAgent(null);
             showToast(msg);
             await load();
-          }}
-        />
-      )}
-
-      {confirmToggle && (
-        <ConfirmDialog
-          title={`Mark ${confirmToggle.name} unavailable?`}
-          message="Their open tickets will be released back to the unassigned queue for reassignment."
-          confirmLabel="Mark unavailable"
-          danger
-          onCancel={() => setConfirmToggle(null)}
-          onConfirm={async () => {
-            try {
-              await api.updateAgent(confirmToggle.id, { isAvailable: false });
-              setConfirmToggle(null);
-              showToast(`${confirmToggle.name} marked unavailable`);
-              await load();
-            } catch (e) {
-              setConfirmToggle(null);
-              showToast(e.message, 'error');
-            }
           }}
         />
       )}

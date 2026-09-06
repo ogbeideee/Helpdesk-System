@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node sla-check.mjs && node sla-settings-check.mjs && node sla-report-check.mjs && node audit-check.mjs && node reports-check.mjs && node email-rules-check.mjs && node m365-check.mjs && node assignment-pool-check.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",

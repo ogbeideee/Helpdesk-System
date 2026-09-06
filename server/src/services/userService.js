@@ -19,6 +19,7 @@
 //   3. At least one active ADMIN always remains: the final admin can be
 //      neither demoted nor deactivated.
 const prisma = require('./../lib/prisma');
+const auditService = require('./auditService');
 
 const ROLES = { USER: 'user', AGENT: 'agent', ADMIN: 'admin' };
 const ROLE_VALUES = [ROLES.USER, ROLES.AGENT, ROLES.ADMIN];
@@ -131,13 +132,25 @@ async function checkUserUpdate(target, actor, changes, client = prisma) {
  */
 async function applyUserUpdate(target, actor, changes, client = prisma) {
   const events = [];
+  const auditEvents = [];
   const data = {};
 
   if (changes.name !== undefined && changes.name !== target.name) {
     data.name = changes.name;
+    auditEvents.push({
+      action: 'agent.updated',
+      from: { name: target.name },
+      to: { name: changes.name },
+      description: `${target.name}: name changed to ${changes.name}`,
+    });
   }
   if (changes.passwordHash !== undefined) {
     data.passwordHash = changes.passwordHash;
+    // Record that the credential changed — never the credential itself.
+    auditEvents.push({
+      action: 'agent.password_changed',
+      description: `${target.name}: password changed`,
+    });
   }
 
   if (changes.role !== undefined && changes.role !== target.role) {
@@ -210,6 +223,28 @@ async function applyUserUpdate(target, actor, changes, client = prisma) {
     await client.userAuditLog.createMany({
       data: events.map((e) => ({ ...e, agentId: target.id, actor: actorLabel(actor) })),
     });
+    // The same field changes join the unified trail, one event per field,
+    // actioned agent.<userAuditAction>.
+    auditEvents.push(
+      ...events.map((e) => ({
+        action: `agent.${e.action}`,
+        from: { [e.field]: e.fromValue },
+        to: { [e.field]: e.toValue },
+        description: `${target.name}: ${e.note}`,
+      }))
+    );
+  }
+  if (auditEvents.length) {
+    await auditService.recordMany(
+      client,
+      auditEvents.map((e) => ({
+        ...e,
+        entityType: 'Agent',
+        entityId: target.id,
+        entityLabel: `${target.name} <${target.email}>`,
+        actor,
+      }))
+    );
   }
 
   return { user: updated, events };
@@ -227,6 +262,15 @@ async function recordUserCreated(user, actor, client = prisma) {
       actor: actorLabel(actor),
       note: `Account provisioned as ${user.role}`,
     },
+  });
+  await auditService.record(client, {
+    action: 'agent.created',
+    entityType: 'Agent',
+    entityId: user.id,
+    entityLabel: `${user.name} <${user.email}>`,
+    actor,
+    to: { role: user.role },
+    description: `Account ${user.email} provisioned as ${user.role}`,
   });
 }
 

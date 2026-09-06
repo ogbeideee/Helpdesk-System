@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { api } from '../api.js';
+import { api, getToken } from '../api.js';
 import { usePageHeader } from '../pageHeader.js';
+import { slaOverview, cycleSummary } from '../slaView.js';
 import {
   STATES, PRIORITIES, CATEGORIES,
   STATE_TRANSITIONS,
@@ -49,6 +50,19 @@ export default function TicketDetail({ id, me, onChanged }) {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Keep the SLA block live the only compliant way: re-read it from the API.
+  // There is no client-side clock math — remainingMs and the breached /
+  // approaching flags always come from the server, so a quiet refresh every
+  // minute (while the tab is visible and the ticket is open) is what makes
+  // the countdown move. Actions still refresh immediately via run().
+  useEffect(() => {
+    if (!ticket || !['NEW', 'IN_PROGRESS'].includes(ticket.state)) return undefined;
+    const iv = setInterval(() => {
+      if (!document.hidden) load();
+    }, 60_000);
+    return () => clearInterval(iv);
+  }, [ticket?.id, ticket?.state, load]);
 
   useEffect(() => {
     if (!reassignOpen && !handoverOpen) return;
@@ -184,6 +198,7 @@ export default function TicketDetail({ id, me, onChanged }) {
             run={run}
             me={me}
           />
+          <SlaCard ticket={ticket} />
           <ActionsCard
             ticket={ticket}
             me={me}
@@ -447,6 +462,9 @@ function OriginalMessage({ ticket }) {
         </div>
         {ticket.requesterEmail && <div className="ev-detail mono-sm">{ticket.requesterEmail}</div>}
         <div className="ev-bubble">{ticket.body || '(no message body)'}</div>
+        {ticket.attachments?.some((a) => !a.commentId) && (
+          <AttachmentChips ticketId={ticket.id} items={ticket.attachments.filter((a) => !a.commentId)} />
+        )}
       </div>
     </div>
   );
@@ -468,6 +486,9 @@ const EVENT_META = {
   closed:     { cls: 'ev-closed',     glyph: 'stop',    label: 'Closed' },
   reopened:   { cls: 'ev-status',     glyph: 'undo',    label: 'Reopened' },
   audit:      { cls: 'ev-system',     glyph: 'dot',     label: 'System' },
+  sla:        { cls: 'ev-system',     glyph: 'clock',   label: 'SLA' },
+  'sla-warn': { cls: 'ev-sla-warn',   glyph: 'clock',   label: 'SLA' },
+  'sla-breach': { cls: 'ev-sla-breach', glyph: 'clock', label: 'SLA' },
 };
 
 function EvGlyph({ name }) {
@@ -483,6 +504,7 @@ function EvGlyph({ name }) {
     case 'check':   return <svg {...p}><path d="M3 8.5l3.2 3.2L13 5"/></svg>;
     case 'stop':    return <svg {...p}><rect x="3.5" y="3.5" width="9" height="9" rx="1.5"/></svg>;
     case 'undo':    return <svg {...p}><path d="M3 8a5 5 0 1 0 1.6-3.7M3 3.5V7h3.5"/></svg>;
+    case 'clock':   return <svg {...p}><circle cx="8" cy="8" r="5.8"/><path d="M8 4.7V8l2.2 1.4"/></svg>;
     default:        return <svg {...p}><circle cx="8" cy="8" r="2"/></svg>;
   }
 }
@@ -522,7 +544,75 @@ function EventItem({ ev }) {
         {ev.detail && (
           <div className={`ev-bubble ${kind === 'resolution' ? 'is-resolution' : ''}`}>{ev.detail}</div>
         )}
+        {ev.attachments?.length > 0 && <AttachmentChips ticketId={ev.ticketId} items={ev.attachments} />}
       </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Attachments — metadata chips with an authorized download action.    */
+/* Visually secondary: a quiet row under the message they arrived with. */
+/* ------------------------------------------------------------------ */
+
+function formatBytes(n) {
+  const size = Number(n) || 0;
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function AttachmentChips({ ticketId, items }) {
+  const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState('');
+
+  async function download(att) {
+    setBusyId(att.id);
+    setError('');
+    try {
+      const res = await fetch(`/api/tickets/${ticketId}/attachments/${att.id}`, {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Download failed (${res.status})`);
+      }
+      // Always saved to disk, never rendered: the backend sends an inert
+      // octet-stream with an attachment disposition, and the blob keeps that
+      // inertness on the client side too.
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = att.filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <div className="attachment-row">
+      {items.map((att) => (
+        <span key={att.id} className="attachment-chip" title={`${att.mimeType || 'file'} · ${formatBytes(att.size)}`}>
+          <span className="attachment-name">{att.filename}</span>
+          <span className="muted small">{att.mimeType ? att.mimeType.split(';')[0] : 'file'}</span>
+          <span className="muted small">{formatBytes(att.size)}</span>
+          <button
+            className="btn btn-ghost btn-sm"
+            disabled={busyId === att.id}
+            onClick={() => download(att)}
+          >
+            {busyId === att.id ? '…' : 'Download'}
+          </button>
+        </span>
+      ))}
+      {error && <span className="muted small" role="alert">{error}</span>}
     </div>
   );
 }
@@ -694,7 +784,7 @@ function PropertiesCard({ ticket, busy, groupPick, setGroupPick, run, me }) {
       <Row label="Updated">
         <span title={fmtDateTime(ticket.updatedAt)}>{timeAgo(ticket.updatedAt)}</span>
       </Row>
-      {ticket.dueAt && (
+      {ticket.dueAt && !ticket.sla && (
         <Row label="SLA target">
           <span className={ticket.overdue ? 'warn-text' : ''}>{fmtDateTime(ticket.dueAt)}</span>
         </Row>
@@ -709,6 +799,79 @@ function PropertiesCard({ ticket, busy, groupPick, setGroupPick, run, me }) {
         </>
       )}
     </section>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* SLA — the current cycle at a glance, previous cycles underneath     */
+/* ------------------------------------------------------------------ */
+
+/* Every value here is the API's word: statuses, remainingMs and cycle rows
+   arrive from the server precomputed. This card formats; it never derives. */
+function SlaCard({ ticket }) {
+  const sla = slaOverview(ticket);
+  // Tickets without SLA cycles keep the legacy "SLA target" row in Details.
+  if (!sla) return null;
+  const cycles = ticket.sla?.cycles || [];
+  const previous = cycles.slice(0, -1).reverse();
+
+  return (
+    <section className="insp-section">
+      <h2 className="insp-title">SLA</h2>
+
+      <Row label="Cycle">
+        <span>
+          {sla.cycleNumber}
+          <span className="insp-sub">{sla.cycleEndedAt ? 'ended' : 'active'}</span>
+        </span>
+      </Row>
+
+      <Row label="Started" stack>
+        <span title={fmtDateTime(sla.cycleStartedAt)}>{timeAgo(sla.cycleStartedAt)}</span>
+        <span className="insp-sub">{fmtDateTime(sla.cycleStartedAt)}</span>
+      </Row>
+
+      <SlaClockRow label="Response" block={ticket.sla?.response} view={sla.response} />
+      <SlaClockRow label="Resolution" block={ticket.sla?.resolution} view={sla.resolution} />
+
+      {previous.length > 0 && (
+        <>
+          <div className="insp-divider" />
+          <div className="sla-history">
+            <span className="insp-label">Previous cycles</span>
+            {previous.map((c) => {
+              const s = cycleSummary(c);
+              return (
+                <div key={c.cycleNumber} className="sla-history-row">
+                  <span className="sla-history-cycle">Cycle {c.cycleNumber}</span>
+                  <span className="sla-history-outcome">
+                    R: {s.response} · Res: {s.resolution}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+const TONE_PILL = { bad: 'pill-overdue', warn: 'pill-sla-warn', ok: 'pill-sla', muted: 'pill-state-closed' };
+
+function SlaClockRow({ label, block, view }) {
+  return (
+    <Row label={label} stack>
+      {/* The view's text already carries the remaining working time where it
+          runs; a separate line here would say it twice. */}
+      <span className={`pill ${TONE_PILL[view.tone] || 'pill-sla'}`}>{view.text}</span>
+      {block?.dueAt && (
+        <span className="insp-sub">Due {fmtDateTime(block.dueAt)}</span>
+      )}
+      {block?.firstResponseAt && (
+        <span className="insp-sub">First response {fmtDateTime(block.firstResponseAt)}</span>
+      )}
+    </Row>
   );
 }
 
@@ -916,7 +1079,13 @@ function buildTimeline(ticket) {
           ? `Requester reply${c.authorName ? ' — ' + c.authorName : c.authorEmail ? ' — ' + c.authorEmail : ''}`
           : `${c.authorName || 'Agent'} updated the requester`,
       detail: c.body,
+      ticketId: ticket.id,
+      attachments: (ticket.attachments || []).filter((a) => a.commentId === c.id),
     });
+  }
+  for (const ev of ticket.slaEvents || []) {
+    const e = slaTimelineEvent(ev);
+    if (e) events.push(e);
   }
   // The RESOLVED transition already produced an audit event. Carry the
   // resolution text onto it rather than appending a second, near-identical
@@ -935,6 +1104,35 @@ function buildTimeline(ticket) {
     }
   }
   return events.sort((a, b) => new Date(a.at) - new Date(b.at));
+}
+
+/* SLA timeline entries map 1:1 onto the API's slaEvents array (the
+   append-only TicketSlaEvent log). `at` is the historical instant, so a
+   breach marker lands where the clock actually ran out rather than when the
+   sweeper happened to record it. Unknown future types are skipped rather
+   than guessed at. */
+const SLA_EVENT_TITLES = {
+  target_created: () => 'SLA targets set',
+  target_changed: (e) => (clockLabel(e.clock) ? `${clockLabel(e.clock)} SLA target changed` : 'SLA target changed'),
+  response_recorded: () => 'First response recorded',
+  approaching_breach: (e) => (clockLabel(e.clock) ? `${clockLabel(e.clock)} SLA approaching breach` : 'SLA approaching breach'),
+  breach: (e) => (clockLabel(e.clock) ? `${clockLabel(e.clock)} SLA breached` : 'SLA breached'),
+  cycle_restarted: () => 'SLA cycle restarted',
+};
+
+function clockLabel(clock) {
+  return clock === 'response' ? 'Response' : clock === 'resolution' ? 'Resolution' : null;
+}
+
+function slaTimelineEvent(ev) {
+  const title = SLA_EVENT_TITLES[ev.type];
+  if (!title) return null;
+  return {
+    kind: ev.type === 'breach' ? 'sla-breach' : ev.type === 'approaching_breach' ? 'sla-warn' : 'sla',
+    at: ev.at,
+    title: title(ev),
+    detail: ev.detail || null,
+  };
 }
 
 function classifyAuditEvent(log) {

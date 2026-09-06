@@ -25,7 +25,9 @@ const assignmentPolicy = require('./assignmentPolicy');
 const assignmentEngine = require('./assignmentEngine');
 const workloadService = require('./workloadService');
 const settingsService = require('./settingsService');
+const auditService = require('./auditService');
 const { STAFF_ROLES } = require('./userService');
+const { ticketSubject } = require('../email/outbound');
 
 /** A request that is still waiting for an answer. */
 const ACTIVE_STATES = ['PENDING', 'QUEUED'];
@@ -69,6 +71,35 @@ async function recordHistory(ticket, actor, note, client = prisma) {
       actor: actorLabel(actor),
       note,
     },
+  });
+}
+
+/**
+ * Unified trail entry for a handover state change, linked to its ticket so
+ * auditService.forTicket() finds it. The TicketAuditLog line above stays the
+ * ticket timeline's record; this is the cross-entity trail.
+ */
+async function recordAudit(
+  action,
+  request,
+  ticket,
+  actor,
+  { from, to, description, metadata } = {},
+  client = prisma
+) {
+  await auditService.record(client, {
+    action,
+    entityType: 'HandoverRequest',
+    entityId: request.id,
+    entityLabel: `Handover of ${ticket.ticketNumber} to ${
+      request.targetAgent ? request.targetAgent.name : 'an agent'
+    }`,
+    ticketId: ticket.id,
+    actor,
+    from,
+    to,
+    description,
+    metadata,
   });
 }
 
@@ -117,7 +148,7 @@ async function notify({ agent, ticket, type, title, body }, client = prisma) {
       type,
       title,
       body,
-      emailSubject: `[${ticket.ticketNumber}] ${title}`,
+      emailSubject: ticketSubject(ticket, title),
       emailBody: [`Hi ${agent.name},`, '', body, '', `Subject: ${ticket.shortDescription}`].join('\r\n'),
     },
     client
@@ -314,6 +345,21 @@ async function createRequest({ ticket, actor, targetAgentId, note }, client = pr
     client
   );
 
+  await recordAudit(
+    'handover.created',
+    created,
+    ticket,
+    actor,
+    {
+      to: { status: created.status, target: target.name },
+      description:
+        `${actorName(actor)} requested a handover of ${ticket.ticketNumber} to ${target.name}` +
+        (created.status === 'QUEUED' ? ` (queued at position ${position})` : ''),
+      metadata: { status: created.status, queuePosition: position },
+    },
+    client
+  );
+
   if (created.status === 'PENDING') {
     await notify(
       {
@@ -378,6 +424,10 @@ async function accept({ request, actor, note, client = prisma }) {
       resolvedBy: 'system',
       responseNote: 'The ticket moved on before this handover was answered',
     }, client);
+    await recordAudit('handover.cancelled', request, ticket, null, {
+      description: `Handover of ${ticket.ticketNumber} cancelled — the ticket moved on before it was answered`,
+      metadata: { reason: 'The ticket moved on before this handover was answered' },
+    }, client);
     await promoteQueue(request.targetAgentId, client);
     return { ok: false, status: 409, error: 'This ticket has already moved on — the handover was cancelled' };
   }
@@ -408,9 +458,23 @@ async function accept({ request, actor, note, client = prisma }) {
       where: { id: request.id },
       data: { status: 'CANCELLED', responseNote: 'The ticket moved on before this handover was answered' },
     });
+    await recordAudit('handover.cancelled', request, ticket, null, {
+      description: `Handover of ${ticket.ticketNumber} cancelled — the ticket moved on before it was answered`,
+      metadata: { reason: 'The ticket moved on before this handover was answered' },
+    }, client);
     await promoteQueue(request.targetAgentId, client);
     return { ok: false, status: 409, error: 'This ticket has already moved on — the handover was cancelled' };
   }
+
+  // The ownership move itself is audited by workloadService.moveTicket
+  // (ticket.assigned); this event records the handover decision.
+  await recordAudit('handover.accepted', claimed, ticket, actor, {
+    to: { owner: claimed.targetAgent.name },
+    description:
+      `${claimed.targetAgent.name} accepted the handover of ${ticket.ticketNumber} ` +
+      `from ${claimed.requestedBy.name}`,
+    metadata: claimed.responseNote ? { note: claimed.responseNote } : null,
+  }, client);
 
   await notify(
     {
@@ -466,6 +530,16 @@ async function decline({ request, actor, note, suggestedAgentId, client = prisma
     client
   );
 
+  await recordAudit('handover.declined', claimed, ticket, actor, {
+    description:
+      `${claimed.targetAgent.name} declined the handover of ${ticket.ticketNumber}` +
+      (suggested ? ` — suggested ${suggested.name} instead` : ''),
+    metadata: {
+      suggested: suggested ? suggested.name : null,
+      ...(claimed.responseNote ? { note: claimed.responseNote } : {}),
+    },
+  }, client);
+
   await notify(
     {
       agent: claimed.requestedBy,
@@ -513,6 +587,12 @@ async function cancel({ request, actor, reason, client = prisma }) {
       (fresh.responseNote ? ` — ${fresh.responseNote}` : ''),
     client
   );
+
+  await recordAudit('handover.cancelled', fresh, ticket, actor, {
+    description:
+      `Handover of ${ticket.ticketNumber} to ${fresh.targetAgent.name} cancelled by ${actorName(actor)}`,
+    metadata: fresh.responseNote ? { reason: fresh.responseNote } : null,
+  }, client);
 
   if (request.status === 'PENDING') await promoteQueue(request.targetAgentId, client);
   return { ok: true, request: serialize(fresh) };
@@ -564,6 +644,11 @@ async function cancelForTicket(ticketId, actor, reason, client = prisma) {
       `Handover to ${r.targetAgent.name} cancelled — ticket was ${ticket.state.toLowerCase()}`,
       client
     );
+    await recordAudit('handover.cancelled', r, ticket, actor, {
+      description:
+        `Handover of ${ticket.ticketNumber} to ${r.targetAgent.name} cancelled — ticket was ${ticket.state.toLowerCase()}`,
+      metadata: { reason: reason || `Ticket was ${ticket.state.toLowerCase()}` },
+    }, client);
     if (r.status === 'PENDING') await promoteQueue(r.targetAgentId, client);
   }
   return { cancelled };
@@ -714,6 +799,14 @@ async function onAgentDeactivated(agentId, actor, client = prisma) {
         `(${r.targetAgent.name} was deactivated)`,
       client
     );
+    await recordAudit('handover.rerouted', r, ticket, actor, {
+      from: { target: r.targetAgent.name },
+      to: { target: replacement.name },
+      description:
+        `Handover of ${ticket.ticketNumber} rerouted from ${r.targetAgent.name} to ${replacement.name} ` +
+        `(${r.targetAgent.name} was deactivated)`,
+      metadata: { reason: 'Recipient deactivated', status: queued ? 'QUEUED' : 'PENDING' },
+    }, client);
     if (!queued) {
       await notify(
         {
@@ -775,6 +868,11 @@ async function sweepExpired({ client = prisma, now = new Date() } = {}) {
         `Handover to ${r.targetAgent.name} expired — ticket remains with ${r.requestedBy.name}`,
         client
       );
+      await recordAudit('handover.expired', r, ticket, 'system', {
+        description:
+          `Handover of ${ticket.ticketNumber} to ${r.targetAgent.name} expired — ` +
+          `ticket remains with ${r.requestedBy.name}`,
+      }, client);
     }
     await notify(
       {

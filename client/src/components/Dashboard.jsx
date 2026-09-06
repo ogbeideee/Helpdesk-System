@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useMemo } from 'react';
 import { api } from '../api.js';
 import { PRIORITIES, CATEGORIES } from '../constants.js';
 import { usePageHeader } from '../pageHeader.js';
+import { slaKpiCards } from '../slaKpis.js';
 import {
   ErrorState, EmptyState, StateBadge, PriorityBadge,
   Avatar, Icon, timeAgo, fmtDateTime,
@@ -25,8 +26,11 @@ const CATEGORY_ICONS = {
  * history — there is nothing to plot — so the same slot carries something the
  * data does support: how much of the open queue this figure accounts for.
  * A real proportion, not a decorative one.
+ *
+ * Exported for the SSR checks, which render the SLA KPI cards directly (the
+ * Dashboard's own data state is fetch-fed and unreachable in server render).
  */
-function KpiCard({ tone, label, value, sub, segments, note }) {
+export function KpiCard({ tone, label, value, sub, segments, note }) {
   const total = segments.reduce((sum, s) => sum + s.value, 0);
   return (
     <article className={`kpi-card kpi-${tone}`}>
@@ -58,6 +62,17 @@ function KpiCard({ tone, label, value, sub, segments, note }) {
 function share(part, whole) {
   if (!whole) return 0;
   return Math.min(100, Math.round((part / whole) * 100));
+}
+
+function KpiSkeleton() {
+  return (
+    <article className="kpi-card is-loading" aria-hidden="true">
+      <span className="sk" style={{ width: 72 }} />
+      <span className="sk" style={{ width: 44, height: 24, marginTop: 10 }} />
+      <span className="sk sk-sm" style={{ width: 62 }} />
+      <span className="sk" style={{ width: '100%', height: 4, marginTop: 14 }} />
+    </article>
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -192,6 +207,9 @@ export default function Dashboard({ onOpen, me, handoverCount = 0 }) {
     },
   ], [counts.new, counts.inProgress, data?.unassigned, data?.critical, totalOpen]);
 
+  // The SLA figures ride on the same dashboard payload; no second fetch.
+  const slaCards = useMemo(() => slaKpiCards(data?.sla, totalOpen), [data?.sla, totalOpen]);
+
   if (error) return <div className="page"><ErrorState message={error} onRetry={load} /></div>;
 
   const loading = !data;
@@ -203,16 +221,17 @@ export default function Dashboard({ onOpen, me, handoverCount = 0 }) {
         <div className="dash-main">
           <div className="kpi-row" aria-label="Key figures">
             {loading
-              ? Array.from({ length: 5 }).map((_, i) => (
-                  <article key={i} className="kpi-card is-loading" aria-hidden="true">
-                    <span className="sk" style={{ width: 72 }} />
-                    <span className="sk" style={{ width: 44, height: 24, marginTop: 10 }} />
-                    <span className="sk sk-sm" style={{ width: 62 }} />
-                    <span className="sk" style={{ width: '100%', height: 4, marginTop: 14 }} />
-                  </article>
-                ))
+              ? Array.from({ length: 5 }).map((_, i) => <KpiSkeleton key={i} />)
               : kpis.map((k) => <KpiCard key={k.label} {...k} />)}
           </div>
+
+          {(loading || slaCards.length > 0) && (
+            <div className="kpi-row kpi-row-sla" aria-label="SLA key figures">
+              {loading
+                ? Array.from({ length: 6 }).map((_, i) => <KpiSkeleton key={i} />)
+                : slaCards.map((k) => <KpiCard key={k.label} {...k} />)}
+            </div>
+          )}
 
           <Panel
             title="Recent Tickets"

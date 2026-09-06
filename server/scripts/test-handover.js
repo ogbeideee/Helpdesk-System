@@ -10,6 +10,7 @@ process.env.PORT = process.env.PORT || '4167';
 // The background workers are driven directly by this suite.
 process.env.REBALANCE_INTERVAL_MS = '0';
 process.env.HANDOVER_SWEEP_INTERVAL_MS = '0';
+process.env.SLA_SWEEP_INTERVAL_MS = '0';
 
 // Isolated database: this suite never touches the application's dev.db.
 // Must come before anything that loads the Prisma client.

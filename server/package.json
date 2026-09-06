@@ -25,9 +25,32 @@
     "test:routing": "node scripts/test-routing.js",
     "test:workload": "node scripts/test-workload.js",
     "test:handover": "node scripts/test-handover.js",
+    "test:email": "node scripts/test-email-integration.js",
+    "test:email-sources": "node scripts/test-email-sources.js",
+    "test:imap": "node scripts/test-imap.js",
+    "test:email-rules": "node scripts/test-email-rules.js",
+    "test:attachments": "node scripts/test-attachments.js",
+    "test:assignment-pool": "node scripts/test-assignment-pool.js",
+    "test:m365": "node scripts/test-m365.js",
+    "test:sla": "node scripts/test-sla.js",
+    "test:sla-dashboard": "node scripts/test-sla-dashboard.js",
+    "test:sla-sweeper": "node scripts/test-sla-sweeper.js",
+    "test:sla-notify": "node scripts/test-sla-notify.js",
     "test:assignment-groups": "node scripts/test-assignment-groups.js",
     "graph:check": "node scripts/graph-check.js",
-    "test": "npm run test:parser && npm run test:ingest && npm run test:mailbox && npm run test:graph && npm run test:webhook && npm run test:api && npm run test:lifecycle && npm run test:users && npm run test:routing && npm run test:workload && npm run test:handover && npm run test:assignment-groups && npm run test:e2e"
+    "test:pg:up": "node scripts/lib/testpg.js up",
+    "test:pg:down": "node scripts/lib/testpg.js down",
+    "test:pg:status": "node scripts/lib/testpg.js status",
+    "test": "npm run test:parser && npm run test:ingest && npm run test:mailbox && npm run test:graph && npm run test:webhook && npm run test:api && npm run test:lifecycle && npm run test:users && npm run test:routing && npm run test:workload && npm run test:handover && npm run test:email && npm run test:email-sources && npm run test:imap && npm run test:email-rules && npm run test:attachments && npm run test:m365 && npm run test:assignment-pool && npm run test:audit && npm run test:reports && npm run test:scheduled-reports && npm run test:sla && npm run test:sla-dashboard && npm run test:sla-settings && npm run test:sla-backfill && npm run test:sla-report && npm run test:sla-sweeper && npm run test:sla-notify && npm run test:assignment-groups && npm run test:e2e",
+    "test:sla-settings": "node scripts/test-sla-settings.js",
+    "sla:backfill": "node scripts/backfill-sla.js",
+    "sla:backfill:dry": "node scripts/backfill-sla.js --dry-run",
+    "test:sla-backfill": "node scripts/test-sla-backfill.js",
+    "test:sla-report": "node scripts/test-sla-report.js",
+    "test:audit": "node scripts/test-audit.js",
+    "test:reports": "node scripts/test-reports.js",
+    "reports:send": "node scripts/send-scheduled-report.js",
+    "test:scheduled-reports": "node scripts/test-scheduled-reports.js"
   },
   "dependencies": {
     "@azure/msal-node": "^3.2.0",
@@ -37,7 +60,9 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
-    "jsonwebtoken": "^9.0.3"
+    "imapflow": "^1.7.8",
+    "jsonwebtoken": "^9.0.3",
+    "mailparser": "^3.9.22"
   },
   "devDependencies": {
     "prisma": "^6.2.0"

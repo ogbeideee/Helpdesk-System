@@ -2,10 +2,34 @@ import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { api } from '../api.js';
 import { STATES, PRIORITIES, CATEGORIES } from '../constants.js';
 import { usePageHeader } from '../pageHeader.js';
+import { slaOverview } from '../slaView.js';
 import {
   ErrorState, EmptyState, StateBadge, PriorityBadge,
   Avatar, Icon, timeAgo, fmtDateTime,
 } from './ui.jsx';
+
+/* One compact SLA chip per clock: "R" response, "Res" resolution. Every value
+   and status comes from the API's sla block; the queue derives nothing. */
+function SlaCell({ ticket }) {
+  const sla = slaOverview(ticket);
+  if (!sla) {
+    // Ticket created before SLA cycles existed: keep the legacy overdue
+    // signal rather than showing a misleading dash.
+    return ticket.overdue
+      ? <span className="sla-mini is-bad" title="Past its SLA target (legacy)">Overdue</span>
+      : <span className="muted small">—</span>;
+  }
+  return (
+    <span className="sla-cell">
+      {[sla.response, sla.resolution].map((c) => (
+        <span key={c.key} className={`sla-mini is-${c.tone}`} title={`${c.label} — ${c.text}`}>
+          <span className="sla-mini-key" aria-hidden="true">{c.key === 'response' ? 'R' : 'Res'}</span>
+          {c.short}
+        </span>
+      ))}
+    </span>
+  );
+}
 
 const PAGE_SIZE = 25;
 const EMPTY_FILTERS = { q: '', status: '', priority: '', category: '', group: '', agentId: '' };
@@ -72,6 +96,7 @@ function SkeletonRows({ rows = 6 }) {
           </td>
           <td><span className="sk" style={{ width: 70 }} /></td>
           <td><span className="sk" style={{ width: 64 }} /></td>
+          <td><span className="sk" style={{ width: 56 }} /></td>
           <td><span className="sk" style={{ width: 88 }} /></td>
           <td><span className="sk" style={{ width: 96 }} /></td>
           <td><span className="sk" style={{ width: 48 }} /></td>
@@ -290,6 +315,7 @@ export default function TicketsPage({ onOpen, initialFilters }) {
                 <Th id={null}>Subject &amp; requester</Th>
                 <Th id="status" sort={sort} setSort={setSort} width={112}>Status</Th>
                 <Th id="priority" sort={sort} setSort={setSort} width={116}>Priority</Th>
+                <Th id={null} width={104}>SLA</Th>
                 <Th id={null} width={150}>Group</Th>
                 <Th id={null} width={160}>Assigned to</Th>
                 <Th id="age" sort={sort} setSort={setSort} width={84} align="right">Age</Th>
@@ -322,6 +348,7 @@ export default function TicketsPage({ onOpen, initialFilters }) {
                     </td>
                     <td data-label="Status"><StateBadge state={t.state} /></td>
                     <td data-label="Priority"><PriorityBadge priority={t.priority} /></td>
+                    <td data-label="SLA"><SlaCell ticket={t} /></td>
                     <td data-label="Group">
                       {t.team?.name
                         ? <span className="group-tag">{t.team.name}</span>
@@ -339,7 +366,6 @@ export default function TicketsPage({ onOpen, initialFilters }) {
                     </td>
                     <td data-label="Age" className="cell-age" title={fmtDateTime(t.createdAt)}>
                       {timeAgo(t.createdAt)}
-                      {t.overdue && <span className="overdue-dot" title="Past its SLA target" />}
                     </td>
                     <td className="cell-chevron" aria-hidden="true">
                       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor"

@@ -49,6 +49,7 @@ export const api = {
   teams: () => request('/teams'),
   agents: () => request('/agents'),
   groups: () => request('/assignment-groups'),
+  assignmentPools: () => request('/assignment-pools'),
   dashboard: () => request('/dashboard'),
   stats: () => request('/stats'),
 
@@ -79,6 +80,10 @@ export const api = {
   myWorkload: () => request('/workload/me'),
   availabilityPreview: () => request('/workload/availability/preview'),
   setAvailability: (payload) => request('/workload/availability', body(payload)),
+  // Three-state availability: { state: 'online'|'unavailable'|'offline', agentId? }.
+  // Self-service online/unavailable follows the classic guarded flow; offline
+  // and other-agent changes are administrator actions.
+  setAvailabilityState: (payload) => request('/workload/availability', body(payload)),
   notifications: () => request('/workload/notifications'),
   markNotificationsRead: (ids) => request('/workload/notifications/read', body(ids ? { ids } : {})),
   rebalance: (payload = {}) => request('/workload/rebalance', body(payload)),
@@ -107,7 +112,47 @@ export const api = {
   routingAudit: () => request('/routing/audit'),
   previewRouting: (payload) => request('/routing/preview', body(payload)),
 
+  // ---- email parsing rules (admin) ----
+  emailRules: () => request('/email-rules'),
+  createEmailRule: (payload) => request('/email-rules', body(payload)),
+  updateEmailRule: (id, payload) => request(`/email-rules/${id}`, patch(payload)),
+  deleteEmailRule: (id) => request(`/email-rules/${id}`, { method: 'DELETE' }),
+
+  // ---- Microsoft 365 integration (admin; status + explicit credential check) ----
+  m365: () => request('/microsoft-365'),
+  verifyM365: () => request('/microsoft-365/verify', body({})),
+
   // ---- agent administration ----
   createAgent: (payload) => request('/agents', body(payload)),
   updateAgent: (id, payload) => request(`/agents/${id}`, patch(payload)),
+
+  // ---- SLA settings (admin) ----
+  slaSettings: () => request('/sla/settings'),
+  updateSlaSettings: (payload) => request('/sla/settings', patch(payload)),
+  addSlaHoliday: (payload) => request('/sla/holidays', body(payload)),
+  deleteSlaHoliday: (id) => request(`/sla/holidays/${id}`, { method: 'DELETE' }),
+
+  // ---- SLA reports (admin, read-only) ----
+  slaReport: (params = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v !== '' && v !== undefined && v !== null)
+    ).toString();
+    return request(`/sla/report${qs ? `?${qs}` : ''}`);
+  },
+
+  // ---- audit trail (admin, read-only; filtering + pagination server-side) ----
+  auditEvents: (params = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v !== '' && v !== undefined && v !== null)
+    ).toString();
+    return request(`/audit${qs ? `?${qs}` : ''}`);
+  },
+
+  // ---- operational reports (admin, read-only; date filtering server-side) ----
+  reports: (params = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v !== '' && v !== undefined && v !== null)
+    ).toString();
+    return request(`/reports${qs ? `?${qs}` : ''}`);
+  },
 };

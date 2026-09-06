@@ -653,6 +653,28 @@ body {
 
 .pill-overdue { background: var(--danger-soft); color: var(--danger); }
 .pill-sla     { background: var(--success-soft); color: var(--success); }
+.pill-sla-warn { background: var(--warning-soft); color: var(--warning); }
+
+/* Queue SLA cell — one compact chip per clock ("R" response, "Res"
+   resolution); the tone carries the status, the tooltip carries the words. */
+.sla-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+.sla-mini {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--neutral-soft);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.sla-mini-key { font-weight: 700; font-size: 10px; opacity: 0.75; }
+.sla-mini.is-ok   { background: var(--success-soft); color: var(--success); }
+.sla-mini.is-warn { background: var(--warning-soft); color: var(--warning); }
+.sla-mini.is-bad  { background: var(--danger-soft);  color: var(--danger); }
 
 .chip {
   display: inline-flex;
@@ -1302,6 +1324,158 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
 
 .settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 12px; }
 
+/* ---- SLA settings page -------------------------------------------- */
+
+.settings-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.075em;
+  color: var(--muted);
+  margin: 16px 0 8px;
+}
+.settings-group-label:first-of-type { margin-top: 0; }
+.day-toggles { display: flex; flex-wrap: wrap; gap: 6px; }
+.day-toggle {
+  padding: 3px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color var(--t), background var(--t), color var(--t);
+}
+.day-toggle:hover { border-color: var(--primary); color: var(--text); }
+.day-toggle.is-on {
+  background: var(--primary-soft);
+  color: var(--primary-2);
+  border-color: transparent;
+}
+.settings-errors { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; }
+.settings-note { display: block; margin-top: 8px; font-size: 11.5px; color: var(--muted-2); }
+
+/* ---- Reports page ----------------------------------------------------- */
+
+.overtime-seg.seg-created { background: var(--primary); }
+.overtime-seg.seg-resolved { background: var(--success); }
+
+.volume-chart { display: flex; flex-direction: column; }
+.volume-head, .volume-row {
+  display: grid;
+  grid-template-columns: 92px minmax(140px, 1fr) minmax(140px, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 5px 0;
+}
+.volume-head { padding-bottom: 7px; border-bottom: 1px solid var(--border-soft); }
+.volume-cell { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.volume-cell .tnum { flex: 0 0 26px; text-align: right; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.volume-cell .overtime-bar { flex: 1; }
+
+/* Thin inline share bars inside distribution tables. */
+.share-cell { width: 140px; }
+.share-bar { display: inline-flex; vertical-align: middle; width: 120px; height: 8px; }
+
+@media (max-width: 640px) {
+  .volume-head, .volume-row { grid-template-columns: 72px 1fr 1fr; gap: 8px; }
+  .share-cell { width: auto; }
+  .share-bar { width: 72px; }
+}
+
+/* ---- Audit trail page ----------------------------------------------- */
+
+.audit-controls { align-items: flex-end; margin-bottom: 12px; }
+.audit-controls .filter-search { flex: 1 1 200px; }
+.audit-controls input[type='search'] { background: var(--bg-2); border: 1px solid var(--border-soft); border-radius: var(--radius-sm, var(--radius)); padding: 7px 10px; }
+.audit-controls input[type='search']:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); outline: none; }
+
+/* Fixed layout keeps the expandable detail row from inflating column widths:
+   the detail cell's content must never push the table past its container. */
+.audit-table { table-layout: fixed; width: 100%; }
+.audit-table th:nth-child(1) { width: 150px; }
+.audit-table th:nth-child(2) { width: 210px; }
+.audit-table th:nth-child(3) { width: 185px; }
+.audit-table th:nth-child(4) { width: 185px; }
+.audit-table th:nth-child(6) { width: 34px; }
+.audit-table .audit-row { cursor: pointer; }
+.audit-table .audit-row:hover { background: var(--bg); }
+.audit-table .audit-row.is-open { background: var(--bg); }
+.audit-when { white-space: nowrap; color: var(--text-dim); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; }
+.audit-actor { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.audit-entity { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); }
+.audit-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.audit-chevron { text-align: right; color: var(--muted-2); }
+.audit-action {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11.5px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-pill);
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+.audit-detail-tr > td { background: var(--bg); border-top: 1px dashed var(--border-soft); padding: 0; }
+.audit-detail { padding: 14px 18px 16px; }
+.audit-detail-grid { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 10px 16px; }
+.audit-kv-key { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.075em; color: var(--muted); padding-top: 3px; }
+.audit-kv-value { min-width: 0; }
+.audit-diff-row { display: flex; align-items: baseline; gap: 8px; padding: 2px 0; min-width: 0; }
+.audit-diff-key { flex: 0 0 150px; font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 11.5px; color: var(--text-dim); }
+.audit-diff-from { color: var(--muted); overflow-wrap: anywhere; }
+.audit-diff-to { overflow-wrap: anywhere; }
+.audit-kv-text { overflow-wrap: anywhere; }
+.audit-raw { margin-top: 12px; }
+.audit-raw pre {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  font-size: 11.5px;
+  overflow-x: auto;
+  max-height: 260px;
+}
+
+@media (max-width: 640px) {
+  .audit-detail-grid { grid-template-columns: 1fr; gap: 4px 0; }
+  .audit-detail-grid > .audit-kv-key { padding-top: 8px; }
+  .audit-diff-key { flex-basis: 110px; }
+  .audit-summary, .audit-entity, .audit-actor { max-width: none; }
+}
+
+/* ---- SLA reports page ---------------------------------------------- */
+
+.report-controls { align-items: flex-end; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.report-date { display: flex; flex-direction: column; gap: 3px; }
+.report-date span { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.075em; color: var(--muted); }
+.report-showing { margin-left: auto; align-self: center; }
+.source-split { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-soft); }
+.source-split-item { display: inline-flex; align-items: baseline; gap: 6px; font-size: 12.5px; }
+
+.overtime-chart { display: flex; flex-direction: column; }
+.overtime-head, .overtime-row {
+  display: grid;
+  grid-template-columns: 92px 56px minmax(160px, 1fr) 52px 64px;
+  gap: 12px;
+  align-items: center;
+  padding: 5px 0;
+}
+.overtime-head { padding-bottom: 7px; border-bottom: 1px solid var(--border-soft); }
+.overtime-head span:nth-child(n + 4), .overtime-row > span:nth-child(n + 4) { text-align: right; }
+.overtime-day { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.overtime-started { color: var(--muted); }
+.overtime-bar { position: relative; display: flex; height: 14px; border-radius: var(--radius-pill); background: var(--surface-3); overflow: hidden; }
+.overtime-track { position: absolute; inset: 0 auto 0 0; background: var(--border-soft); border-radius: inherit; }
+.overtime-seg { position: relative; height: 100%; }
+.overtime-seg.seg-met { background: var(--success); }
+.overtime-seg.seg-breached { background: var(--danger); }
+@media (max-width: 640px) {
+  .overtime-head, .overtime-row { grid-template-columns: 78px 40px 1fr 40px 52px; gap: 8px; }
+  .report-showing { margin-left: 0; }
+}
+
 .btn-link {
   background: none;
   border: none;
@@ -1883,6 +2057,17 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
 .insp-sub { font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
 .insp-inline { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .insp-divider { height: 1px; background: var(--border-soft); margin: 10px 0; }
+/* SLA card — previous cycles, quiet rows under the current one */
+.sla-history { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
+.sla-history-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+}
+.sla-history-cycle { color: var(--text); font-weight: 500; white-space: nowrap; }
+.sla-history-outcome { color: var(--muted); text-align: right; overflow-wrap: anywhere; }
 .insp-select {
   width: 100%;
   padding: 5px 8px;
@@ -2005,6 +2190,8 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
 .ev-closed     .ev-mark { color: var(--muted);   background: var(--surface-3);    border-color: transparent; }
 .ev-internal   .ev-bubble { background: var(--warning-soft); }
 .ev-resolution .ev-bubble.is-resolution { background: var(--success-soft); }
+.ev-sla-warn   .ev-mark { color: var(--warning); background: var(--warning-soft); border-color: transparent; }
+.ev-sla-breach .ev-mark { color: var(--danger);  background: var(--danger-soft);  border-color: transparent; }
 
 /* ---- responsive --------------------------------------------------- */
 
@@ -2571,6 +2758,29 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
 .availability-dot.is-on { background: var(--success); box-shadow: 0 0 0 3px var(--success-soft); }
 .availability-btn.is-off .availability-dot,
 .availability-dot.is-off { background: var(--muted); box-shadow: 0 0 0 3px var(--neutral-soft); }
+/* Offline: a hollow ring — not merely quiet, but not here at all. */
+.availability-dot.is-offline { background: transparent; box-shadow: inset 0 0 0 1.5px var(--muted); }
+
+/* ====================== Assignment pool roster ====================== */
+/* The per-group member list on the Assignment Groups screen: availability
+   sections, each member with their skill, live load and eligibility. */
+.state-cell { display: inline-flex; }
+.pool-roster { margin-top: 14px; border-top: 1px solid var(--border-soft); padding-top: 10px; }
+.pool-summary { margin-bottom: 8px; }
+.pool-section { margin-bottom: 10px; }
+.pool-section:last-child { margin-bottom: 0; }
+.pool-section-label {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600;
+  margin-bottom: 4px;
+}
+.pool-agent {
+  display: flex; align-items: center; gap: 10px;
+  padding: 4px 0 4px 14px; font-size: 12.5px;
+}
+.pool-agent-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.pool-agent .is-dim { opacity: 0.65; }
+.pool-agent .chip { font-size: 10px; padding: 0 6px; }
 .availability-text { display: var(--rail-stack); flex-direction: column; min-width: 0; flex: 1; line-height: 1.3; }
 .availability-text strong { font-size: 12.5px; font-weight: 600; color: var(--text); }
 .availability-text small { font-size: 10.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2631,16 +2841,15 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
 
 .kpi-head {
   display: flex;
-  align-items: center;
+  /* Baseline alignment keeps the dot on the first line's baseline, so a
+     title that wraps to two lines still reads as one clean header. */
+  align-items: baseline;
   gap: 7px;
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.075em;
   color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .kpi-dot {
   width: 6px; height: 6px;
@@ -2667,9 +2876,17 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
 }
 .kpi-seg { display: block; height: 100%; background: var(--kpi); }
 .kpi-seg-progress { background: var(--warning); }
+.kpi-seg-missed { background: var(--danger); }
 .kpi-seg.is-empty { background: transparent; }
 .kpi-note { margin-top: 6px; font-size: 10.5px; color: var(--muted-2); }
 .kpi-card.is-loading .sk { display: block; }
+
+/* SLA KPI row — same card language, six figures on wide screens; the
+   responsive .kpi-row rules below reflow it on narrow ones. */
+.kpi-row-sla { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.kpi-ok   { --kpi: var(--success); }
+.kpi-warn { --kpi: var(--warning); }
+.kpi-info { --kpi: var(--primary-2); }
 
 /* ---- panels ------------------------------------------------------- */
 
@@ -2929,3 +3146,33 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
   .kpi-row { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
   .topbar-title h1 { font-size: 17px; }
 }
+
+/* ------------------------------------------------------------------ */
+/* Attachments — quiet chips under the message they arrived with       */
+/* ------------------------------------------------------------------ */
+.attachment-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px 4px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md, 8px);
+  background: var(--surface-2, var(--surface));
+  max-width: 100%;
+}
+.attachment-chip .attachment-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.attachment-chip .btn { padding: 2px 8px; }

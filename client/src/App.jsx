@@ -10,10 +10,16 @@ import TicketDetail from './components/TicketDetail.jsx';
 import TicketForm from './components/TicketForm.jsx';
 import AgentsPage from './components/AgentsPage.jsx';
 import RoutingPage from './components/RoutingPage.jsx';
+import SlaSettingsPage from './components/SlaSettingsPage.jsx';
+import SlaReportsPage from './components/SlaReportsPage.jsx';
+import ReportsPage from './components/ReportsPage.jsx';
+import AuditTrailPage from './components/AuditTrailPage.jsx';
 import GroupsPage from './components/GroupsPage.jsx';
 import SimulateEmailPage from './components/SimulateEmailPage.jsx';
 import AvailabilityControl from './components/AvailabilityControl.jsx';
 import HandoversPage from './components/HandoversPage.jsx';
+import EmailRulesPage from './components/EmailRulesPage.jsx';
+import Microsoft365Page from './components/Microsoft365Page.jsx';
 import TopBar from './components/TopBar.jsx';
 
 const EMAIL_SIMULATOR_ENABLED = import.meta.env.VITE_ENABLE_EMAIL_SIMULATOR !== 'false';
@@ -32,6 +38,12 @@ const ROUTE_META = {
   handovers: { title: 'Handovers', subtitle: 'A handover is an offer — the ticket only changes owner when you accept it.' },
   agents: { title: 'Agents', subtitle: 'Availability, skill and workload for the assignment engine.' },
   routing: { title: 'Routing Rules', subtitle: 'Evaluated in order — the lowest priority number that matches wins.' },
+  'sla-settings': { title: 'SLA Settings', subtitle: 'Targets, working calendar and public holidays. Applies to SLA cycles started after saving.' },
+  'sla-reports': { title: 'SLA Reports', subtitle: 'Completed-cycle performance and the current live state, served by the reporting API.' },
+  reports: { title: 'Reports', subtitle: 'Operational reporting over tickets and SLA — every figure served by the reports API.' },
+  audit: { title: 'Audit Trail', subtitle: 'The unified record of important system actions — served read-only by the audit API.' },
+  'email-rules': { title: 'Email Parsing Rules', subtitle: 'Keyword rules the parser evaluates on inbound email — a rule only sets the ticket fields it names.' },
+  m365: { title: 'Microsoft 365', subtitle: 'Graph email integration status and configuration — a real tenant is connected later through environment values, never through this console.' },
   groups: { title: 'Assignment Groups', subtitle: 'Routing targets for the assignment engine.' },
   'simulate-email': {
     title: 'Simulate Incoming Email',
@@ -90,7 +102,13 @@ export default function App() {
     const admin = isAdmin
       ? [
           { path: '/agents', label: 'Agents', icon: 'agents' },
+          { path: '/reports', label: 'Reports', icon: 'reports' },
           { path: '/routing', label: 'Routing Rules', icon: 'routing' },
+          { path: '/email-rules', label: 'Email Rules', icon: 'mail' },
+          { path: '/m365', label: 'Microsoft 365', icon: 'cloud' },
+          { path: '/sla-settings', label: 'SLA Settings', icon: 'clock' },
+          { path: '/sla-reports', label: 'SLA Reports', icon: 'activity' },
+          { path: '/audit', label: 'Audit Trail', icon: 'trail' },
         ]
       : [];
     const workspace = [{ path: '/groups', label: 'Assignment Groups', icon: 'groups' }];
@@ -161,8 +179,26 @@ export default function App() {
     case 'agents':
       content = isAdmin ? <AgentsPage me={me} /> : <Denied />;
       break;
+    case 'email-rules':
+      content = isAdmin ? <EmailRulesPage /> : <Denied />;
+      break;
+    case 'm365':
+      content = isAdmin ? <Microsoft365Page /> : <Denied />;
+      break;
     case 'routing':
       content = isAdmin ? <RoutingPage /> : <Denied />;
+      break;
+    case 'sla-settings':
+      content = isAdmin ? <SlaSettingsPage /> : <Denied />;
+      break;
+    case 'sla-reports':
+      content = isAdmin ? <SlaReportsPage /> : <Denied />;
+      break;
+    case 'reports':
+      content = isAdmin ? <ReportsPage /> : <Denied />;
+      break;
+    case 'audit':
+      content = isAdmin ? <AuditTrailPage /> : <Denied />;
       break;
     case 'groups':
       content = <GroupsPage />;
@@ -303,6 +339,12 @@ function parseHash() {
     case '/handovers': return { ...base, name: 'handovers', path: '/handovers' };
     case '/agents': return { ...base, name: 'agents', path: '/agents' };
     case '/routing': return { ...base, name: 'routing', path: '/routing' };
+    case '/sla-settings': return { ...base, name: 'sla-settings', path: '/sla-settings' };
+    case '/sla-reports': return { ...base, name: 'sla-reports', path: '/sla-reports' };
+    case '/reports': return { ...base, name: 'reports', path: '/reports' };
+    case '/audit': return { ...base, name: 'audit', path: '/audit' };
+    case '/email-rules': return { ...base, name: 'email-rules', path: '/email-rules' };
+    case '/m365': return { ...base, name: 'm365', path: '/m365' };
     case '/groups': return { ...base, name: 'groups', path: '/groups' };
     case '/simulate-email': return { ...base, name: 'simulate-email', path: '/simulate-email' };
     default: return { ...base, name: 'dashboard', path: '/' };

@@ -18,7 +18,7 @@ router.use(requireAuth);
 // GET /api/handovers/settings — anybody may read them (the UI shows the limit)
 router.get('/settings', async (req, res) => {
   try {
-    res.json({ settings: await settingsService.getAll(), definitions: settingsService.describe() });
+    res.json({ settings: await settingsService.getAll(prisma, 'handover'), definitions: settingsService.describe('handover') });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -28,9 +28,17 @@ router.get('/settings', async (req, res) => {
 router.patch('/settings', async (req, res) => {
   try {
     if (!isAdmin(req.agent)) return res.status(403).json({ error: 'Administrator role required' });
-    const result = await settingsService.update(req.body || {}, `${req.agent.name} <${req.agent.email}>`);
+    const changes = req.body || {};
+    // This endpoint speaks for the handover group only — an SLA key sent here
+    // must not be writable through it.
+    for (const key of Object.keys(changes)) {
+      if (settingsService.DEFINITIONS[key] && settingsService.DEFINITIONS[key].group !== 'handover') {
+        delete changes[key];
+      }
+    }
+    const result = await settingsService.update(changes, req.agent);
     if (!result.ok) return res.status(400).json({ errors: result.errors });
-    res.json({ settings: result.settings, definitions: settingsService.describe() });
+    res.json({ settings: await settingsService.getAll(prisma, 'handover'), definitions: settingsService.describe('handover') });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

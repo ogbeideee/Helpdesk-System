@@ -2,6 +2,7 @@
 const express = require('express');
 const prisma = require('../src/lib/prisma');
 const { STATES, OPEN_STATES } = require('../src/states');
+const slaService = require('../src/slaService');
 
 const router = express.Router();
 
@@ -18,6 +19,7 @@ router.get('/', async (req, res) => {
       recentlyCreated,
       byPriorityRows,
       byCategoryRows,
+      slaStats,
     ] = await Promise.all([
       prisma.ticket.count({ where: { state: { in: OPEN_STATES } } }),
       prisma.ticket.groupBy({ by: ['state'], _count: { _all: true } }),
@@ -68,6 +70,9 @@ router.get('/', async (req, res) => {
         _count: { _all: true },
         where: { state: { in: OPEN_STATES } },
       }),
+      // SLA KPIs — computed by the SLA service from the cycle table, so the
+      // dashboard never re-derives cycle outcomes or working-time math.
+      slaService.dashboardSlaStats(),
     ]);
 
     const byState = Object.fromEntries(STATES.map((s) => [s, 0]));
@@ -120,6 +125,7 @@ router.get('/', async (req, res) => {
         requesterEmail: t.requesterEmail,
         createdAt: t.createdAt,
       })),
+      sla: slaStats,
       generatedAt: new Date().toISOString(),
     });
   } catch (err) {

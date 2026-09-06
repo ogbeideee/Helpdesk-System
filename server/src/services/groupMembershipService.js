@@ -19,6 +19,7 @@
 // `TeamMembership_single_lead` created by the migration (and re-created by
 // `ensureSingleLeadIndex` for databases updated via `prisma db push`).
 const prisma = require('../lib/prisma');
+const auditService = require('./auditService');
 
 const MAX_GROUPS_PER_AGENT = 3;
 
@@ -109,11 +110,14 @@ async function groupLead(teamId, client = prisma) {
  *
  * Throws GroupMembershipError with code NOT_FOUND | ALREADY_MEMBER | MAX_GROUPS_REACHED.
  */
-async function addMember({ agentId, teamId, isLead = false }, client = prisma) {
+async function addMember({ agentId, teamId, isLead = false, actor = null }, client = prisma) {
   return client.$transaction(async (tx) => {
-    const agent = await tx.agent.findUnique({ where: { id: agentId }, select: { id: true, teamId: true } });
+    const agent = await tx.agent.findUnique({
+      where: { id: agentId },
+      select: { id: true, teamId: true, name: true, email: true },
+    });
     if (!agent) throw notFound('agent');
-    const team = await tx.team.findUnique({ where: { id: teamId }, select: { id: true } });
+    const team = await tx.team.findUnique({ where: { id: teamId }, select: { id: true, name: true, key: true } });
     if (!team) throw notFound('group');
     // The primary group (Agent.teamId) already counts as a membership: it is
     // represented by the legacy pointer itself, so re-adding it — even before its
@@ -150,6 +154,16 @@ async function addMember({ agentId, teamId, isLead = false }, client = prisma) {
       await tx.teamMembership.updateMany({ where: { teamId, isLead: true }, data: { isLead: false } });
     }
     const row = await tx.teamMembership.create({ data: { agentId, teamId, isLead } });
+    await auditService.record(tx, {
+      action: 'group.member_added',
+      entityType: 'Team',
+      entityId: teamId,
+      entityLabel: team.name,
+      actor,
+      to: { member: agent.email, isLead },
+      description: `${agent.name} added to assignment group ${team.name}${isLead ? ' as lead' : ''}`,
+      metadata: { agentId, key: team.key },
+    });
     if (agent.teamId === null) {
       // Transition only: keep the legacy primary-group pointer usable.
       await tx.agent.update({ where: { id: agentId }, data: { teamId } });
@@ -168,9 +182,12 @@ async function addMember({ agentId, teamId, isLead = false }, client = prisma) {
  *
  * Throws GroupMembershipError with code NOT_A_MEMBER.
  */
-async function setLead({ agentId, teamId, isLead = true }, client = prisma) {
+async function setLead({ agentId, teamId, isLead = true, actor = null }, client = prisma) {
   return client.$transaction(async (tx) => {
-    const row = await tx.teamMembership.findUnique({ where: { agentId_teamId: { agentId, teamId } } });
+    const row = await tx.teamMembership.findUnique({
+      where: { agentId_teamId: { agentId, teamId } },
+      include: { agent: { select: { name: true, email: true } }, team: { select: { name: true, key: true } } },
+    });
     if (!row) {
       throw new GroupMembershipError('NOT_A_MEMBER', 'a group lead must first be a member of that assignment group');
     }
@@ -180,7 +197,20 @@ async function setLead({ agentId, teamId, isLead = true }, client = prisma) {
         data: { isLead: false },
       });
     }
-    return tx.teamMembership.update({ where: { id: row.id }, data: { isLead } });
+    const updated = await tx.teamMembership.update({ where: { id: row.id }, data: { isLead } });
+    await auditService.record(tx, {
+      action: 'group.lead_changed',
+      entityType: 'Team',
+      entityId: teamId,
+      entityLabel: row.team.name,
+      actor,
+      from: { isLead: row.isLead },
+      to: { isLead },
+      description:
+        `${row.agent.name} ${isLead ? 'promoted to' : 'demoted from'} lead of ${row.team.name}`,
+      metadata: { agentId, key: row.team.key },
+    });
+    return updated;
   });
 }
 
@@ -193,9 +223,12 @@ async function setLead({ agentId, teamId, isLead = true }, client = prisma) {
  *
  * Throws GroupMembershipError with code NOT_A_MEMBER | LEAD_REMOVAL_FORBIDDEN.
  */
-async function removeMember({ agentId, teamId }, client = prisma) {
+async function removeMember({ agentId, teamId, actor = null }, client = prisma) {
   return client.$transaction(async (tx) => {
-    const row = await tx.teamMembership.findUnique({ where: { agentId_teamId: { agentId, teamId } } });
+    const row = await tx.teamMembership.findUnique({
+      where: { agentId_teamId: { agentId, teamId } },
+      include: { agent: { select: { name: true, email: true } }, team: { select: { name: true, key: true } } },
+    });
     if (!row) throw new GroupMembershipError('NOT_A_MEMBER', 'no such membership');
     if (row.isLead) {
       throw new GroupMembershipError(
@@ -204,6 +237,16 @@ async function removeMember({ agentId, teamId }, client = prisma) {
       );
     }
     await tx.teamMembership.delete({ where: { id: row.id } });
+    await auditService.record(tx, {
+      action: 'group.member_removed',
+      entityType: 'Team',
+      entityId: teamId,
+      entityLabel: row.team.name,
+      actor,
+      from: { member: row.agent.email },
+      description: `${row.agent.name} removed from assignment group ${row.team.name}`,
+      metadata: { agentId, key: row.team.key },
+    });
     // Transition only: repoint the legacy primary-group pointer when it aimed
     // at the group being left.
     const agent = await tx.agent.findUnique({ where: { id: agentId }, select: { teamId: true } });

@@ -50,6 +50,32 @@ function createWebhookProcessor(options = {}) {
   const ops = options.ops || null;
   const mailServiceOverride = options.mailService || null;
   const subscriptionServiceOverride = options.subscriptionService || null;
+  // Graph redelivers notifications (its own retries, or two notifications for
+  // one edit). The database unique constraints are the hard idempotency
+  // guarantee, but re-fetching the message just to learn it is a duplicate is
+  // pure waste — so definitive outcomes are remembered briefly.
+  const dedupeTtlMs = options.dedupeTtlMs || 10 * 60 * 1000;
+  const recentOutcomes = new Map();
+
+  function rememberOutcome(messageId, outcome) {
+    if (!messageId) return;
+    // Bounded: drop the oldest entries once the cache grows too large.
+    if (recentOutcomes.size >= 1000) {
+      const oldest = recentOutcomes.keys().next().value;
+      recentOutcomes.delete(oldest);
+    }
+    recentOutcomes.set(messageId, { outcome, at: Date.now() });
+  }
+
+  function cachedOutcome(messageId) {
+    const hit = messageId && recentOutcomes.get(messageId);
+    if (!hit) return null;
+    if (Date.now() - hit.at > dedupeTtlMs) {
+      recentOutcomes.delete(messageId);
+      return null;
+    }
+    return hit.outcome;
+  }
 
   function transport() {
     if (ops) return ops;
@@ -113,6 +139,14 @@ function createWebhookProcessor(options = {}) {
 
     const messageId = extractMessageId(notification);
 
+    // A definitive outcome for this message is already known (within the TTL):
+    // a redelivered notification collapses to 'duplicate' without re-fetching.
+    const cached = cachedOutcome(messageId);
+    if (cached) {
+      logger.log(`[webhook] notification for ${messageId} already processed (${cached}) — skipping`);
+      return 'duplicate';
+    }
+
     let raw;
     try {
       raw = await transport().getMessage(messageId);
@@ -156,6 +190,10 @@ function createWebhookProcessor(options = {}) {
       return 'failed';
     }
 
+    // Definitive -> remember, so Graph's redeliveries (and duplicate entries
+    // inside one batch) collapse to 'duplicate' without a re-fetch.
+    rememberOutcome(messageId, outcome);
+
     // Success is recorded inside the shared pipeline (mailService), so the
     // poller and the webhook report through exactly one code path.
     return outcome;
@@ -187,7 +225,7 @@ function createWebhookProcessor(options = {}) {
     return summary;
   }
 
-  return { processNotification, processNotifications, extractMessageId };
+  return { processNotification, processNotifications, extractMessageId, recentOutcomes };
 }
 
 module.exports = {

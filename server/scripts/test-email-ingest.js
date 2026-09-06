@@ -393,7 +393,7 @@ async function main() {
       rawEmail({ id: 'contract', from: `c@${DOMAIN}`, name: 'C Tester', subject: 'Contract check', body: 'Body text.' })
     );
     const payload = toIntakePayload(normalized);
-    eq('contract: payload keys', Object.keys(payload).sort().join(','), 'body,conversationId,from,messageId,name,subject');
+    eq('contract: payload keys', Object.keys(payload).sort().join(','), 'body,conversationId,from,inReplyTo,internetMessageId,messageId,name,references,subject');
     check('contract: mapper adds no ticket fields', !('category' in payload) && !('priority' in payload) && !('state' in payload));
 
     // Ingesting an already-normalized email works without re-parsing.

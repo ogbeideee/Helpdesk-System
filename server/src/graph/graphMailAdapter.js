@@ -50,7 +50,18 @@ function toRawEmail(message, attachments = []) {
 
   return {
     messageId: msg.id || null,
+    // Graph's copy of the RFC 5322 Message-ID — the identity shared with the
+    // IMAP channel, so cross-source dedupe and threading match on it.
+    internetMessageId: msg.internetMessageId || null,
     conversationId: msg.conversationId || null,
+    // Graph exposes the direct reply target; the full References chain is not
+    // a Graph property (IMAP supplies it — Graph threads natively).
+    inReplyTo: msg.inReplyTo || null,
+    // Recipient metadata, parsed for the normalized model (Graph's
+    // { emailAddress: { name, address } } shape is understood downstream).
+    to: msg.toRecipients || null,
+    cc: msg.ccRecipients || null,
+    replyTo: msg.replyTo || null,
     // The parser understands Graph's { emailAddress: { name, address } } shape,
     // so this stays a direct hand-off rather than a second name/address parser.
     from: msg.from || msg.sender || null,

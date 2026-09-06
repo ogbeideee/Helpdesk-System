@@ -11,6 +11,7 @@ const {
 } = require('../src/states');
 const { nextTicketNumber } = require('../src/ticketNumbers');
 const { computeDueAt } = require('../src/sla');
+const slaService = require('../src/slaService');
 const assignmentEngine = require('../src/services/assignmentEngine');
 const notificationService = require('../src/mailer');
 const { intakeEmailMessage, IntakeValidationError } = require('../src/services/ticketIntake');
@@ -18,19 +19,43 @@ const { classify } = require('../src/graph/categoryRules');
 const assignmentPolicy = require('../src/services/assignmentPolicy');
 const workloadService = require('../src/services/workloadService');
 const handoverService = require('../src/services/handoverService');
+const auditService = require('../src/services/auditService');
+const { getAttachmentStorage } = require('../src/services/attachmentStorage');
 
 const router = express.Router();
 
 const LIST_INCLUDE = {
   assignedAgent: { select: { id: true, name: true, email: true, skillLevel: true } },
   team: true,
+  slaCycles: { orderBy: { cycleNumber: 'asc' } },
 };
 const DETAIL_INCLUDE = {
   assignedAgent: true,
   team: true,
   auditLogs: { orderBy: { createdAt: 'desc' } },
   comments: { orderBy: { createdAt: 'asc' } },
+  attachments: { orderBy: { createdAt: 'asc' } },
+  slaCycles: { orderBy: { cycleNumber: 'asc' } },
+  slaEvents: { orderBy: [{ at: 'asc' }, { id: 'asc' }] },
 };
+
+/**
+ * Attachment metadata for API responses. The private storage key and the
+ * source message id NEVER leave the backend — the client gets the display
+ * filename, type, size and the download route to use.
+ */
+function serializeAttachment(a) {
+  return {
+    id: a.id,
+    ticketId: a.ticketId,
+    commentId: a.commentId,
+    filename: a.filename,
+    mimeType: a.mimeType,
+    size: a.size,
+    source: a.source,
+    createdAt: a.createdAt,
+  };
+}
 
 function truncateShortDescription(value) {
   const str = String(value || '').trim();
@@ -59,10 +84,17 @@ function actorLabel(agent) {
 }
 
 /** Decorate tickets with derived fields for clients. */
-function serializeTicket(t) {
+function serializeTicket(t, slaContext = {}) {
+  // Raw cycle rows stay out of the payload; the structured `sla` block below
+  // carries the same per-cycle history in a stable shape. SLA timeline events
+  // are trimmed to the fields the ticket timeline renders; list payloads have
+  // no slaEvents loaded and expose none (undefined keys vanish in JSON).
+  const { slaCycles, slaEvents, attachments, ...ticket } = t;
   const hoursLeft = workloadService.hoursUntilClaimable(t);
   return {
-    ...t,
+    ...ticket,
+    // Metadata only — storage keys never leave the backend.
+    ...(attachments ? { attachments: attachments.map(serializeAttachment) } : {}),
     awaitingAssignment: !t.assignedAgentId && isOpenState(t.state),
     // A NEW ticket becomes takeable by a teammate once it has gone unattended
     // for the configured threshold. Surfaced so the UI reflects the rule the
@@ -70,6 +102,37 @@ function serializeTicket(t) {
     unattended: workloadService.isUnattended(t),
     hoursUntilClaimable: hoursLeft,
     overdue: Boolean(t.dueAt && isOpenState(t.state) && new Date(t.dueAt) < new Date()),
+    sla: slaService.serializeSla(t, slaContext),
+    ...(slaEvents
+      ? {
+          slaEvents: slaEvents.map((e) => ({
+            id: e.id,
+            cycleId: e.cycleId,
+            type: e.type,
+            clock: e.clock,
+            at: e.at,
+            actor: e.actor,
+            detail: e.detail,
+          })),
+        }
+      : {}),
+  };
+}
+
+// Holiday calendar + working calendar for SLA serialization, so
+// remaining-time math that crosses a public holiday stays exact and follows
+// the configured working calendar. Two indexed queries on small tables.
+async function slaCtx(now = new Date()) {
+  const policy = await slaService.loadSlaPolicy();
+  return {
+    now,
+    calendar: policy.calendar,
+    holidays: await slaService.loadHolidaysBetween(
+      now,
+      new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000),
+      prisma,
+      policy
+    ),
   };
 }
 
@@ -83,7 +146,6 @@ async function loadTicketOr404(idParam, res, include = DETAIL_INCLUDE) {
   if (!ticket) res.status(404).json({ error: 'Ticket not found' });
   return ticket;
 }
-
 // ---------------------------------------------------------------------------
 // Simulated email ingestion (stands in for the future Microsoft Graph feed)
 // ---------------------------------------------------------------------------
@@ -170,7 +232,8 @@ router.get('/', async (req, res) => {
       skip,
       include: LIST_INCLUDE,
     });
-    res.json(list.map(serializeTicket));
+    const ctx = await slaCtx();
+    res.json(list.map((t) => serializeTicket(t, ctx)));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -181,7 +244,7 @@ router.get('/:id', async (req, res) => {
   try {
     const ticket = await loadTicketOr404(req.params.id, res);
     if (!ticket) return;
-    res.json(serializeTicket(ticket));
+    res.json(serializeTicket(ticket, await slaCtx()));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -238,7 +301,7 @@ ${body || ''}`,
             `: ${assignment.reason}`
           : `Routed to ${assignment.groupName || 'triage'} via ${ruleNote} — awaiting assignment (${assignment.reason})`;
 
-      return tx.ticket.create({
+      const row = await tx.ticket.create({
         data: {
           ticketNumber,
           shortDescription,
@@ -262,7 +325,29 @@ ${body || ''}`,
         },
         include: { assignedAgent: true, team: true },
       });
+      await auditService.record(tx, {
+        action: 'ticket.created',
+        entityType: 'Ticket',
+        entityId: row.id,
+        entityLabel: row.ticketNumber,
+        ticketId: row.id,
+        actor: req.agent,
+        to: { state: 'NEW', priority, category, source: 'portal' },
+        description: `${row.ticketNumber} created via portal by ${actorLabel(req.agent)}`,
+        metadata: {
+          group: assignment ? assignment.groupName ?? null : teamId ? (await tx.team.findUnique({ where: { id: teamId } }))?.name ?? null : null,
+          assignedAgent: assignment && assignment.agent ? assignment.agent.name : null,
+          rule: assignment ? assignment.ruleName ?? null : null,
+        },
+      });
+      return row;
     });
+
+    // SLA cycle 1 starts at creation. It recomputes the targets on the
+    // working calendar (Mon–Fri 08:00–17:00 Lagos, holidays excluded) and
+    // syncs Ticket.dueAt / responseDueAt to the cycle, replacing the calendar
+    // estimate set above.
+    await slaService.startCycle(created, { cycleNumber: 1, startedAt: created.createdAt });
 
     // Notifications (development mode logs them).
     notificationService.notifyNewTicketToDl(created).catch(() => {});
@@ -275,7 +360,7 @@ ${body || ''}`,
       where: { id: created.id },
       include: DETAIL_INCLUDE,
     });
-    res.status(201).json(serializeTicket(full));
+    res.status(201).json(serializeTicket(full, await slaCtx()));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -286,7 +371,7 @@ ${body || ''}`,
 // ---------------------------------------------------------------------------
 
 // Shared state-machine application (used by /status, /resolve, /close).
-async function applyStateChange(existing, toState, { actor, note, resolution }) {
+async function applyStateChange(existing, toState, { actor, agent, note, resolution }) {
   if (!isValidState(toState)) {
     return { status: 400, body: { errors: [`state must be one of: ${STATES.join(', ')}`] } };
   }
@@ -339,6 +424,30 @@ async function applyStateChange(existing, toState, { actor, note, resolution }) 
     include: DETAIL_INCLUDE,
   });
 
+  // Unified trail: the state transition (TicketAuditLog keeps its own row
+  // above — the domain timeline is untouched).
+  await auditService.record(prisma, {
+    action:
+      toState === 'RESOLVED'
+        ? 'ticket.resolved'
+        : toState === 'CLOSED'
+          ? 'ticket.closed'
+          : toState === 'IN_PROGRESS' && ['RESOLVED', 'CLOSED'].includes(existing.state)
+            ? 'ticket.reopened'
+            : toState === 'IN_PROGRESS' && existing.state === 'NEW'
+              ? 'ticket.started'
+              : 'ticket.status_changed',
+    entityType: 'Ticket',
+    entityId: existing.id,
+    entityLabel: existing.ticketNumber,
+    ticketId: existing.id,
+    actor: agent || actor,
+    from: { state: existing.state },
+    to: { state: toState },
+    description: `${existing.ticketNumber} moved from ${existing.state} to ${toState}`,
+    metadata: note ? { note } : null,
+  });
+
   notificationService
     .notifyStatusChanged(updated, { previousState: existing.state })
     .catch(() => {});
@@ -349,7 +458,25 @@ async function applyStateChange(existing, toState, { actor, note, resolution }) 
     await handoverService.cancelForTicket(updated.id, actor, `Ticket was ${toState.toLowerCase()}`);
   }
 
-  return { status: 200, body: serializeTicket(updated) };
+  // SLA bookkeeping for the lifecycle transitions that matter: RESOLVED
+  // closes out the current cycle with its outcome; a reopen from RESOLVED or
+  // CLOSED preserves that cycle and starts the next one.
+  let slaTicket = null;
+  if (toState === 'RESOLVED') {
+    slaTicket = await slaService.finalizeOpenCycle(updated, {
+      at: data.resolvedAt,
+      actor,
+      include: DETAIL_INCLUDE,
+    });
+  } else if (toState === 'IN_PROGRESS' && ['RESOLVED', 'CLOSED'].includes(existing.state)) {
+    slaTicket = await slaService.restartCycle(updated, {
+      actor,
+      reason: `Reopened from ${existing.state}`,
+      include: DETAIL_INCLUDE,
+    });
+  }
+
+  return { status: 200, body: serializeTicket(slaTicket || updated, await slaCtx()) };
 }
 
 // POST /api/tickets/:id/status — explicit workflow transitions
@@ -362,6 +489,7 @@ router.post('/:id/status', async (req, res) => {
     }
     const result = await applyStateChange(ticket, req.body.state, {
       actor: actorLabel(req.agent),
+      agent: req.agent,
       note: req.body.note,
       resolution: req.body.resolution,
     });
@@ -383,6 +511,7 @@ router.post('/:id/resolve', async (req, res) => {
     }
     const result = await applyStateChange(ticket, 'RESOLVED', {
       actor: actorLabel(req.agent),
+      agent: req.agent,
       resolution: req.body.resolution,
       note: req.body.note,
     });
@@ -401,6 +530,7 @@ router.post('/:id/close', async (req, res) => {
     if (!allowed.ok) return res.status(allowed.status).json({ error: allowed.error });
     const result = await applyStateChange(ticket, 'CLOSED', {
       actor: actorLabel(req.agent),
+      agent: req.agent,
       note: req.body.note,
     });
     res.status(result.status).json(result.body);
@@ -470,6 +600,22 @@ router.post('/:id/assign', async (req, res) => {
       include: DETAIL_INCLUDE,
     });
 
+    await auditService.record(prisma, {
+      action: 'ticket.assigned',
+      entityType: 'Ticket',
+      entityId: ticket.id,
+      entityLabel: ticket.ticketNumber,
+      ticketId: ticket.id,
+      actor: req.agent,
+      from: {
+        assignedAgentId: ticket.assignedAgentId ?? null,
+        assignedAgent: ticket.assignedAgent ? ticket.assignedAgent.name : null,
+      },
+      to: { assignedAgentId: agent.id, assignedAgent: agent.name },
+      description: `${ticket.ticketNumber} reassigned from ${previous} to ${agent.name}`,
+      metadata: { group: groupName, reason: reason || null, via: 'assign' },
+    });
+
     if (ticket.assignedAgentId !== agent.id) {
       notificationService.notifyAssignment(updated, agent).catch(() => {});
     }
@@ -530,6 +676,22 @@ router.post('/:id/reassign', async (req, res) => {
         },
       },
       include: DETAIL_INCLUDE,
+    });
+
+    await auditService.record(prisma, {
+      action: 'ticket.assigned',
+      entityType: 'Ticket',
+      entityId: ticket.id,
+      entityLabel: ticket.ticketNumber,
+      ticketId: ticket.id,
+      actor: req.agent,
+      from: {
+        assignedAgentId: ticket.assignedAgentId ?? null,
+        assignedAgent: ticket.assignedAgent ? ticket.assignedAgent.name : null,
+      },
+      to: { assignedAgentId: target.id, assignedAgent: target.name },
+      description: `${ticket.ticketNumber} reassigned from ${previous} to ${target.name}`,
+      metadata: { group: groupName, reason: reason || null, via: 'reassign' },
     });
 
     notificationService.notifyAssignment(updated, target).catch(() => {});
@@ -612,6 +774,7 @@ router.post('/:id/start', async (req, res) => {
 
     const result = await applyStateChange(ticket, 'IN_PROGRESS', {
       actor: actorLabel(req.agent),
+      agent: req.agent,
       note: req.body && req.body.note ? String(req.body.note) : 'Work started',
     });
     res.status(result.status).json(result.body);
@@ -694,6 +857,56 @@ router.post('/:id/handover', async (req, res) => {
   }
 });
 
+// GET /api/tickets/:id/attachments/:attachmentId — authorized download.
+//
+// The ONLY path to attachment content. Authentication comes from the router
+// (requireAuth on /api/tickets); any agent who may read the ticket may
+// download its attachments, matching ticket visibility. Content is always
+// served as an inert octet-stream with an attachment disposition and
+// nosniff — an inbound attachment is never executed, rendered or previewed,
+// whatever its declared MIME type says. Storage keys never appear anywhere
+// in the response.
+router.get('/:id/attachments/:attachmentId', async (req, res) => {
+  try {
+    const ticket = await loadTicketOr404(req.params.id, res, {});
+    if (!ticket) return;
+    const attachmentId = Number(req.params.attachmentId);
+    if (!Number.isInteger(attachmentId)) {
+      return res.status(404).json({ error: 'Attachment not found' });
+    }
+    const attachment = await prisma.attachment.findFirst({
+      where: { id: attachmentId, ticketId: ticket.id },
+    });
+    if (!attachment) return res.status(404).json({ error: 'Attachment not found' });
+
+    let content;
+    try {
+      content = await getAttachmentStorage().get(attachment.storageKey);
+    } catch (err) {
+      if (err && err.code === 'NOT_FOUND') {
+        // The metadata row exists but the object is gone — say so plainly
+        // instead of pretending the download succeeded.
+        return res.status(404).json({ error: 'Attachment content is no longer available' });
+      }
+      throw err;
+    }
+
+    const asciiFallback = attachment.filename.replace(/[^\x20-\x7e]/g, '_') || `attachment-${attachment.id}`;
+    res.status(200);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Length', String(content.length));
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${asciiFallback.replace(/"/g, "'")}"; filename*=UTF-8''${encodeURIComponent(attachment.filename)}`
+    );
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'private, no-store');
+    return res.send(content);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/tickets/:id/handovers — the complete handover chain, oldest first
 router.get('/:id/handovers', async (req, res) => {
   try {
@@ -729,29 +942,38 @@ async function addNote(req, res) {
       },
     });
 
+    // Response SLA: the first public agent reply is the qualifying response.
+    // Internal notes and requester messages never count (requester replies
+    // arrive through intake, which does not call this).
+    if (!isInternal) {
+      await slaService.recordFirstResponse(ticket, {
+        at: comment.createdAt,
+        responderId: req.agent.id,
+        actor: actorLabel(req.agent),
+      });
+    }
+
+    // Unified trail: that a note exists, who wrote it and whether it is
+    // internal — never its content, which lives on the Comment row.
+    await auditService.record(prisma, {
+      action: 'ticket.commented',
+      entityType: 'Comment',
+      entityId: comment.id,
+      entityLabel: `${ticket.ticketNumber} note #${comment.id}`,
+      ticketId: ticket.id,
+      actor: req.agent,
+      description:
+        `${req.agent.name} added ${isInternal ? 'an internal note' : 'a public reply'} to ${ticket.ticketNumber}`,
+      metadata: { isInternal },
+    });
+
     // Requester-facing updates are emailed (logged in development mode);
-    // internal notes never leave the helpdesk.
+    // internal notes never leave the helpdesk. Assembly and sending live in
+    // the mailer — the route only decides WHO may be emailed.
     if (!isInternal && ticket.requesterEmail) {
-      const subject =
-        ['RESOLVED', 'CLOSED'].includes(ticket.state)
-          ? `[${ticket.ticketNumber}] Update on your request`
-          : `[${ticket.ticketNumber}] New message about your request`;
       notificationService
-        .sendMailSafe({
-          subject,
-          toRecipients: [{ emailAddress: { address: ticket.requesterEmail } }],
-          body: [
-            `Hi ${ticket.requesterName || 'there'},`,
-            '',
-            `${req.agent.name} from the IT Helpdesk wrote:`,
-            '',
-            ...body.split('\n').map((l) => `> ${l}`),
-            '',
-            '--',
-            `IT Helpdesk — Ticket ${ticket.ticketNumber}`,
-          ].join('\r\n'),
-        })
-        .catch((e) => console.error(`[tickets] reply email failed: ${e.message}`));
+        .notifyAgentReply(ticket, { agentName: req.agent.name, body })
+        .catch(() => {});
     }
 
     res.status(201).json(comment);
@@ -795,6 +1017,8 @@ async function patchTicket(req, res) {
 
     const data = {};
     const notes = [];
+    const patchMeta = { clearedAssignee: false, autoAssignedTo: null };
+    let newGroupName;
     if (req.body.shortDescription !== undefined) {
       data.shortDescription = truncateShortDescription(req.body.shortDescription);
     }
@@ -820,10 +1044,12 @@ async function patchTicket(req, res) {
 
       if (req.body.assignmentGroup === null) {
         data.teamId = null;
+        newGroupName = null;
         notes.push(`assignment group changed from ${previousGroup} to none`);
         // Nobody can own a ticket that belongs to no group.
         if (existing.assignedAgentId) {
           data.assignedAgentId = null;
+          patchMeta.clearedAssignee = true;
           notes.push('cleared the assignee, who no longer matches the group');
         }
       } else {
@@ -832,6 +1058,7 @@ async function patchTicket(req, res) {
         });
         if (!team) return res.status(400).json({ errors: [`unknown assignment group "${req.body.assignmentGroup}"`] });
         data.teamId = team.id;
+        newGroupName = team.name;
         notes.push(`assignment group changed from ${previousGroup} to ${team.name}`);
 
         // Never leave a ticket owned by someone from the wrong team.
@@ -839,6 +1066,7 @@ async function patchTicket(req, res) {
           const current = await prisma.agent.findUnique({ where: { id: existing.assignedAgentId } });
           if (!current || current.teamId !== team.id) {
             data.assignedAgentId = null;
+            patchMeta.clearedAssignee = true;
             notes.push(
               `cleared the assignee ${current ? current.name : 'unknown'}, who is not in ${team.name}`
             );
@@ -866,6 +1094,7 @@ ${existing.body || ''}`,
           );
           if (decision.agent && decision.agent.teamId === team.id) {
             data.assignedAgentId = decision.agent.id;
+            patchMeta.autoAssignedTo = decision.agent.name;
             notes.push(`auto-assigned to ${decision.agent.name} by the assignment engine`);
           }
         }
@@ -891,7 +1120,77 @@ ${existing.body || ''}`,
       data,
       include: DETAIL_INCLUDE,
     });
-    res.json(serializeTicket(updated));
+
+    // Unified trail: priority and group moves get their own documented
+    // actions; anything else that changed is one structured ticket.updated
+    // event. (TicketAuditLog keeps its combined note row from above.)
+    if (data.priority !== undefined) {
+      await auditService.record(prisma, {
+        action: 'ticket.priority_changed',
+        entityType: 'Ticket',
+        entityId: existing.id,
+        entityLabel: existing.ticketNumber,
+        ticketId: existing.id,
+        actor: req.agent,
+        from: { priority: existing.priority },
+        to: { priority: data.priority },
+        description: `${existing.ticketNumber} priority changed from ${existing.priority} to ${data.priority}`,
+        metadata: { slaTargetRecalculated: true },
+      });
+    }
+    if (data.teamId !== undefined && data.teamId !== existing.teamId) {
+      await auditService.record(prisma, {
+        action: 'ticket.group_changed',
+        entityType: 'Ticket',
+        entityId: existing.id,
+        entityLabel: existing.ticketNumber,
+        ticketId: existing.id,
+        actor: req.agent,
+        from: { group: existing.team ? existing.team.name : null },
+        to: { group: newGroupName ?? null },
+        description:
+          `${existing.ticketNumber} assignment group changed from ` +
+          `${existing.team ? existing.team.name : 'none'} to ${newGroupName ?? 'none'}`,
+        metadata: patchMeta,
+      });
+    }
+    const editedFields = ['shortDescription', 'body', 'category', 'requesterName'].filter(
+      (key) => data[key] !== undefined && data[key] !== existing[key]
+    );
+    if (editedFields.length) {
+      // `body` is free text that lives on the ticket — record that it changed,
+      // never its contents.
+      await auditService.record(prisma, {
+        action: 'ticket.updated',
+        entityType: 'Ticket',
+        entityId: existing.id,
+        entityLabel: existing.ticketNumber,
+        ticketId: existing.id,
+        actor: req.agent,
+        from: Object.fromEntries(
+          editedFields.filter((k) => k !== 'body').map((k) => [k, existing[k]])
+        ),
+        to: Object.fromEntries(
+          editedFields.filter((k) => k !== 'body').map((k) => [k, data[k]])
+        ),
+        description: `${existing.ticketNumber} updated (${editedFields.join(', ')})`,
+        metadata: editedFields.includes('body') ? { fields: editedFields } : null,
+      });
+    }
+
+    // Priority changes recompute the open cycle's resolution target from the
+    // cycle start (approved policy 8), not from the change instant. Tickets
+    // without an SLA cycle (created before the feature) keep the calendar
+    // dueAt computed above.
+    let slaUpdated = null;
+    if (data.priority !== undefined) {
+      slaUpdated = await slaService.onPriorityChanged(updated, {
+        actor: actorLabel(req.agent),
+        previousPriority: existing.priority,
+        include: DETAIL_INCLUDE,
+      });
+    }
+    res.json(serializeTicket(slaUpdated || updated, await slaCtx()));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -908,7 +1207,24 @@ router.delete('/:id', async (req, res) => {
     }
     const existing = await loadTicketOr404(req.params.id, res);
     if (!existing) return;
-    await prisma.ticket.delete({ where: { id: existing.id } });
+    // One atomic step: the event and the deletion commit or roll back
+    // together, and the event's ticketId link is SetNull'd by the delete while
+    // the entityLabel keeps the ticket number readable afterwards.
+    await prisma.$transaction([
+      prisma.auditEvent.create({
+        data: auditService.buildEvent({
+          action: 'ticket.deleted',
+          entityType: 'Ticket',
+          entityId: existing.id,
+          entityLabel: existing.ticketNumber,
+          ticketId: existing.id,
+          actor: req.agent,
+          from: { state: existing.state, shortDescription: existing.shortDescription },
+          description: `Ticket ${existing.ticketNumber} deleted by ${req.agent.name} <${req.agent.email}>`,
+        }),
+      }),
+      prisma.ticket.delete({ where: { id: existing.id } }),
+    ]);
     res.json({ deleted: existing.ticketNumber, at: new Date().toISOString() });
   } catch (err) {
     res.status(500).json({ error: err.message });

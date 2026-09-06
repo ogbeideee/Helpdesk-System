@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { OPEN_STATES } from '../constants.js';
+import { slaOverview } from '../slaView.js';
 
 /* ------------------------------------------------------------------ */
 /* Formatting helpers                                                  */
@@ -121,6 +122,7 @@ const ICON_PATHS = {
   routing: <><circle cx="3" cy="8" r="1.5" /><path d="M4.5 8h3M11.5 8H8" /><circle cx="13" cy="8" r="1.5" /><path d="M6 8l2-3M10 8L8 5M6 8l2 3M10 8l-2 3" /></>,
   groups: <><rect x="2" y="2.5" width="5" height="5" rx="1.2" /><rect x="9" y="2.5" width="5" height="5" rx="1.2" /><rect x="5.5" y="9" width="5" height="4.5" rx="1.2" /></>,
   mail: <><rect x="2" y="3.5" width="12" height="9" rx="1.2" /><path d="M2.5 4.5l5.5 4 5.5-4" /></>,
+  cloud: <><path d="M4.6 11.5a3.1 3.1 0 0 1-.4-6.2 4 4 0 0 1 7.8-.9 3.4 3.4 0 0 1-.3 6.8z" /><path d="M8 8.5V13M6.2 11.2L8 13l1.8-1.8" /></>,
   search: <><circle cx="7" cy="7" r="4.5" /><path d="M10.5 10.5L14 14" /></>,
   sun: <><circle cx="8" cy="8" r="3" /><path d="M8 1.5v1.2M8 13.3v1.2M14.5 8h-1.2M2.7 8H1.5M12.6 3.4l-.85.85M4.25 11.75l-.85.85M12.6 12.6l-.85-.85M4.25 4.25l-.85-.85" /></>,
   moon: <path d="M13.5 9.6A5.8 5.8 0 0 1 6.4 2.5a5.8 5.8 0 1 0 7.1 7.1z" />,
@@ -144,6 +146,8 @@ const ICON_PATHS = {
   logout: <><path d="M6 13.5H3.4c-.6 0-1.1-.5-1.1-1.1V3.6c0-.6.5-1.1 1.1-1.1H6" /><path d="M10.4 11L13.5 8l-3.1-3M13 8H6.2" /></>,
   shieldCheck: <><path d="M8 1.9l4.8 1.7v4c0 3-2 5.2-4.8 6.5C5.2 12.8 3.2 10.6 3.2 7.6v-4z" /><path d="M5.9 7.9l1.6 1.6 2.8-3" /></>,
   activity: <path d="M1.8 8h2.6l1.8-4.8L9 12.4l1.7-4.4h3.5" />,
+  reports: <><path d="M3.5 13.5v-4.5M8 13.5v-11M12.5 13.5v-7.5" /><path d="M2 13.5h12" /></>,
+  trail: <><path d="M13.2 8A5.2 5.2 0 1 1 11 3.9" /><path d="M13.5 2.2v2.6h-2.6" /><path d="M8 5.3V8l1.9 1.3" /></>,
 };
 
 export function Icon({ name, size = 16, className = '', strokeWidth = 1.5 }) {
@@ -227,7 +231,26 @@ function stateLabel(v) { return STATE_LABELS[v] || v; }
 function priorityLabel(v) { return PRIORITY_LABELS[v] || v; }
 
 export function SlaBadge({ ticket }) {
-  const info = slaInfo(ticket);
+  // The API's `sla` block is the source of truth: statuses and remaining
+  // working time arrive precomputed — nothing SLA-related is derived here.
+  const sla = slaOverview(ticket);
+  if (sla) {
+    const cls =
+      sla.badge.tone === 'bad' ? 'pill-overdue' : sla.badge.tone === 'warn' ? 'pill-sla-warn' : 'pill-sla';
+    const title = [
+      `Response SLA — ${sla.response.text}`,
+      `Resolution SLA — ${sla.resolution.text}`,
+      sla.cycleEndedAt ? `Cycle ${sla.cycleNumber} (ended)` : `Cycle ${sla.cycleNumber} (active)`,
+    ].join('\n');
+    return (
+      <span className={`pill ${cls}`} title={title}>
+        ⏱ {sla.badge.text}
+      </span>
+    );
+  }
+  // Tickets without SLA cycles (created before the feature) keep their legacy
+  // calendar-due countdown, word for word.
+  const info = legacySlaInfo(ticket);
   if (!info) return null;
   return (
     <span className={`pill ${info.overdue ? 'pill-overdue' : 'pill-sla'}`} title={`Due ${fmtDateTime(ticket.dueAt)}`}>
@@ -236,7 +259,7 @@ export function SlaBadge({ ticket }) {
   );
 }
 
-function slaInfo(ticket) {
+function legacySlaInfo(ticket) {
   if (!ticket?.dueAt) return null;
   const open = OPEN_STATES.includes(ticket.state);
   const diffMs = new Date(ticket.dueAt).getTime() - Date.now();

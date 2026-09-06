@@ -21,6 +21,8 @@ const prisma = require('./../lib/prisma');
 const { OPEN_STATES } = require('../states');
 const assignmentEngine = require('./assignmentEngine');
 const notificationService = require('../mailer');
+const { ticketSubject } = require('../email/outbound');
+const auditService = require('./auditService');
 
 /** NEW + IN_PROGRESS. The single definition of "active work". */
 const WORKLOAD_STATES = OPEN_STATES;
@@ -256,6 +258,26 @@ async function moveTicket(
     },
   });
 
+  // Unified trail: every ownership change funnels through here (claims,
+  // handover accepts, availability reassignment), so one action covers them.
+  await auditService.record(client, {
+    action: 'ticket.assigned',
+    entityType: 'Ticket',
+    entityId: fresh.id,
+    entityLabel: fresh.ticketNumber,
+    ticketId: fresh.id,
+    actor,
+    from: {
+      assignedAgentId: expectedOwner,
+      assignedAgent: previous ? previous.name : null,
+    },
+    to: { assignedAgentId: toAgentId, assignedAgent: next ? next.name : null },
+    description:
+      `${fresh.ticketNumber} moved from ${previous ? previous.name : 'nobody'} ` +
+      `to ${next ? next.name : 'nobody'}`,
+    metadata: note ? { note } : null,
+  });
+
   if (toAgentId) {
     await client.agent.update({ where: { id: toAgentId }, data: { lastAssignedAt: new Date() } });
   }
@@ -271,7 +293,7 @@ async function moveTicket(
         body:
           `${fresh.ticketNumber} (${fresh.shortDescription}) is now with ` +
           `${next ? next.name : 'nobody'}.` + (note ? ` Reason: ${note}` : ''),
-        emailSubject: `[${fresh.ticketNumber}] Reassigned: ${fresh.shortDescription}`,
+        emailSubject: ticketSubject(fresh, `Reassigned: ${fresh.shortDescription}`),
         emailBody: [
           `Hi ${previous.name},`,
           '',
@@ -315,6 +337,17 @@ async function returnToOriginatingGroup(ticket, actor, client = prisma) {
       actor: actorLabel(actor),
       note: `Returned to its originating assignment group (${origin.name}) before reassignment`,
     },
+  });
+  await auditService.record(client, {
+    action: 'ticket.group_changed',
+    entityType: 'Ticket',
+    entityId: ticket.id,
+    entityLabel: ticket.ticketNumber,
+    ticketId: ticket.id,
+    actor,
+    from: { groupId: ticket.teamId },
+    to: { groupId: origin.id, group: origin.name },
+    description: `${ticket.ticketNumber} returned to its originating assignment group (${origin.name})`,
   });
   return updated;
 }

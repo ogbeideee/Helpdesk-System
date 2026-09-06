@@ -34,6 +34,8 @@ function createMailService(options = {}) {
   const logger = options.logger || console;
   const ops = options.ops || null; // resolved lazily unless injected (tests)
   const intakeOverride = options.intake || null;
+  // Object-storage override for the attachment persistence path (tests).
+  const storage = options.storage || null;
   const config = options.config || graphConfig;
 
   function transport() {
@@ -41,9 +43,14 @@ function createMailService(options = {}) {
   }
 
   /** Hand the normalized email to the shared ticket pipeline. */
-  async function runIntake(email) {
-    if (intakeOverride) return intakeOverride(email);
-    return ingestNormalizedEmail(email, { logger });
+  async function runIntake(email, attachments = []) {
+    if (intakeOverride) return intakeOverride(email, attachments);
+    return ingestNormalizedEmail(email, {
+      logger,
+      channel: 'graph',
+      attachments,
+      ...(storage ? { storage } : {}),
+    });
   }
 
   /**
@@ -66,6 +73,40 @@ function createMailService(options = {}) {
       );
       return [];
     }
+  }
+
+  /**
+   * Fetch the binaries for already-listed attachment metadata, for the shared
+   * attachment persistence path. A per-attachment failure (e.g. content too
+   * large for inline delivery, or the item vanished mid-flight) is a safe
+   * rejection of THAT attachment — logged, never silent, and never fatal to
+   * the message.
+   */
+  async function fetchAttachmentContents(messageId, metadata) {
+    const out = [];
+    for (const att of metadata) {
+      // Graph metadata rows carry the attachment id in `id`; the parser's
+      // metadata shape uses `attachmentId` — accept both.
+      const providerId = att.attachmentId || att.id;
+      if (!att || !providerId) continue;
+      try {
+        const content = await transport().getAttachmentContent(messageId, providerId);
+        out.push({
+          // Graph metadata names attachments `name`; the parser's shape uses
+          // `filename` — accept both, and keep the display name sanitized
+          // downstream at persistence time.
+          filename: att.filename || att.name || 'attachment.bin',
+          contentType: att.contentType || 'application/octet-stream',
+          size: typeof att.size === 'number' && att.size > 0 ? att.size : content.length,
+          content,
+        });
+      } catch (err) {
+        logger.warn(
+          `[graph] attachment "${att.filename || att.name || providerId}" on ${messageId} could not be fetched: ${err.message} — continuing without it`
+        );
+      }
+    }
+    return out;
   }
 
   async function safeMarkRead(messageId, why) {
@@ -111,9 +152,15 @@ function createMailService(options = {}) {
     logger.log(`[graph] Processing message ${messageId}`);
 
     let email;
+    let attachmentsWithContent = [];
     try {
-      const attachments = await fetchAttachments(raw);
-      email = normalizeMessage(raw, attachments);
+      const attachmentMeta = await fetchAttachments(raw);
+      email = normalizeMessage(raw, attachmentMeta);
+      // Binaries for the shared attachment persistence path — fetched only
+      // when there is something to fetch, never fatal per attachment.
+      if (attachmentMeta.length > 0) {
+        attachmentsWithContent = await fetchAttachmentContents(messageId, attachmentMeta);
+      }
     } catch (err) {
       if (err instanceof EmailParseError) {
         // Structurally unusable and identical on every retry — acknowledge it.
@@ -147,7 +194,7 @@ function createMailService(options = {}) {
 
     let result;
     try {
-      result = await runIntake(email);
+      result = await runIntake(email, attachmentsWithContent);
     } catch (err) {
       if (err instanceof IntakeValidationError) {
         logger.warn(`[graph] message ${messageId} rejected: ${err.errors.join('; ')}`);

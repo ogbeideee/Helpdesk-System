@@ -26,6 +26,7 @@ model Team {
   tickets      Ticket[]         @relation("TicketCurrentGroup")
   originated   Ticket[]         @relation("TicketOriginGroup")
   routingRules RoutingRule[]
+  slaCycles    TicketSlaCycle[]
 }
 
 // Agent ↔ Assignment Group membership (the join table for multi-group).
@@ -108,42 +109,44 @@ model RoutingRuleAuditLog {
 // table name; it holds every person who can sign in, whatever their role.
 // There is deliberately no second user system.
 model Agent {
-  id                  Int               @id @default(autoincrement())
-  name                String
-  email               String            @unique
-  passwordHash        String? // null once an account is Entra-only
+  id                      Int               @id @default(autoincrement())
+  name                    String
+  email                   String            @unique
+  passwordHash            String? // null once an account is Entra-only
   // "user" | "agent" | "admin" — see src/services/userService.js (ROLES).
   // New sign-ins default to "agent"; "admin" is only ever granted by an
   // existing admin or the one-time initial-admin bootstrap.
-  role                String            @default("agent")
+  role                    String            @default("agent")
   // Account enabled. An inactive account cannot sign in and receives no work.
-  isActive            Boolean           @default(true)
+  isActive                Boolean           @default(true)
   // Currently accepting new assignments. Distinct from isActive: an agent on
   // leave stays active (can sign in) but unavailable (gets no new tickets).
-  isAvailable         Boolean           @default(true)
+  isAvailable             Boolean           @default(true)
   // Transition field: the agent's primary assignment group. Routing and
   // workload still read this; the membership join table (TeamMembership) is
   // the source of truth for multi-group membership. See TeamMembership.
-  teamId              Int?
-  team                Team?             @relation(fields: [teamId], references: [id])
-  memberships         TeamMembership[]
-  skillLevel          Int               @default(1) // 1 = junior, 2 = standard, 3 = senior
-  lastAssignedAt      DateTime?
+  teamId                  Int?
+  team                    Team?             @relation(fields: [teamId], references: [id])
+  memberships             TeamMembership[]
+  skillLevel              Int               @default(1) // 1 = junior, 2 = standard, 3 = senior
+  lastAssignedAt          DateTime?
   // Identity-provider linkage, ready for Microsoft Entra ID. Not used yet:
   // no Entra authentication is implemented.
-  externalId          String?           @unique
-  externalProvider    String?
-  createdAt           DateTime          @default(now())
-  updatedAt           DateTime          @default(now()) @updatedAt
-  assignedTickets     Ticket[]
-  comments            Comment[]
-  auditEvents         UserAuditLog[]    @relation("UserAuditSubject")
-  preferredForRules   RoutingRule[]     @relation("RoutingPreferredAgent")
-  notifications       Notification[]    @relation("AgentNotifications")
-  handoversRaised     HandoverRequest[] @relation("HandoverRequester")
-  handoversReceived   HandoverRequest[] @relation("HandoverTarget")
-  handoversSuggested  HandoverRequest[] @relation("HandoverSuggested")
-  authoredAuditEvents AuditEvent[]      @relation("AuditEventActor")
+  externalId              String?           @unique
+  externalProvider        String?
+  createdAt               DateTime          @default(now())
+  updatedAt               DateTime          @default(now()) @updatedAt
+  assignedTickets         Ticket[]
+  comments                Comment[]
+  auditEvents             UserAuditLog[]    @relation("UserAuditSubject")
+  preferredForRules       RoutingRule[]     @relation("RoutingPreferredAgent")
+  notifications           Notification[]    @relation("AgentNotifications")
+  handoversRaised         HandoverRequest[] @relation("HandoverRequester")
+  handoversReceived       HandoverRequest[] @relation("HandoverTarget")
+  handoversSuggested      HandoverRequest[] @relation("HandoverSuggested")
+  authoredAuditEvents     AuditEvent[]      @relation("AuditEventActor")
+  slaCyclesFirstResponded TicketSlaCycle[]  @relation("SlaCycleFirstResponder")
+  slaCyclesOwned          TicketSlaCycle[]  @relation("SlaCycleOwner")
 }
 
 // Administrative history for user records: creation, role changes,
@@ -185,6 +188,11 @@ model Ticket {
   requesterEmail      String
   requesterName       String?
   graphMessageId      String?           @unique
+  // RFC 5322 Message-ID (angle brackets stripped). Graph and IMAP both supply
+  // it, so it is the one identity shared across ingestion sources: polling the
+  // same message through a second configured source can never create a second
+  // ticket, and In-Reply-To/References threading matches on it.
+  internetMessageId   String?           @unique
   graphConversationId String?
   teamId              Int?
   team                Team?             @relation("TicketCurrentGroup", fields: [teamId], references: [id])
@@ -195,6 +203,14 @@ model Ticket {
   assignedAgentId     Int?
   assignedAgent       Agent?            @relation(fields: [assignedAgentId], references: [id])
   dueAt               DateTime?
+  // SLA foundation — current-cycle mirrors only; the authoritative per-cycle
+  // history lives in TicketSlaCycle / TicketSlaEvent.
+  //   firstResponseAt:  when the first agent response was recorded
+  //   responseDueAt:    response SLA due instant (1 working hour, calendar-aware)
+  //   responseBreached: latched once the response clock has breached
+  firstResponseAt     DateTime?
+  responseDueAt       DateTime?
+  responseBreached    Boolean           @default(false)
   resolvedAt          DateTime?
   closedAt            DateTime?
   createdAt           DateTime          @default(now())
@@ -202,8 +218,11 @@ model Ticket {
   auditLogs           TicketAuditLog[]
   auditEvents         AuditEvent[]      @relation("TicketAuditEvents")
   comments            Comment[]
+  attachments         Attachment[]   @relation("TicketAttachments")
   notifications       Notification[]
   handovers           HandoverRequest[]
+  slaCycles           TicketSlaCycle[]
+  slaEvents           TicketSlaEvent[]
 
   @@index([state])
   @@index([graphConversationId])
@@ -238,6 +257,10 @@ model Comment {
   // Set for activities created from an inbound Graph/email message. Unique so a
   // redelivered notification can never append the same reply twice.
   graphMessageId String?  @unique
+  // RFC 5322 Message-ID (angle brackets stripped) — the cross-source identity
+  // for replies, matched against In-Reply-To/References chains.
+  internetMessageId String?  @unique
+  attachments    Attachment[] @relation("CommentAttachments")
   createdAt      DateTime @default(now())
 
   @@index([ticketId])
@@ -255,6 +278,58 @@ model GraphSubscription {
   lastRenewedAt      DateTime?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
+}
+
+// Admin-configurable keyword rules the email parser evaluates when processing
+// inbound mail. A rule influences ONLY the fields it explicitly sets (category,
+// priority, assignment group) — a match never silently changes anything else.
+// Keywords are stored as a JSON array of literal phrases; matching is
+// case-insensitive, whitespace-tolerant and word-bounded, with no user-supplied
+// regular expressions.
+model EmailParsingRule {
+  id         Int      @id @default(autoincrement())
+  name       String
+  keywords   String
+  // "subject" | "body" | "both"
+  scope      String   @default("both")
+  category   String?
+  priority   String?
+  // Assignment group by Team.key, resolved to a team id at intake time.
+  teamKey    String?
+  // Lower number wins when several rules match; ties break by id.
+  precedence Int      @default(100)
+  enabled    Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([enabled, precedence])
+}
+
+// An inbound email attachment. Only metadata and the PRIVATE storage key live
+// here — binaries are in object storage (never PostgreSQL). The storage key is
+// generated server-side and never derives from the filename; the filename is
+// stored sanitized, for display only.
+model Attachment {
+  id         Int      @id @default(autoincrement())
+  ticketId   Int
+  ticket     Ticket   @relation("TicketAttachments", fields: [ticketId], references: [id], onDelete: Cascade)
+  // The comment the attachment arrived with (null for ticket-level context).
+  commentId  Int?
+  comment    Comment? @relation("CommentAttachments", fields: [commentId], references: [id], onDelete: Cascade)
+  // Display filename, sanitized. Never a storage path.
+  filename   String
+  mimeType   String   @default("application/octet-stream")
+  size       Int
+  // Source identity of the email the attachment arrived with.
+  messageId  String?
+  source     String?
+  // Object-storage key, generated server-side. Unique. Never exposed.
+  storageKey String   @unique
+  createdAt  DateTime @default(now())
+
+  @@index([ticketId])
+  @@index([commentId])
+  @@index([messageId])
 }
 
 // In-app notification for an agent. Email is sent separately through the
@@ -389,4 +464,132 @@ model AuditEvent {
   @@index([action])
   @@index([actorId])
   @@index([createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// SLA foundation.
+//
+// Approved policy this schema supports (schema only — no business logic yet):
+//   - Response SLA: 1 working hour from ticket creation to the first agent
+//     response. Working calendar: Mon-Fri 08:00-17:00 Africa/Lagos; time
+//     outside the calendar (evenings, weekends, SlaHoliday dates) does not
+//     count. The calendar parameters live in code/settings — only holiday
+//     DATES are data.
+//   - Resolution SLA: the existing priority-based targets are unchanged and
+//     Ticket.dueAt remains the live resolution target.
+//   - No waiting/pending state; the clock keeps running during agent
+//     unavailability and handovers; reopening starts a NEW SLA cycle while
+//     the previous cycle's outcome is preserved.
+//
+// Deliberately NOT modelled: per-ticket pause/resume state. Elapsed working
+// time is computed from timestamps against the calendar + SlaHoliday, so no
+// pause columns are required. (HandoverRequest.remainingMs stays the only
+// duration accumulator in the product — it belongs to handover expiry.)
+
+// One row per SLA cycle of a ticket. Cycle 1 starts at ticket creation; every
+// reopen (requester reply on a RESOLVED/CLOSED ticket) starts the next one. A
+// cycle is closed out when its ticket reaches RESOLVED and its row is never
+// rewritten afterwards — a reopened ticket can never overwrite the SLA result
+// of its previous cycle. Durations are effective working time in integer
+// milliseconds (same convention as HandoverRequest.remainingMs).
+model TicketSlaCycle {
+  id          Int    @id @default(autoincrement())
+  ticketId    Int
+  ticket      Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  // 1-based, unique per ticket.
+  cycleNumber Int
+
+  // Cycle window. startedAt is the ticket's creation (cycle 1) or the reopen
+  // instant (later cycles). endedAt is the instant this cycle's ticket
+  // reached RESOLVED; null while this is the ticket's active cycle.
+  startedAt  DateTime
+  endedAt    DateTime?
+  resolvedAt DateTime?
+
+  // Targets for THIS cycle, frozen when the cycle starts. Ticket.responseDueAt
+  // and Ticket.dueAt are the live mirrors. A priority change recomputes the
+  // live targets from the original creation time (approved policy 8) and
+  // writes a target_changed event; this row carries what applied to the cycle.
+  responseDueAt        DateTime?
+  resolutionDueAt      DateTime?
+  // Precomputed "25% of the applicable SLA time remains" instants (approved
+  // policy 9), so the future approaching-breach sweep is an indexed range
+  // scan rather than a recomputation. Null when no approach instant exists.
+  responseApproachAt   DateTime?
+  resolutionApproachAt DateTime?
+
+  // Response outcome.
+  firstResponseAt  DateTime?
+  // Attribution (approved policy 11): the agent who made the first response,
+  // plus the owner and assignment group the cycle ended with.
+  firstResponderId Int?
+  firstResponder   Agent?    @relation("SlaCycleFirstResponder", fields: [firstResponderId], references: [id], onDelete: SetNull)
+  assignedAgentId  Int?
+  assignedAgent    Agent?    @relation("SlaCycleOwner", fields: [assignedAgentId], references: [id], onDelete: SetNull)
+  teamId           Int?
+  team             Team?     @relation(fields: [teamId], references: [id], onDelete: SetNull)
+
+  // Effective working-time durations.
+  responseDurationMs   Int?
+  resolutionDurationMs Int?
+
+  // Latched outcomes, plus once-only flags so the future approaching-breach
+  // sweep fires at most one event per clock per cycle.
+  responseBreached     Boolean @default(false)
+  resolutionBreached   Boolean @default(false)
+  responseApproached   Boolean @default(false)
+  resolutionApproached Boolean @default(false)
+
+  // "live" = recorded as it happened; "backfill" = derived from existing
+  // history for tickets created before the SLA feature.
+  source String @default("live")
+
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @default(now()) @updatedAt
+  ticketSlaEvents TicketSlaEvent[]
+
+  @@unique([ticketId, cycleNumber])
+  @@index([assignedAgentId, endedAt])
+  @@index([teamId, endedAt])
+  @@index([responseDueAt])
+  @@index([resolutionDueAt])
+}
+
+// Append-only SLA timeline. One closed set of types, enforced in application
+// code (String column, matching the schema's state/status convention):
+//   target_created | target_changed | approaching_breach | breach
+//   response_recorded | cycle_restarted
+// `clock` says which SLA the event refers to ("response" or "resolution").
+// `at` is the event time (historical instants for backfilled rows); createdAt
+// is when the row was written.
+model TicketSlaEvent {
+  id        Int             @id @default(autoincrement())
+  ticketId  Int
+  ticket    Ticket          @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  // Cycle the event belongs to; SetNull so no cycle cleanup can ever
+  // silently delete timeline entries.
+  cycleId   Int?
+  cycle     TicketSlaCycle? @relation(fields: [cycleId], references: [id], onDelete: SetNull)
+  type      String
+  clock     String?
+  at        DateTime
+  actor     String          @default("system")
+  detail    String?
+  metadata  String?
+  createdAt DateTime        @default(now())
+
+  @@index([ticketId, at])
+  @@index([cycleId])
+}
+
+// Public holidays that pause SLA time (approved calendar: Nigerian public
+// holidays). Data rows, not code, so the calendar can be maintained without a
+// deployment. `date` is a calendar day (PostgreSQL DATE, interpreted in
+// Africa/Lagos) on which no working time accrues.
+model SlaHoliday {
+  id        Int      @id @default(autoincrement())
+  date      DateTime @unique @db.Date
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
 }

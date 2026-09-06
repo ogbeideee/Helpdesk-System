@@ -12,6 +12,7 @@ const path = require('path');
 const bcrypt = require('bcryptjs');
 const prisma = require('../src/lib/prisma');
 const { ensureTeams } = require('../src/teams');
+const slaService = require('../src/slaService');
 
 const BASE = `http://localhost:${process.env.PORT}`;
 const MARKER = 'api-test-';
@@ -133,6 +134,19 @@ async function main() {
         Array.isArray(dash.data.recentlyCreated),
       JSON.stringify(dash.data).slice(0, 160)
     );
+    check(
+      'dashboard carries the sla KPI block',
+      dash.data.sla &&
+        typeof dash.data.sla.compliance === 'object' &&
+        Number.isInteger(dash.data.sla.compliance.met) &&
+        Number.isInteger(dash.data.sla.compliance.total) &&
+        (dash.data.sla.compliance.rate === null || Number.isInteger(dash.data.sla.compliance.rate)) &&
+        Number.isInteger(dash.data.sla.breaches.response) &&
+        Number.isInteger(dash.data.sla.breaches.resolution) &&
+        Number.isInteger(dash.data.sla.approachingTickets) &&
+        Number.isInteger(dash.data.sla.responseTargetMs),
+      JSON.stringify(dash.data.sla || {}).slice(0, 160)
+    );
 
     const groups = await req('/api/assignment-groups', { token: agentToken });
     check(
@@ -160,7 +174,14 @@ async function main() {
     check('portal ticket state NEW', created.data.state === 'NEW');
     check('portal ticket routed to Hardware group', created.data.team && created.data.team.key === 'hardware');
     check('portal ticket auto-assigned by engine', Boolean(created.data.assignedAgent));
-    check('portal ticket SLA dueAt set (moderate => ~24h)', created.data.dueAt && Math.abs(new Date(created.data.dueAt) - new Date(created.data.createdAt) - 24 * 3600 * 1000) < 5000);
+    // dueAt is the working-calendar resolution target (Mon–Fri 08:00–17:00
+    // Lagos, holidays excluded), synced from SLA cycle 1 by the service.
+    const expectedDue = slaService.computeTargets({
+      priority: 'moderate',
+      from: new Date(created.data.createdAt),
+      holidays: [],
+    }).resolutionDueAt;
+    check('portal ticket SLA dueAt = 24 working hours (moderate)', created.data.dueAt && new Date(created.data.dueAt).getTime() === expectedDue.getTime(), `${created.data.dueAt} vs ${expectedDue.toISOString()}`);
     check('initial audit log present', created.data.auditLogs.length >= 1);
     const ticketId = created.data.id;
 

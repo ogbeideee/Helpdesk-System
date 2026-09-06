@@ -34,7 +34,10 @@ const { intakeEmailMessage, IntakeValidationError } = require('./ticketIntake');
 function toIntakePayload(email) {
   return {
     messageId: email.messageId,
+    internetMessageId: email.internetMessageId,
     conversationId: email.conversationId,
+    inReplyTo: email.inReplyTo,
+    references: email.references,
     from: email.senderEmail,
     name: email.senderName,
     subject: email.subject,
@@ -46,18 +49,28 @@ function toIntakePayload(email) {
  * Run one already-normalized email through the ticket pipeline.
  *
  * Threading is enabled: intake decides new-ticket vs reply by ticket number
- * in the subject/body first, then by conversation id from the same requester.
- * Idempotency comes from the unique graphMessageId on Ticket and Comment, so
- * replaying the same message is a no-op.
+ * in the subject/body first, then by In-Reply-To/References, then by
+ * conversation id from the same requester. Idempotency comes from the unique
+ * graphMessageId / internetMessageId on Ticket and Comment, so replaying the
+ * same message is a no-op — whichever channel it arrives through.
+ *
+ * options.channel (default: none) names the ingestion channel for the audit
+ * trail. options.attachments carries decoded binaries for the shared
+ * attachment persistence path; the parser never sees them.
  *
  * @param {NormalizedEmail} email
- * @param {{ logger?: Console }} [options]
+ * @param {{ logger?: Console, channel?: string, attachments?: Array, storage?: object }} [options]
  */
 async function ingestNormalizedEmail(email, options = {}) {
   const logger = options.logger || console;
   const result = await intakeEmailMessage(toIntakePayload(email), {
     logger,
     allowThreading: true,
+    ...(options.channel ? { channel: options.channel } : {}),
+    ...(Array.isArray(options.attachments) && options.attachments.length
+      ? { attachments: options.attachments }
+      : {}),
+    ...(options.storage ? { storage: options.storage } : {}),
   });
 
   return {

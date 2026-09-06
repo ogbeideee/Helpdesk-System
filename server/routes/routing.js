@@ -7,10 +7,27 @@ const express = require('express');
 const prisma = require('../src/lib/prisma');
 const { requireAdmin } = require('../src/authMiddleware');
 const routingService = require('../src/services/routingService');
+const auditService = require('../src/services/auditService');
 const { CATEGORIES } = require('../src/states');
 
 const router = express.Router();
 router.use(requireAdmin);
+
+/** One unified-trail event for a routing-rule change (domain log kept too). */
+function auditRule(action, rule, actor, { from, to, description } = {}) {
+  return auditService.record(prisma, {
+    action: `routing_rule.${action}`,
+    entityType: 'RoutingRule',
+    entityId: rule.id,
+    entityLabel: rule.name,
+    actor,
+    ...(from ? { from } : {}),
+    ...(to ? { to } : {}),
+    description:
+      description || `Routing rule "${rule.name}" ${action}`,
+    metadata: { category: rule.category ?? null, priority: rule.priority ?? null },
+  });
+}
 
 const SKILL_MIN = 1;
 const SKILL_MAX = 3;
@@ -180,6 +197,25 @@ router.patch('/groups/:id', async (req, res) => {
     }
 
     const updated = await prisma.team.update({ where: { id }, data });
+    // Unified trail: what changed on the group (RoutingRuleAuditLog does not
+    // cover assignment groups).
+    const groupChanges = {};
+    for (const key of Object.keys(data)) {
+      if (existing[key] === updated[key]) continue; // no-op writes are not changes
+      groupChanges[key] = { from: existing[key], to: updated[key] };
+    }
+    if (Object.keys(groupChanges).length) {
+      await auditService.record(prisma, {
+        action: 'group.updated',
+        entityType: 'Team',
+        entityId: updated.id,
+        entityLabel: updated.name,
+        actor: req.agent,
+        from: Object.fromEntries(Object.entries(groupChanges).map(([k, v]) => [k, v.from])),
+        to: Object.fromEntries(Object.entries(groupChanges).map(([k, v]) => [k, v.to])),
+        description: `Assignment group "${updated.name}" updated (${Object.keys(groupChanges).join(', ')})`,
+      });
+    }
     res.json(updated);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -215,6 +251,15 @@ router.post('/rules', async (req, res) => {
     await routingService.recordRuleAudit(
       { rule, action: 'created', changes: serialiseRule(rule), actor: req.agent },
     );
+    await auditRule('created', rule, req.agent, {
+      to: {
+        category: rule.category ?? null,
+        priority: rule.priority,
+        minSkillLevel: rule.minSkillLevel ?? null,
+        isActive: rule.isActive,
+      },
+      description: `Routing rule "${rule.name}" created`,
+    });
     res.status(201).json(serialiseRule(rule));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -245,6 +290,11 @@ router.patch('/rules/:id', async (req, res) => {
       if (existing[key] !== updated[key]) changes[key] = { from: existing[key], to: updated[key] };
     }
     await routingService.recordRuleAudit({ rule: updated, action, changes, actor: req.agent });
+    await auditRule(action, updated, req.agent, {
+      from: Object.fromEntries(Object.keys(changes).map((k) => [k, changes[k].from])),
+      to: Object.fromEntries(Object.keys(changes).map((k) => [k, changes[k].to])),
+      description: `Routing rule "${updated.name}" ${action}`,
+    });
 
     res.json(serialiseRule(updated));
   } catch (err) {
@@ -267,6 +317,10 @@ router.delete('/rules/:id', async (req, res) => {
       action: 'deleted',
       changes: serialiseRule(existing),
       actor: req.agent,
+    });
+    await auditRule('deleted', existing, req.agent, {
+      from: { category: existing.category ?? null, priority: existing.priority, isActive: existing.isActive },
+      description: `Routing rule "${existing.name}" deleted`,
     });
     res.json({ deleted: true, id });
   } catch (err) {

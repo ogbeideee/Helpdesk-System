@@ -1,9 +1,16 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { Icon, Modal, usePopover, useToast } from './ui.jsx';
+import { availabilityStateOf, stateMeta } from '../poolView.js';
 
 /**
  * Sidebar availability control.
+ *
+ * Three states, derived by the same rule the backend uses:
+ *   online / unavailable — self-service, via the guarded availability flow
+ *   offline              — an account deactivation, which disables sign-in, so
+ *                          it is always an administrator action taken on the
+ *                          Agents screen; the item here is display-only.
  *
  * The backend decides whether going unavailable is allowed; this component
  * only renders the answer. Two refusals are expected and handled:
@@ -22,6 +29,9 @@ export default function AvailabilityControl({ me, onChanged }) {
   const { open, toggle, close, anchorProps } = usePopover();
 
   useEffect(() => setAvailable(Boolean(me.isAvailable)), [me.isAvailable]);
+
+  const state = availabilityStateOf({ isActive: me.isActive, isAvailable: available });
+  const meta = stateMeta(state);
 
   async function apply(next, confirmReassign = false) {
     setBusy(true);
@@ -65,17 +75,17 @@ export default function AvailabilityControl({ me, onChanged }) {
       <div {...anchorProps}>
         <button
           type="button"
-          className={`availability-btn ${available ? 'is-on' : 'is-off'}`}
+          className={`availability-btn ${state === 'online' ? 'is-on' : 'is-off'}`}
           aria-haspopup="menu"
           aria-expanded={open}
           disabled={busy}
           onClick={toggle}
-          title={available ? 'Accepting new tickets' : 'Not accepting new tickets'}
+          title={meta.hint}
         >
           <span className="availability-dot" aria-hidden="true" />
           <span className="availability-text">
-            <strong>{available ? 'Available' : 'Unavailable'}</strong>
-            <small>{available ? "You're set to receive tickets" : 'New tickets route elsewhere'}</small>
+            <strong>{meta.label}</strong>
+            <small>{meta.hint}</small>
           </span>
           <Icon name="chevronDown" size={14} className="availability-caret" />
         </button>
@@ -86,28 +96,42 @@ export default function AvailabilityControl({ me, onChanged }) {
             <button
               type="button"
               role="menuitemradio"
-              aria-checked={available}
-              className={`menu-item ${available ? 'is-selected' : ''}`}
+              aria-checked={state === 'online'}
+              className={`menu-item ${state === 'online' ? 'is-selected' : ''}`}
               onClick={() => choose(true)}
             >
               <span className="availability-dot is-on" aria-hidden="true" />
-              <span>Available</span>
-              {available && <Icon name="check" size={14} className="menu-check" />}
+              <span>Online</span>
+              {state === 'online' && <Icon name="check" size={14} className="menu-check" />}
             </button>
             <button
               type="button"
               role="menuitemradio"
-              aria-checked={!available}
-              className={`menu-item ${!available ? 'is-selected' : ''}`}
+              aria-checked={state === 'unavailable'}
+              className={`menu-item ${state === 'unavailable' ? 'is-selected' : ''}`}
               onClick={() => choose(false)}
             >
               <span className="availability-dot is-off" aria-hidden="true" />
               <span>Unavailable</span>
-              {!available && <Icon name="check" size={14} className="menu-check" />}
+              {state === 'unavailable' && <Icon name="check" size={14} className="menu-check" />}
+            </button>
+            <button
+              type="button"
+              role="menuitemradio"
+              aria-checked={state === 'offline'}
+              className={`menu-item ${state === 'offline' ? 'is-selected' : ''}`}
+              disabled
+              title="An account is taken offline by an administrator — it disables sign-in, so it is never self-service."
+            >
+              <span className="availability-dot is-offline" aria-hidden="true" />
+              <span>Offline</span>
+              {state === 'offline' && <Icon name="check" size={14} className="menu-check" />}
             </button>
             <div className="menu-foot">
               Going unavailable hands your new tickets to the group; work already
-              in progress has to be resolved or handed over first.
+              in progress has to be resolved or handed over first. Tickets keep
+              their owner when somebody goes offline — new work just routes
+              elsewhere.
             </div>
           </div>
         )}

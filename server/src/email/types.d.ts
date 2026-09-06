@@ -35,22 +35,48 @@ export interface EmailAttachment {
 export interface NormalizedEmail {
   /** Provider message identifier. Used for idempotency downstream. */
   messageId: string;
+  /**
+   * RFC 5322 Message-ID (angle brackets stripped), when the provider supplies
+   * it. The one identifier every source shares, so cross-source duplicate
+   * prevention and In-Reply-To/References threading match on it.
+   */
+  internetMessageId: string | null;
   /** Thread/conversation identifier, when the provider supplies one. */
   conversationId: string | null;
+  /** Message-IDs this message replies to (angle brackets stripped). */
+  inReplyTo: string[];
+  /** Full reference chain, oldest first (angle brackets stripped). */
+  references: string[];
+  /** Parsed recipients. Diagnostics only — nothing downstream stores them. */
+  recipients: { to: ParsedAddress[]; cc: ParsedAddress[]; replyTo: ParsedAddress[] };
   /** Sender address, lower-cased. */
   senderEmail: string;
   /** Sender display name. Null when the provider supplies only an address. */
   senderName: string | null;
   /** Original subject, preserved verbatim (never stripped of "Re:"). */
   subject: string;
-  /** Readable plain text. HTML input is converted; never contains markup. */
+  /**
+   * The full readable text — quoted replies, forwarded blocks and the
+   * signature stay included. HTML input is converted; never contains markup.
+   */
   body: string;
+  /** The sender's own words: `body` without quoted/forwarded/signature parts. */
+  cleanBody: string;
+  /** Quoted reply / forwarded-message text separated out of the body. */
+  quotedText: string | null;
+  /** Signature block separated out of the body. */
+  signature: string | null;
   /** ISO-8601 timestamp of receipt. */
   receivedAt: string;
   /** True when the source body was HTML and therefore converted. */
   isHtml: boolean;
   /** Attachment metadata; empty array when there are none. */
   attachments: EmailAttachment[];
+}
+
+export interface ParsedAddress {
+  name: string | null;
+  email: string;
 }
 
 /**
@@ -65,6 +91,16 @@ export interface RawEmailInput {
   /** Alternatives some providers use. */
   id?: string | null;
   internetMessageId?: string | null;
+  /** Raw RFC Message-ID header value, when the adapter read headers itself. */
+  messageIdHeader?: string | null;
+  /** In-Reply-To header: one string (possibly space-separated) or a list. */
+  inReplyTo?: string | string[] | null;
+  /** References header chain: one string (possibly space-separated) or a list. */
+  references?: string | string[] | null;
+  /** Recipients in the same shapes `from` accepts (parsed, not stored). */
+  to?: string | RawEmailAddress | (string | RawEmailAddress)[] | null;
+  cc?: string | RawEmailAddress | (string | RawEmailAddress)[] | null;
+  replyTo?: string | RawEmailAddress | (string | RawEmailAddress)[] | null;
 
   conversationId?: string | null;
   threadId?: string | null;

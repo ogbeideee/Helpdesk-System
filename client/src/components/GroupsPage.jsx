@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { Spinner, ErrorState } from './ui.jsx';
+import { loadLabel, poolSummaryLine, poolWarning, rosterSections } from '../poolView.js';
 
 /* Line icons from the same family the sidebar uses. The emoji these replaced
    rendered in the OS colour font, so they ignored the theme entirely and were
@@ -28,7 +29,10 @@ export default function GroupsPage() {
 
   const load = useCallback(() => {
     setError('');
-    return api.groups().then(setGroups).catch((e) => setError(e.message));
+    // The pools endpoint is a superset of the group cards: per-group members
+    // with their availability state (online / unavailable / offline), the
+    // group lead and the live ticket load.
+    return api.assignmentPools().then((d) => setGroups(d.pools)).catch((e) => setError(e.message));
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -48,29 +52,59 @@ export default function GroupsPage() {
                 <span className="group-icon" aria-hidden="true"><GroupIcon groupKey={g.key} /></span>
                 <div>
                   <h2>{g.name}</h2>
-                  <span className="muted small">{g.key} · min skill L{g.minSkillLevel}</span>
+                  <span className="muted small">
+                    {g.key} · min skill L{g.minSkillLevel}
+                    {g.lead ? ` · lead ${g.lead.name}` : ''}
+                  </span>
                 </div>
               </div>
               <div className="group-stats">
-                <div className="group-stat">
-                  <span className="group-stat-value">{g.activeAgents}</span>
-                  <span className="group-stat-label">Active agents</span>
+                <div className={`group-stat ${g.pool.online === 0 ? 'stat-warn' : ''}`}>
+                  <span className="group-stat-value">{g.pool.online}<span className="muted">/{g.pool.total}</span></span>
+                  <span className="group-stat-label">Online</span>
                 </div>
-                <div className={`group-stat ${g.unassignedTickets > 0 ? 'stat-warn' : ''}`}>
-                  <span className="group-stat-value">{g.openTickets}</span>
+                <div className="group-stat">
+                  <span className="group-stat-value">{g.pool.eligible}</span>
+                  <span className="group-stat-label">Eligible now</span>
+                </div>
+                <div className={`group-stat ${g.load.openTickets > 0 ? '' : ''}`}>
+                  <span className="group-stat-value">{g.load.openTickets}</span>
                   <span className="group-stat-label">Open tickets</span>
                 </div>
-                <div className={`group-stat ${g.unassignedTickets > 0 ? 'stat-critical' : ''}`}>
-                  <span className="group-stat-value">{g.unassignedTickets}</span>
+                <div className={`group-stat ${g.load.unassignedTickets > 0 ? 'stat-critical' : ''}`}>
+                  <span className="group-stat-value">{g.load.unassignedTickets}</span>
                   <span className="group-stat-label">Unassigned</span>
                 </div>
               </div>
-              {g.unassignedTickets > 0 && (
+              {poolWarning(g) && <p className="group-note">{poolWarning(g)}</p>}
+              {g.load.unassignedTickets > 0 && !poolWarning(g) && (
                 <p className="group-note">Tickets waiting for an available agent with the required skill level.</p>
               )}
-              {g.activeAgents === 0 && (
-                <p className="group-note" style={{ color: 'var(--muted)' }}>No active agents — new tickets will await manual assignment.</p>
-              )}
+
+              <div className="pool-roster">
+                <div className="pool-summary muted small">{poolSummaryLine(g)}</div>
+                {rosterSections(g.agents).map((section) => (
+                  <div key={section.state} className="pool-section">
+                    <div className="pool-section-label muted small">
+                      <span className={`availability-dot ${section.meta.dot}`} aria-hidden="true" />
+                      {section.meta.label}
+                    </div>
+                    {section.agents.map((a) => (
+                      <div key={a.id} className="pool-agent">
+                        <span className="pool-agent-name">
+                          {a.name}
+                          {a.isLead && <span className="chip chip-you" style={{ marginLeft: 6 }}>lead</span>}
+                        </span>
+                        <span className="muted small">{a.skillLabel}</span>
+                        <span className={`muted small ${a.autoEligible ? '' : 'is-dim'}`}>{loadLabel(a.openTickets)}</span>
+                        {!a.autoEligible && a.availabilityState === 'online' && (
+                          <span className="chip chip-warn" title="Above the workload cap or below the group's skill bar">not eligible</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
             </section>
           ))}
         </div>
