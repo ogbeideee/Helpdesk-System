@@ -3,6 +3,11 @@ import { api, getToken } from '../api.js';
 import { usePageHeader } from '../pageHeader.js';
 import { slaOverview, cycleSummary } from '../slaView.js';
 import {
+  statusMeta as raStatusMeta, summaryLine as raSummary, minutesLeft as raMinutesLeft,
+  canRequest as raCanRequest, allowedActions as raAllowedActions,
+  durationLabel as raDuration, liveSession as raLive, historyRows as raHistoryRows,
+} from '../remoteAccessView.js';
+import {
   STATES, PRIORITIES, CATEGORIES,
   STATE_TRANSITIONS,
 } from '../constants.js';
@@ -30,6 +35,7 @@ export default function TicketDetail({ id, me, onChanged }) {
   const [reassignReason, setReassignReason] = useState('');
   const [groupPick, setGroupPick] = useState('');
   const [handovers, setHandovers] = useState([]);
+  const [raSessions, setRaSessions] = useState(null);
   const [handoverOpen, setHandoverOpen] = useState(false);
   const [handoverPick, setHandoverPick] = useState('');
   const [handoverNote, setHandoverNote] = useState('');
@@ -44,6 +50,7 @@ export default function TicketDetail({ id, me, onChanged }) {
         setGroupPick(t.team?.key || '');
         return api.ticketHandovers(id).then((h) => setHandovers(h.handovers || [])).catch(() => {});
       })
+      .then(() => api.remoteAccessSessions(id).then((r) => setRaSessions(r.sessions || [])).catch(() => setRaSessions([])))
       .catch((e) => setError(e.message));
   }, [id]);
 
@@ -199,6 +206,15 @@ export default function TicketDetail({ id, me, onChanged }) {
             me={me}
           />
           <SlaCard ticket={ticket} />
+          {raSessions !== null && (
+            <RemoteAccessCard
+              ticket={ticket}
+              me={me}
+              sessions={raSessions}
+              busy={busy}
+              run={run}
+            />
+          )}
           <ActionsCard
             ticket={ticket}
             me={me}
@@ -872,6 +888,104 @@ function SlaClockRow({ label, block, view }) {
         <span className="insp-sub">First response {fmtDateTime(block.firstResponseAt)}</span>
       )}
     </Row>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Remote access — the application-side session bookkeeping. The      */
+/* backend owns every rule; this card only mirrors what it decided.   */
+/* ------------------------------------------------------------------ */
+
+function RemoteAccessCard({ ticket, me, sessions, busy, run }) {
+  const live = raLive(sessions);
+  const actions = raAllowedActions(live, me);
+  const mayRequest = raCanRequest(ticket, me);
+  const history = raHistoryRows(sessions);
+
+  return (
+    <section className="insp-section">
+      <h2 className="insp-title">Remote access</h2>
+
+      {live ? (
+        <div className={`insp-note ra-live-note ${live.status === 'active' ? 'is-active' : ''}`}>
+          <span className={`pill ${raStatusMeta(live.status).pill}`}>{raStatusMeta(live.status).label}</span>
+          <span className="muted small">
+            {live.agent ? live.agent.name : 'An agent'} — {raStatusMeta(live.status).hint.toLowerCase()}
+          </span>
+          {live.status === 'requested' && (
+            <span className="muted small">
+              Requested {timeAgo(live.requestedAt)}
+              {live.expiresAt ? ` · expires in ${raMinutesLeft(live)} min` : ''}
+            </span>
+          )}
+          {live.status === 'active' && (
+            <span className="muted small">
+              Started {timeAgo(live.startedAt)} · running {raDuration(live)}
+            </span>
+          )}
+          {live.note && <span className="muted small">“{live.note}”</span>}
+        </div>
+      ) : (
+        <p className="muted small">{raSummary(sessions)}</p>
+      )}
+
+      {(mayRequest || actions.canStart || actions.canEnd || actions.canCancel) && (
+        <div className="insp-actions">
+          {actions.canStart && (
+            <button
+              className="btn btn-secondary btn-sm btn-block" disabled={busy}
+              onClick={() => run(async () => api.startRemoteAccess(live.id), 'Remote session started')}
+            >
+              Start session
+            </button>
+          )}
+          {actions.canEnd && (
+            <button
+              className="btn btn-secondary btn-sm btn-block" disabled={busy}
+              onClick={() => run(async () => api.endRemoteAccess(live.id), 'Remote session ended')}
+            >
+              End session
+            </button>
+          )}
+          {actions.canCancel && (
+            <button
+              className="btn btn-ghost btn-sm btn-block" disabled={busy}
+              onClick={() => run(async () => api.cancelRemoteAccess(live.id), 'Remote session cancelled')}
+            >
+              Cancel session
+            </button>
+          )}
+          {!live && mayRequest && (
+            <button
+              className="btn btn-secondary btn-sm btn-block" disabled={busy}
+              onClick={() => run(async () => api.requestRemoteAccess({ ticketId: ticket.id }), 'Remote session requested')}
+            >
+              Request remote session
+            </button>
+          )}
+        </div>
+      )}
+
+      {history.length > 0 && (
+        <>
+          <div className="insp-divider" />
+          <div className="ra-history">
+            <span className="insp-label">Session history</span>
+            {history.map((row) => (
+              <div key={row.id} className="ra-history-row">
+                <span className={`pill ${row.pill}`}>{row.statusLabel}</span>
+                <span className="ra-who" title={row.endReason || undefined}>{row.agentName}</span>
+                <span className="ra-when" title={row.endedAt ? fmtDateTime(row.endedAt) : undefined}>
+                  {row.startedAt
+                    ? raDuration(row)
+                    : `requested ${timeAgo(row.requestedAt) || fmtDateTime(row.requestedAt)}`}
+                </span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </section>
   );
 }
 

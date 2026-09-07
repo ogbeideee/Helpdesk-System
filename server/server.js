@@ -27,6 +27,9 @@ app.use('/api/agents', require('./routes/agents'));
 app.use('/api/routing', require('./routes/routing'));
 app.use('/api/workload', require('./routes/workload'));
 app.use('/api/handovers', require('./routes/handovers'));
+// Remote access sessions — application-side foundation only (request/start/
+// end/cancel bookkeeping tied to a ticket; no remote-control transport).
+app.use('/api/remote-access', require('./src/authMiddleware').requireAuth, require('./routes/remoteAccess'));
 // SLA settings — administrator-only, reading and writing alike.
 app.use('/api/sla', require('./src/authMiddleware').requireAdmin, require('./routes/sla'));
 // Unified audit trail — administrator-only, read-only.

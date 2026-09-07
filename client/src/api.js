@@ -111,6 +111,13 @@ export const api = {
   handoverSettings: () => request('/handovers/settings'),
   updateHandoverSettings: (payload) => request('/handovers/settings', patch(payload)),
 
+  // ---- remote access sessions (application-side foundation only) ----
+  remoteAccessSessions: (ticketId) => request(`/remote-access/ticket/${ticketId}`),
+  requestRemoteAccess: (payload) => request('/remote-access', body(payload)),
+  startRemoteAccess: (id) => request(`/remote-access/${id}/start`, body({})),
+  endRemoteAccess: (id, payload = {}) => request(`/remote-access/${id}/end`, body(payload)),
+  cancelRemoteAccess: (id, payload = {}) => request(`/remote-access/${id}/cancel`, body(payload)),
+
   // ---- routing rules (admin) ----
   routingRules: () => request('/routing/rules'),
   routingGroups: () => request('/routing/groups'),

@@ -3196,3 +3196,13 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
   white-space: nowrap;
 }
 .attachment-chip .btn { padding: 2px 8px; }
+
+/* ====================== Remote access (ticket detail) ====================== */
+/* Application-side remote-session bookkeeping: the current-session block and
+   the finished-session history under the ticket inspector. */
+.ra-live-note { background: var(--surface-2); border-left-color: var(--border-strong); }
+.ra-live-note.is-active { background: var(--success-soft); border-left-color: var(--success); }
+.ra-history { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
+.ra-history-row { display: flex; align-items: baseline; gap: 8px; font-size: 12px; }
+.ra-who { color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ra-when { color: var(--muted); margin-left: auto; text-align: right; white-space: nowrap; }

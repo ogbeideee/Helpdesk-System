@@ -149,6 +149,9 @@ model Agent {
   slaCyclesOwned          TicketSlaCycle[]  @relation("SlaCycleOwner")
   availabilityPeriods     AgentAvailabilityPeriod[] @relation("AgentAvailabilityPeriodSubject")
   availabilityPeriodsActed AgentAvailabilityPeriod[] @relation("AgentAvailabilityPeriodActor")
+  remoteAccessSessions    RemoteAccessSession[] @relation("RemoteAccessSessionAgent")
+  remoteAccessRequested   RemoteAccessSession[] @relation("RemoteAccessSessionRequester")
+  remoteAccessEnded       RemoteAccessSession[] @relation("RemoteAccessSessionEnder")
 }
 
 // Agent Unavailability Timeline: one row per span of availability state
@@ -182,6 +185,52 @@ model AgentAvailabilityPeriod {
   @@index([agentId, startedAt])
   @@index([endedAt])
   @@index([actorId])
+}
+
+// Remote Access foundation: a controlled remote-support session tied to one
+// ticket, conducted by one agent. Application-side bookkeeping ONLY — no
+// remote-control transport lives here (no host/address/protocol fields exist
+// to hold one, and no credential ever touches this table). The lifecycle is
+// requested -> active -> ended, with cancelled/expired as the ways a live
+// session finishes without completing; all transitions go through
+// src/services/remoteAccessService.js, which records each one in the
+// AuditEvent trail.
+model RemoteAccessSession {
+  id       Int    @id @default(autoincrement())
+  ticketId Int
+  ticket   Ticket @relation("TicketRemoteAccessSessions", fields: [ticketId], references: [id], onDelete: Cascade)
+  // The agent who conducts (or will conduct) the session.
+  agentId  Int
+  agent    Agent  @relation("RemoteAccessSessionAgent", fields: [agentId], references: [id], onDelete: Cascade)
+  // Who asked for it: the agent themselves, or an administrator on their
+  // behalf. SetNull so the trail survives account removal.
+  requestedById Int?
+  requestedBy   Agent? @relation("RemoteAccessSessionRequester", fields: [requestedById], references: [id], onDelete: SetNull)
+
+  // 'requested' | 'active' | 'ended' | 'cancelled' | 'expired' — see
+  // remoteAccessService.TRANSITIONS for the only legal moves.
+  status String @default("requested")
+  requestedAt DateTime
+  // A request nobody started dies at this instant (status -> expired). A
+  // session that started ignores it.
+  expiresAt DateTime
+  startedAt DateTime?
+  // Set on every terminal transition (ended/cancelled/expired) — the instant
+  // the session stopped being live, whatever finished it.
+  endedAt DateTime?
+  // Safe, human metadata only: the request's purpose and how it finished.
+  note String?
+  endReason String?
+  // Who closed the session (the conductor, the requester or an admin).
+  endedById Int?
+  endedBy   Agent?  @relation("RemoteAccessSessionEnder", fields: [endedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([ticketId, status])
+  @@index([agentId, status])
+  @@index([status, expiresAt])
 }
 
 // Administrative history for user records: creation, role changes,
@@ -256,6 +305,7 @@ model Ticket {
   attachments         Attachment[]   @relation("TicketAttachments")
   notifications       Notification[]
   handovers           HandoverRequest[]
+  remoteAccessSessions RemoteAccessSession[] @relation("TicketRemoteAccessSessions")
   slaCycles           TicketSlaCycle[]
   slaEvents           TicketSlaEvent[]
 
