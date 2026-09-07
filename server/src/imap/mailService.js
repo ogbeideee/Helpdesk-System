@@ -21,26 +21,46 @@
 // Nothing is ever deleted from the mailbox.
 const { imapConfig } = require('./config');
 const imapStatus = require('./imapStatus');
+const { getAccessToken } = require('./oauth2');
 const { extractMessage } = require('./imapMailAdapter');
 const { parseEmail, EmailParseError } = require('../email/emailParser');
 const { ingestNormalizedEmail } = require('../services/emailIngestion');
 const { IntakeValidationError } = require('../services/ticketIntake');
 
+/**
+ * Builds the ImapFlow client for one polling cycle.
+ *
+ * Two authentication modes, selected purely by configuration:
+ *   - authMode 'oauth2': Gmail XOAUTH2. The access token is exchanged from the
+ *     configured refresh token BEFORE the connection is created (served from
+ *     the in-memory cache on later cycles), then handed to ImapFlow as
+ *     auth: { user, accessToken } — ImapFlow performs AUTHENTICATE XOAUTH2.
+ *     Resolves asynchronously; callers await the factory either way.
+ *   - anything else: the classic username/password path
+ *     (auth: { user, pass }), unchanged for every non-Gmail provider.
+ *
+ * Exported for tests, which assert on the exact auth shape handed to ImapFlow.
+ */
 function defaultClientFactory(config) {
   // Lazy require so the IMAP client never loads when the integration is off.
   const { ImapFlow } = require('imapflow');
-  return new ImapFlow({
+  const options = {
     host: config.host,
     port: config.port,
     secure: config.secure,
-    auth: { user: config.user, pass: config.password },
     // imapflow's own logger would echo protocol traffic; keep it off. Our
     // logging below never includes credentials or bodies.
     logger: false,
     tls: { rejectUnauthorized: config.tlsRejectUnauthorized },
     connectTimeout: 30 * 1000,
     greetingTimeout: 30 * 1000,
-  });
+  };
+  if (config.authMode === 'oauth2') {
+    return getAccessToken().then((accessToken) =>
+      new ImapFlow({ ...options, auth: { user: config.user, accessToken } })
+    );
+  }
+  return new ImapFlow({ ...options, auth: { user: config.user, pass: config.password } });
 }
 
 function createImapMailService(options = {}) {
@@ -199,7 +219,10 @@ function createImapMailService(options = {}) {
       failed: 0,
     };
 
-    const client = clientFactory(config);
+    // The factory resolves to an ImapFlow client in both auth modes: it
+    // returns the client directly for password auth and a promise (token
+    // exchange first) for OAuth2 — awaiting covers both.
+    const client = await clientFactory(config);
     await client.connect();
 
     try {
@@ -249,4 +272,4 @@ function createImapMailService(options = {}) {
   return { pollUnread, processOne };
 }
 
-module.exports = { createImapMailService };
+module.exports = { createImapMailService, defaultClientFactory };

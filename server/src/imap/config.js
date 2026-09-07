@@ -1,14 +1,31 @@
 // IMAP ingestion configuration — the IMAP counterpart of graph/config.js.
 //
-// The integration is opt-in: it is enabled only when a host, a username and a
-// password are all configured. Nothing here is ever logged except the safe
-// fields (host, port, mailbox, cadence); the password is never logged, never
-// stored in the database and never included in API responses or audit events.
+// The integration is opt-in: it is enabled when a host, a username and either
+// a password or a complete OAuth2 (XOAUTH2) credential set are configured.
+// OAuth2 — for Gmail accounts without an App Password — takes precedence when
+// IMAP_OAUTH2_CLIENT_ID, IMAP_OAUTH2_CLIENT_SECRET and IMAP_OAUTH2_REFRESH_TOKEN
+// are ALL set; otherwise the classic password path is used unchanged.
+// Nothing here is ever logged except the safe fields (host, port, mailbox,
+// cadence, auth mode); no credential is ever logged, stored in the database
+// or included in API responses or audit events, and no secret is ever copied
+// into the returned config object.
+const { readOauth2Env, missingOauth2Vars } = require('./oauth2');
+
 function readImapEnv() {
   const host = String(process.env.IMAP_HOST || '').trim();
   const user = String(process.env.IMAP_USER || '').trim();
   const password = String(process.env.IMAP_PASSWORD || '');
   const mailbox = String(process.env.IMAP_MAILBOX || '').trim() || 'INBOX';
+
+  // Gmail OAuth2 (XOAUTH2) — an optional alternative to IMAP_PASSWORD for
+  // accounts (typically Gmail) where an App Password is unavailable. When all
+  // three IMAP_OAUTH2_* variables are set, OAuth2 takes precedence and
+  // IMAP_PASSWORD is ignored. The secrets stay in the environment: none of
+  // them are ever copied into the returned config object.
+  const oauth2 = readOauth2Env();
+  const oauth2Complete = Boolean(oauth2.clientId && oauth2.clientSecret && oauth2.refreshToken);
+  const oauth2Partial =
+    !oauth2Complete && Boolean(oauth2.clientId || oauth2.clientSecret || oauth2.refreshToken);
 
   // TLS is the default (993); IMAP_SECURE=false allows legacy plaintext or
   // STARTTLS-only servers on 143. IMAP_TLS_REJECT_UNAUTHORIZED=false accepts
@@ -34,7 +51,9 @@ function readImapEnv() {
     ? Math.min(Math.trunc(batchRaw), 100)
     : 25;
 
-  const enabled = Boolean(host && user && password);
+  // Enabled with either authentication mode; a partially set OAuth2 block is
+  // reported as misconfigured but never blocks the password path.
+  const enabled = Boolean(host && user && (password || oauth2Complete));
 
   return {
     host,
@@ -46,6 +65,10 @@ function readImapEnv() {
     pollIntervalMs,
     pollBatchSize,
     tlsRejectUnauthorized,
+    // 'oauth2' (XOAUTH2) | 'password' (LOGIN) | 'disabled'
+    authMode: oauth2Complete ? 'oauth2' : password && user ? 'password' : 'disabled',
+    oauth2Configured: oauth2Complete,
+    oauth2Misconfigured: oauth2Partial,
     enabled,
   };
 }
@@ -54,19 +77,37 @@ const imapConfig = readImapEnv();
 
 function logImapStatus(logger, config = imapConfig) {
   if (!config.enabled) {
+    if (config.oauth2Misconfigured) {
+      logger(
+        '[imap] OAuth2 is only partially configured — ' +
+          `${missingOauth2Vars().join(', ')} missing. ` +
+          'Set ALL of them (with IMAP_HOST and IMAP_USER) for Gmail XOAUTH2, ' +
+          'or remove them all to use password authentication.'
+      );
+    }
     logger('IMAP integration disabled.');
     logger(
-      '[imap] set IMAP_HOST, IMAP_USER and IMAP_PASSWORD to enable it. ' +
+      '[imap] set IMAP_HOST, IMAP_USER and (IMAP_PASSWORD or the full ' +
+        'IMAP_OAUTH2_* set) to enable it. ' +
         'Graph ingestion and notifications are unaffected.'
     );
     return;
   }
+  // The auth mode is safe to log; the credentials behind it never are.
+  const authLabel = config.authMode === 'oauth2' ? 'OAuth2/XOAUTH2' : 'password auth';
   logger(
     `[imap] enabled — ${config.secure ? 'imaps' : 'imap'}://${config.host}:${config.port}` +
+      ` (${authLabel})` +
       ` mailbox=${config.mailbox} · polling every ${Math.round(config.pollIntervalMs / 1000)}s` +
       ` · batch ${config.pollBatchSize}` +
       (config.pollIntervalMs === 0 ? ' · TIMER DISABLED (IMAP_POLL_INTERVAL_MS=0)' : '')
   );
+  if (config.oauth2Misconfigured) {
+    logger(
+      '[imap] OAuth2 is only partially configured — ' +
+        `${missingOauth2Vars().join(', ')} missing — so password authentication is used.`
+    );
+  }
   if (!config.tlsRejectUnauthorized) {
     logger('[imap] TLS certificate validation is OFF (IMAP_TLS_REJECT_UNAUTHORIZED=false)');
   }

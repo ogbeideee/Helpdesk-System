@@ -169,6 +169,12 @@ app.get('/api/health', async (req, res) => {
       lastError: status.lastError,
       imap: {
         enabled: imapConfig.enabled,
+        // 'oauth2' (XOAUTH2) | 'password' (LOGIN) | 'disabled' — the mode is
+        // safe to report; the credentials behind it never are. A partially
+        // configured OAuth2 block is flagged so an administrator can fix the
+        // env vars without any secret ever leaving the server.
+        authMode: imapConfig.enabled ? imapConfig.authMode : 'disabled',
+        oauth2Misconfigured: imapConfig.oauth2Misconfigured === true,
         // Connection target so an administrator can see WHERE mail is polled
         // from — never the credentials used to authenticate.
         host: imapConfig.enabled ? imapConfig.host : null,

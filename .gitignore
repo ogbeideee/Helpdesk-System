@@ -20,6 +20,10 @@ node_modules/
 # --- database backups ---
 backups/
 
+# --- runtime file storage ---
+# Attachment binaries written by the server (and the test suites) at runtime.
+server/data/
+
 # --- build output ---
 dist/
 build/
