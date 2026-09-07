@@ -84,6 +84,15 @@ export const api = {
   // Self-service online/unavailable follows the classic guarded flow; offline
   // and other-agent changes are administrator actions.
   setAvailabilityState: (payload) => request('/workload/availability', body(payload)),
+  // Agent Unavailability Timeline (read-only). The wide view is admin-only;
+  // a single agent's history is open to the agent themselves and to admins.
+  availabilityHistory: (params = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v !== '' && v !== undefined && v !== null)
+    ).toString();
+    return request(`/workload/availability-history${qs ? `?${qs}` : ''}`);
+  },
+  agentAvailabilityHistory: (agentId) => request(`/workload/availability-history/${agentId}`),
   notifications: () => request('/workload/notifications'),
   markNotificationsRead: (ids) => request('/workload/notifications/read', body(ids ? { ids } : {})),
   rebalance: (payload = {}) => request('/workload/rebalance', body(payload)),

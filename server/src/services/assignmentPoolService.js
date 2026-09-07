@@ -19,10 +19,11 @@
 //
 // TRANSITIONS
 // -----------
-// applyAvailabilityState() writes ONLY these columns plus the audit row. It
-// never reassigns tickets and never touches SLA data: an agent going offline
-// keeps their tickets, automatic assignment simply stops picking them, and
-// historical SLA attribution (frozen onto the cycle at start) is unaffected.
+// applyAvailabilityState() writes ONLY these columns, the audit row and the
+// availability-timeline period. It never reassigns tickets and never touches
+// SLA data: an agent going offline keeps their tickets, automatic assignment
+// simply stops picking them, and historical SLA attribution (frozen onto the
+// cycle at start) is unaffected.
 // The one explicit handover interaction is the existing clock hook: waiting
 // handover requests pause while the recipient is not online and resume when
 // they come back — the behaviour handoverService already implements.
@@ -72,11 +73,31 @@ function columnsForState(state) {
 /**
  * Move one agent to an availability state. Caller-authored rules live in the
  * route (who may change whom, and the self-service unavailability guards);
- * this helper owns the write, the audit row and nothing else.
+ * this helper owns the write, the audit row, the timeline period and nothing
+ * else.
  *
+ * @param {object} opts
+ * @param {string} opts.state      the new availability state
+ * @param {object|null} opts.actor who drove the change
+ * @param {string|null} opts.note  audit-note override
+ * @param {string} opts.source     'self' | 'admin' — recorded on the timeline
+ *   period
+ * @param {object|null} opts.audit legacy audit-row shape for the self-service
+ *   paths, whose historical rows read isAvailable true/false instead of state
+ *   names: { field, fromValue, toValue, note }
+ * @param {Date|null} opts.at      transition timestamp (tests/backfill); now
  * @returns {{ agent, from, to }} the updated agent and the state transition
  */
-async function applyAvailabilityState({ agentId, state, actor = null, note = null, client = prisma }) {
+async function applyAvailabilityState({
+  agentId,
+  state,
+  actor = null,
+  note = null,
+  source = 'admin',
+  audit = null,
+  at = null,
+  client = prisma,
+}) {
   const columns = columnsForState(state);
   const existing = await client.agent.findUnique({ where: { id: agentId } });
   if (!existing) {
@@ -91,17 +112,34 @@ async function applyAvailabilityState({ agentId, state, actor = null, note = nul
     data: {
       agentId,
       action: 'availability_changed',
-      field: 'availabilityState',
-      fromValue: from,
-      toValue: state,
+      field: (audit && audit.field) || 'availabilityState',
+      fromValue: audit ? audit.fromValue : from,
+      toValue: audit ? audit.toValue : state,
       actor: actor ? `${actor.name} <${actor.email}>` : 'system',
       note:
+        (audit && audit.note) ||
         note ||
         (state === 'offline'
           ? 'Account taken offline — no tickets were reassigned'
           : `Availability set to ${state}`),
     },
   });
+
+  // The timeline: close the open period and open the next one — on a real
+  // transition only, so repeated same-state updates never split a period.
+  if (from !== state) {
+    const { recordTransition } = require('./availabilityHistoryService');
+    await recordTransition({
+      agentId,
+      from,
+      to: state,
+      at: at || new Date(),
+      actorId: actor ? actor.id : null,
+      source,
+      note: (audit && audit.note) || note,
+      client,
+    });
+  }
 
   return { agent, from, to: state };
 }

@@ -5,6 +5,7 @@ import {
   Field, Icon, usePopover, useToast, fmtDateTime, timeAgo,
 } from './ui.jsx';
 import { availabilityStateOf, stateMeta } from '../poolView.js';
+import { AVAILABILITY_STATES, timelineRows, historySummary } from '../availabilityHistoryView.js';
 
 const SKILL_LABELS = { 1: 'Junior', 2: 'Standard', 3: 'Senior' };
 const SKILL_SHORT  = { 1: 'L1', 2: 'L2', 3: 'L3' };
@@ -82,6 +83,7 @@ export default function AgentsPage({ me }) {
   const [editorAgent, setEditorAgent] = useState(null);
   const [confirmDeactivate, setConfirmDeactivate] = useState(null);
   const [busyAgentId, setBusyAgentId] = useState(null);
+  const [dataVersion, setDataVersion] = useState(0);
   const [showToast, toastNode] = useToast();
 
   const load = useCallback(async () => {
@@ -90,6 +92,7 @@ export default function AgentsPage({ me }) {
       const [a, d] = await Promise.all([api.agents(), api.dashboard()]);
       setAgents(a.agents);
       setTeams(a.teams);
+      setDataVersion((v) => v + 1);
       // Aggregate the dashboard's recent tickets and queue into a per-agent
       // NEW vs IN_PROGRESS breakdown. The dashboard already counts per agent.
       const perAgent = {};
@@ -281,6 +284,10 @@ export default function AgentsPage({ me }) {
         </div>
       )}
 
+      {agents.length > 0 && (
+        <AvailabilityTimeline agents={agents} dataVersion={dataVersion} />
+      )}
+
       {(editorAgent === 'new' || editorAgent) && editorAgent !== null && (
         <AgentEditor
           agent={editorAgent === 'new' ? null : editorAgent}
@@ -332,6 +339,136 @@ function WorkloadSplit({ newCount, inProgressCount, total }) {
         <div className="bar-fill" style={{ width: `${newPct}%`, background: 'var(--primary)' }} />
       </div>
     </div>
+  );
+}
+
+/**
+ * Agent Unavailability Timeline (admin): the persistent history of
+ * availability state changes — online / unavailable / offline — as recorded
+ * by the backend on every real transition. A specific agent's timeline, or
+ * the admin-wide feed with a state filter. The currently open period is
+ * marked Ongoing and its duration runs live.
+ */
+function AvailabilityTimeline({ agents, dataVersion }) {
+  const [agentId, setAgentId] = useState('all');
+  const [stateFilter, setStateFilter] = useState('');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [reloadTick, setReloadTick] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError('');
+    const fetchPromise = agentId === 'all'
+      ? api.availabilityHistory({ state: stateFilter, pageSize: 100 })
+      : api.agentAvailabilityHistory(agentId);
+    fetchPromise
+      .then((d) => { if (!cancelled) { setData(d); setLoading(false); } })
+      .catch((e) => { if (!cancelled) { setError(e.message); setLoading(false); } });
+    return () => { cancelled = true; };
+  }, [agentId, stateFilter, reloadTick, dataVersion]);
+
+  const rows = timelineRows(data ? data.periods || [] : []);
+  const wide = agentId === 'all';
+  const selected = !wide && data ? data.agent : null;
+  const now = Date.now();
+
+  return (
+    <section className="card avail-timeline" aria-label="Availability timeline">
+      <div className="card-head">
+        <h2>Availability timeline</h2>
+        <span className="muted">Every availability change, recorded when it happened.</span>
+        <div className="avail-timeline-controls">
+          <select
+            value={agentId}
+            onChange={(e) => setAgentId(e.target.value)}
+            aria-label="Agent"
+          >
+            <option value="all">All agents</option>
+            {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
+          <select
+            value={stateFilter}
+            onChange={(e) => setStateFilter(e.target.value)}
+            aria-label="State filter"
+            disabled={!wide}
+            title={wide ? undefined : 'Pick “All agents” to filter by state'}
+          >
+            <option value="">All states</option>
+            {AVAILABILITY_STATES.map((s) => <option key={s} value={s}>{stateMeta(s).label}</option>)}
+          </select>
+          <button className="btn btn-ghost btn-sm" onClick={() => setReloadTick((t) => t + 1)}>Refresh</button>
+        </div>
+      </div>
+
+      {loading && <Spinner label="Loading timeline…" />}
+
+      {!loading && error && (
+        <ErrorState message={error} onRetry={() => setReloadTick((t) => t + 1)} />
+      )}
+
+      {!loading && !error && selected && (
+        <p className="avail-timeline-summary">
+          <span className={`availability-dot ${stateMeta(selected.availabilityState).dot}`} aria-hidden="true" />
+          Currently <strong>{stateMeta(selected.availabilityState).label.toLowerCase()}</strong>
+          <span className="muted">· {historySummary(selected, data.periods, now).split('· ')[1]}</span>
+        </p>
+      )}
+
+      {!loading && !error && rows.length === 0 && (
+        <EmptyState
+          icon="◷"
+          title="No availability changes recorded yet"
+          hint="Timeline entries appear the first time an availability state changes — online, unavailable, or offline."
+        />
+      )}
+
+      {!loading && !error && rows.length > 0 && (
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                {wide && <th>Agent</th>}
+                <th>Transition</th>
+                <th>Started</th>
+                <th>Ended</th>
+                <th>Duration</th>
+                <th>By</th>
+                <th>Source</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.key} className={r.isOpen ? 'avail-row-open' : ''}>
+                  {wide && <td><strong>{r.agent}</strong></td>}
+                  <td>
+                    <span className="cell-agent" style={{ gap: 8 }}>
+                      <span className={`availability-dot ${r.meta.dot}`} aria-hidden="true" />
+                      <span>{r.transition}</span>
+                    </span>
+                    {r.isOpen && <span className="chip chip-open">Ongoing</span>}
+                    {r.note && <div className="muted small" style={{ marginTop: 2, maxWidth: 320 }}>{r.note}</div>}
+                  </td>
+                  <td className="nowrap">{r.started}</td>
+                  <td className="nowrap">{r.isOpen ? <span className="muted">—</span> : r.ended}</td>
+                  <td className="nowrap tnum">{r.isOpen ? `${r.duration} so far` : r.duration}</td>
+                  <td>{r.actor}</td>
+                  <td><span className={`chip chip-source-${r.source.toLowerCase()}`}>{r.source}</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {!loading && !error && rows.length > 0 && wide && data.total > rows.length && (
+        <p className="muted small" style={{ margin: '8px 4px 0' }}>
+          Showing the {rows.length} most recent of {data.total} recorded periods.
+        </p>
+      )}
+    </section>
   );
 }
 

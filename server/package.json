@@ -41,7 +41,7 @@
     "test:pg:up": "node scripts/lib/testpg.js up",
     "test:pg:down": "node scripts/lib/testpg.js down",
     "test:pg:status": "node scripts/lib/testpg.js status",
-    "test": "npm run test:parser && npm run test:ingest && npm run test:mailbox && npm run test:graph && npm run test:webhook && npm run test:api && npm run test:lifecycle && npm run test:users && npm run test:routing && npm run test:workload && npm run test:handover && npm run test:email && npm run test:email-sources && npm run test:imap && npm run test:email-rules && npm run test:attachments && npm run test:m365 && npm run test:assignment-pool && npm run test:audit && npm run test:reports && npm run test:scheduled-reports && npm run test:sla && npm run test:sla-dashboard && npm run test:sla-settings && npm run test:sla-backfill && npm run test:sla-report && npm run test:sla-sweeper && npm run test:sla-notify && npm run test:assignment-groups && npm run test:e2e",
+    "test": "npm run test:parser && npm run test:ingest && npm run test:mailbox && npm run test:graph && npm run test:webhook && npm run test:api && npm run test:lifecycle && npm run test:users && npm run test:routing && npm run test:workload && npm run test:handover && npm run test:email && npm run test:email-sources && npm run test:imap && npm run test:email-rules && npm run test:attachments && npm run test:m365 && npm run test:assignment-pool && npm run test:availability-history && npm run test:audit && npm run test:reports && npm run test:scheduled-reports && npm run test:sla && npm run test:sla-dashboard && npm run test:sla-settings && npm run test:sla-backfill && npm run test:sla-report && npm run test:sla-sweeper && npm run test:sla-notify && npm run test:assignment-groups && npm run test:e2e",
     "test:sla-settings": "node scripts/test-sla-settings.js",
     "sla:backfill": "node scripts/backfill-sla.js",
     "sla:backfill:dry": "node scripts/backfill-sla.js --dry-run",
@@ -50,7 +50,9 @@
     "test:audit": "node scripts/test-audit.js",
     "test:reports": "node scripts/test-reports.js",
     "reports:send": "node scripts/send-scheduled-report.js",
-    "test:scheduled-reports": "node scripts/test-scheduled-reports.js"
+    "test:scheduled-reports": "node scripts/test-scheduled-reports.js",
+    "test:availability-history": "node scripts/test-availability-history.js"
+
   },
   "dependencies": {
     "@azure/msal-node": "^3.2.0",

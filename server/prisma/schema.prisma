@@ -147,6 +147,41 @@ model Agent {
   authoredAuditEvents     AuditEvent[]      @relation("AuditEventActor")
   slaCyclesFirstResponded TicketSlaCycle[]  @relation("SlaCycleFirstResponder")
   slaCyclesOwned          TicketSlaCycle[]  @relation("SlaCycleOwner")
+  availabilityPeriods     AgentAvailabilityPeriod[] @relation("AgentAvailabilityPeriodSubject")
+  availabilityPeriodsActed AgentAvailabilityPeriod[] @relation("AgentAvailabilityPeriodActor")
+}
+
+// Agent Unavailability Timeline: one row per span of availability state
+// (online / unavailable / offline). A period opens when the agent's state
+// really changes — through the availability transition paths, never elsewhere
+// — and stays open (endedAt null) until the next transition closes it.
+// Closed periods are immutable history; same-state updates record nothing.
+// Pure history: nothing here feeds assignment, handover or SLA decisions.
+model AgentAvailabilityPeriod {
+  id            Int      @id @default(autoincrement())
+  agentId       Int
+  agent         Agent    @relation("AgentAvailabilityPeriodSubject", fields: [agentId], references: [id], onDelete: Cascade)
+  // The state this period covers: 'online' | 'unavailable' | 'offline'.
+  state         String
+  // The state before this period began. Null for the first recorded period of
+  // an agent: history starts at the first observed transition, and no period
+  // is invented for states that predate the timeline.
+  previousState String?
+  startedAt     DateTime
+  // Null while this is the agent's current period.
+  endedAt       DateTime?
+  // Who drove the change. Null when the actor row is gone (or systemic).
+  actorId       Int?
+  actor         Agent?   @relation("AgentAvailabilityPeriodActor", fields: [actorId], references: [id], onDelete: SetNull)
+  // 'self' — the agent changed their own state; 'admin' — an administrator
+  // (state endpoint or PATCH) drove it.
+  source        String
+  note          String?
+  createdAt     DateTime @default(now())
+
+  @@index([agentId, startedAt])
+  @@index([endedAt])
+  @@index([actorId])
 }
 
 // Administrative history for user records: creation, role changes,

@@ -59,25 +59,20 @@ router.get('/availability/preview', async (req, res) => {
  * allowed, and waiting handover requests resume their clock.
  */
 async function goAvailable(req, res) {
-  const updated = await prisma.agent.update({
-    where: { id: req.agent.id },
-    data: { isAvailable: true },
-    include: { team: true },
+  // One write path for availability: the columns, the audit row and the
+  // timeline period move together. The audit override keeps this row's
+  // historical isAvailable true/false shape.
+  const { applyAvailabilityState, availabilityStateOf } = require('../src/services/assignmentPoolService');
+  await applyAvailabilityState({
+    agentId: req.agent.id,
+    state: 'online',
+    actor: req.agent,
+    source: 'self',
+    audit: { field: 'isAvailable', fromValue: 'false', toValue: 'true', note: 'Marked themselves available' },
   });
-  await prisma.userAuditLog.create({
-    data: {
-      agentId: req.agent.id,
-      action: 'availability_changed',
-      field: 'isAvailable',
-      fromValue: 'false',
-      toValue: 'true',
-      actor: `${req.agent.name} <${req.agent.email}>`,
-      note: 'Marked themselves available',
-    },
-  });
+  const updated = await prisma.agent.findUnique({ where: { id: req.agent.id }, include: { team: true } });
   // Any handover request that was waiting for them resumes its clock.
   await handoverService.onAvailabilityChanged(req.agent.id, true);
-  const { availabilityStateOf } = require('../src/services/assignmentPoolService');
   return res.json({
     ...sanitizeAgent(updated),
     isAvailable: updated.isAvailable,
@@ -121,28 +116,25 @@ async function goUnavailable(req, res) {
     notificationType: 'self',
   });
 
-  const updated = await prisma.agent.update({
-    where: { id: req.agent.id },
-    data: { isAvailable: false },
-    include: { team: true },
-  });
-  await prisma.userAuditLog.create({
-    data: {
-      agentId: req.agent.id,
-      action: 'availability_changed',
+  const { applyAvailabilityState, availabilityStateOf } = require('../src/services/assignmentPoolService');
+  await applyAvailabilityState({
+    agentId: req.agent.id,
+    state: 'unavailable',
+    actor: req.agent,
+    source: 'self',
+    audit: {
       field: 'isAvailable',
       fromValue: 'true',
       toValue: 'false',
-      actor: `${req.agent.name} <${req.agent.email}>`,
       note: `Marked themselves unavailable; ${summary.moved} ticket(s) reassigned, ${summary.unassigned} left for triage`,
     },
   });
+  const updated = await prisma.agent.findUnique({ where: { id: req.agent.id }, include: { team: true } });
 
   // Requirement 4: time away must not cost somebody a handover request, so
   // the expiry clock on anything waiting for them is paused.
   await handoverService.onAvailabilityChanged(req.agent.id, false);
 
-  const { availabilityStateOf } = require('../src/services/assignmentPoolService');
   return res.json({
     ...sanitizeAgent(updated),
     isAvailable: updated.isAvailable,
@@ -238,6 +230,71 @@ router.post('/availability', async (req, res) => {
     return adminSetState(req, res, targetId, state);
   } catch (err) {
     if (err.status === 404) return res.status(404).json({ error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ---- availability history (read-only) ------------------------------- */
+
+const historyService = require('../src/services/availabilityHistoryService');
+const { isValidState } = require('../src/services/assignmentPoolService');
+
+/**
+ * GET /api/workload/availability-history
+ * Administrator-wide timeline of availability periods, newest first.
+ * Filters: agentId, state (online|unavailable|offline), from, to (startedAt
+ * bounds), page, pageSize.
+ */
+router.get('/availability-history', async (req, res) => {
+  try {
+    if (!isAdmin(req.agent)) {
+      return res.status(403).json({ error: 'Administrator role required' });
+    }
+    const filters = {};
+    if (req.query.agentId !== undefined && String(req.query.agentId).trim() !== '') {
+      const agentId = Number(req.query.agentId);
+      if (!Number.isInteger(agentId)) return res.status(400).json({ error: 'agentId must be an integer' });
+      filters.agentId = agentId;
+    }
+    if (req.query.state !== undefined && String(req.query.state).trim() !== '') {
+      const state = String(req.query.state).trim();
+      if (!isValidState(state)) {
+        return res.status(400).json({ error: 'state must be one of: online, unavailable, offline' });
+      }
+      filters.state = state;
+    }
+    for (const key of ['from', 'to']) {
+      if (req.query[key] !== undefined && String(req.query[key]).trim() !== '') {
+        const bound = new Date(String(req.query[key]));
+        if (Number.isNaN(bound.getTime())) return res.status(400).json({ error: `${key} must be a date` });
+        filters[key] = bound;
+      }
+    }
+    const page = Number(req.query.page);
+    if (Number.isInteger(page) && page > 0) filters.page = page;
+    const pageSize = Number(req.query.pageSize);
+    if (Number.isInteger(pageSize) && pageSize > 0) filters.pageSize = pageSize;
+    res.json(await historyService.listHistory(filters));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/workload/availability-history/:agentId
+ * One agent's timeline — for the agent themselves or an administrator.
+ */
+router.get('/availability-history/:agentId', async (req, res) => {
+  try {
+    const agentId = Number(req.params.agentId);
+    if (!Number.isInteger(agentId)) return res.status(404).json({ error: 'Agent not found' });
+    if (req.agent.id !== agentId && !isAdmin(req.agent)) {
+      return res.status(403).json({ error: 'You can only view your own availability history' });
+    }
+    const history = await historyService.agentHistory(agentId);
+    if (!history) return res.status(404).json({ error: 'Agent not found' });
+    res.json(history);
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });

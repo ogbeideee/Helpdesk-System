@@ -247,6 +247,29 @@ async function applyUserUpdate(target, actor, changes, client = prisma) {
     );
   }
 
+  // Availability timeline: a PATCH that flips isActive/isAvailable is a real
+  // availability transition (offline <-> online/unavailable) and joins the
+  // same period history the presence-only state endpoint writes. Same-state
+  // updates record nothing. Lazy requires: assignmentPoolService is upstream
+  // of this module through assignmentPolicy.
+  if (data.isActive !== undefined || data.isAvailable !== undefined) {
+    const { availabilityStateOf } = require('./assignmentPoolService');
+    const { recordTransition } = require('./availabilityHistoryService');
+    const from = availabilityStateOf(target);
+    const to = availabilityStateOf(updated);
+    if (from !== to) {
+      await recordTransition({
+        agentId: target.id,
+        from,
+        to,
+        actorId: actor ? actor.id : null,
+        source: 'admin',
+        note: events.map((e) => e.note).join('; ') || null,
+        client,
+      });
+    }
+  }
+
   return { user: updated, events };
 }
 

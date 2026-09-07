@@ -2761,6 +2761,26 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
 /* Offline: a hollow ring — not merely quiet, but not here at all. */
 .availability-dot.is-offline { background: transparent; box-shadow: inset 0 0 0 1.5px var(--muted); }
 
+/* ================= Agent Unavailability Timeline ==================== */
+/* The history of availability state changes on the Agents admin screen:
+   one row per period, the currently open one marked Ongoing. */
+.avail-timeline { margin-top: 22px; }
+.avail-timeline .card-head { flex-wrap: wrap; }
+.avail-timeline-controls { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.avail-timeline-controls select { min-width: 130px; }
+.avail-timeline-summary {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--text);
+  margin: 0 0 12px;
+}
+.avail-timeline .chip-open {
+  margin-left: 8px;
+  background: var(--success-soft); color: var(--success);
+}
+.chip-source-self { background: var(--primary-soft, var(--neutral-soft)); }
+.avail-timeline tr.avail-row-open td { background: var(--success-soft); }
+.avail-timeline .table td { vertical-align: top; }
+
 /* ====================== Assignment pool roster ====================== */
 /* The per-group member list on the Assignment Groups screen: availability
    sections, each member with their skill, live load and eligibility. */
