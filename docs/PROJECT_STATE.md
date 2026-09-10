@@ -3,7 +3,7 @@
 Current checkpoint. Update this at the end of every task.
 Architecture and conventions live in `../CLAUDE.md`.
 
-_Last updated: 2026-09-01_
+_Last updated: 2026-09-10_
 
 ## Current Phase
 
@@ -48,15 +48,40 @@ Microsoft Graph against live credentials, then Prisma migrations.
 
 ## In Progress
 
-The next phase continues (not started): flip routing / workload / UI over to
-`TeamMembership` and drop the legacy `Agent.teamId` column.
+No active work in flight. The next phase (not started): wire a chosen AI
+classifier into the new production seam, then flip routing / workload / UI
+over to `TeamMembership` and drop the legacy `Agent.teamId` column.
+
+## Completed This Session (2026-09-10)
+
+- **AI classifier seam — complete.** `ticketIntake.js` gains an injectable
+  `options.classifier` that receives `{subject, body, cleanBody, text}`.
+  Defaults to the existing keyword classifier; falls back to it when an injected
+  classifier returns no usable category. `cleanBody` (quote/signature-stripped)
+  flows from the email parser through `emailIngestion.js` to the classifier.
+  Parsing-rule fields still win per-field over any classifier.
+- **AI benchmark framework — complete.** 20 frozen test cases (A–T) spanning
+  the four categories with adversarial traps, provider adapters for Gemini and
+  Groq/Qwen (OpenAI-compatible), JSON extraction / schema validation / per-case
+  scoring / terminal report / JSON export / self-contained HTML comparison
+  charts. `--mock` mode runs the identical pipeline with zero network access.
+  124 focused-suite checks enforce correctness (test-classifier-seam.js:
+  52 checks; test-ai-benchmark.js: 72 checks). Both pass.
+- **Prisma client freshness guard — added.** `server.js` now validates at boot
+  that the generated Prisma Client matches `schema.prisma` — exits with fix
+  instructions instead of serving 500 errors.
+- All committed as `6c045eb` on `ui-polish`.
 
 ## Next
 
 Not started, no order committed to:
 
 1. Verify Microsoft Graph against live credentials
-2. **Flip the assignment-group readers over to `TeamMembership`.** Routing,
+2. **Wire a classifier into the seam.** The `options.classifier` seam is in place
+   and defaulting to the keyword rules; the AI benchmark (Gemini / Groq+Qwen vs
+   the keyword baseline) can pick a provider, but none is wired into production yet —
+   nothing reads `GEMINI_API_KEY` / `GROQ_API_KEY` outside the benchmark.
+3. **Flip the assignment-group readers over to `TeamMembership`.** Routing,
    workload, the Agents/Assignment-Groups APIs and the UI should read/write
    multi-group membership (max 3, per-group leads) through
    `groupMembershipService`, then the transition field `Agent.teamId` and its
