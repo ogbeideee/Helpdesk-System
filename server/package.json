@@ -7,6 +7,7 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "db:push": "prisma db push",
+    "db:generate": "prisma generate",
     "db:deploy": "prisma migrate deploy",
     "db:init": "node scripts/init-db.js",
     "db:migrate-v2": "node scripts/migrate-v2.js",
@@ -42,7 +43,7 @@
     "test:pg:up": "node scripts/lib/testpg.js up",
     "test:pg:down": "node scripts/lib/testpg.js down",
     "test:pg:status": "node scripts/lib/testpg.js status",
-    "test": "npm run test:parser && npm run test:ingest && npm run test:mailbox && npm run test:graph && npm run test:webhook && npm run test:api && npm run test:lifecycle && npm run test:users && npm run test:routing && npm run test:workload && npm run test:handover && npm run test:email && npm run test:email-sources && npm run test:imap && npm run test:imap-oauth && npm run test:email-rules && npm run test:attachments && npm run test:m365 && npm run test:assignment-pool && npm run test:availability-history && npm run test:remote-access && npm run test:audit && npm run test:reports && npm run test:scheduled-reports && npm run test:sla && npm run test:sla-dashboard && npm run test:sla-settings && npm run test:sla-backfill && npm run test:sla-report && npm run test:sla-sweeper && npm run test:sla-notify && npm run test:assignment-groups && npm run test:e2e",
+    "test": "npm run test:parser && npm run test:ingest && npm run test:mailbox && npm run test:graph && npm run test:webhook && npm run test:api && npm run test:lifecycle && npm run test:users && npm run test:routing && npm run test:workload && npm run test:handover && npm run test:email && npm run test:email-sources && npm run test:imap && npm run test:imap-oauth && npm run test:email-rules && npm run test:classifier-seam && npm run test:ai-benchmark && npm run test:attachments && npm run test:m365 && npm run test:assignment-pool && npm run test:availability-history && npm run test:remote-access && npm run test:audit && npm run test:reports && npm run test:scheduled-reports && npm run test:sla && npm run test:sla-dashboard && npm run test:sla-settings && npm run test:sla-backfill && npm run test:sla-report && npm run test:sla-sweeper && npm run test:sla-notify && npm run test:assignment-groups && npm run test:e2e",
     "test:sla-settings": "node scripts/test-sla-settings.js",
     "sla:backfill": "node scripts/backfill-sla.js",
     "sla:backfill:dry": "node scripts/backfill-sla.js --dry-run",
@@ -53,7 +54,11 @@
     "reports:send": "node scripts/send-scheduled-report.js",
     "test:scheduled-reports": "node scripts/test-scheduled-reports.js",
     "test:availability-history": "node scripts/test-availability-history.js",
-    "test:remote-access": "node scripts/test-remote-access.js"
+    "test:remote-access": "node scripts/test-remote-access.js",
+    "test:classifier-seam": "node scripts/test-classifier-seam.js",
+    "bench:ai": "node scripts/ai-benchmark.js",
+    "test:ai-benchmark": "node scripts/test-ai-benchmark.js",
+    "bench:ai:viz": "node scripts/visualize-ai-benchmark.js"
   },
   "dependencies": {
     "@azure/msal-node": "^3.2.0",

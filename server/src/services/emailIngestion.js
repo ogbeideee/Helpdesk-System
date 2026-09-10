@@ -42,6 +42,10 @@ function toIntakePayload(email) {
     name: email.senderName,
     subject: email.subject,
     body: email.body,
+    // The sender's own words without quoted history or signature — the
+    // classifier's input, not a stored field. Null when the source could not
+    // compute one.
+    cleanBody: email.cleanBody || null,
   };
 }
 
@@ -56,10 +60,12 @@ function toIntakePayload(email) {
  *
  * options.channel (default: none) names the ingestion channel for the audit
  * trail. options.attachments carries decoded binaries for the shared
- * attachment persistence path; the parser never sees them.
+ * attachment persistence path; the parser never sees them. options.classifier
+ * (default: none — intake uses its keyword classifier) forwards an alternative
+ * classifier into the ticket pipeline.
  *
  * @param {NormalizedEmail} email
- * @param {{ logger?: Console, channel?: string, attachments?: Array, storage?: object }} [options]
+ * @param {{ logger?: Console, channel?: string, attachments?: Array, storage?: object, classifier?: Function }} [options]
  */
 async function ingestNormalizedEmail(email, options = {}) {
   const logger = options.logger || console;
@@ -67,6 +73,7 @@ async function ingestNormalizedEmail(email, options = {}) {
     logger,
     allowThreading: true,
     ...(options.channel ? { channel: options.channel } : {}),
+    ...(options.classifier ? { classifier: options.classifier } : {}),
     ...(Array.isArray(options.attachments) && options.attachments.length
       ? { attachments: options.attachments }
       : {}),

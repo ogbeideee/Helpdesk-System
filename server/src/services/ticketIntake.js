@@ -69,6 +69,10 @@ function normalizeMessage(payload = {}) {
       : null,
     subject: String(payload.subject || "").trim(),
     body: String(payload.body || ""),
+    // The quote/signature-stripped view of the body, when the source could
+    // compute one (the email parser does; the portal and dev endpoints do
+    // not). Only the classifier consumes it — never stored.
+    cleanBody: String(payload.cleanBody || ""),
     requesterEmail: String(payload.from || "").trim(),
     requesterName: payload.name ? String(payload.name).trim() : null,
   };
@@ -176,6 +180,10 @@ function truncate(value, max) {
  * options.ruleEvaluator (default: the stored admin-configurable email parsing
  * rules) decides keyword-rule overrides; it may return {matches, effective}
  * or null. It influences ONLY the fields its rules explicitly set.
+ *
+ * options.classifier (default: the keyword classifier in
+ * graph/categoryRules.js) decides the category when no parsing rule does. It
+ * receives {subject, body, cleanBody, text} and returns {category}.
  */
 /**
  * The default rule evaluator: the admin-configurable email parsing rules,
@@ -187,6 +195,20 @@ async function defaultRuleEvaluator({ subject, body }) {
   return evaluateForMessage({ subject, body }, prisma);
 }
 
+/**
+ * The default classifier: the deterministic keyword rules in
+ * graph/categoryRules.js. Injectable via options.classifier so a future
+ * AI-assisted classifier can replace it without touching this pipeline — the
+ * seam only, no provider is wired up here.
+ *
+ * Receives the subject, the full body, the quote/signature-stripped cleanBody
+ * and the pre-joined text; returns { category } (priority and group stay with
+ * the parsing rules, routing rules and intake defaults).
+ */
+async function defaultClassifier({ subject, body }) {
+  return classify(`${subject}\n${body}`);
+}
+
 async function intakeEmailMessage(
   payload,
   {
@@ -195,6 +217,7 @@ async function intakeEmailMessage(
     mailer = notificationService,
     channel = null,
     ruleEvaluator = defaultRuleEvaluator,
+    classifier = defaultClassifier,
     attachments = [],
     storage = null,
   } = {},
@@ -406,9 +429,24 @@ async function intakeEmailMessage(
     );
   }
 
-  // New ticket: classify category via configurable keyword rules. A parsing
-  // rule that sets a category wins; otherwise the classifier decides.
-  const classified = classify(`${msg.subject}\n${msg.body}`);
+  // New ticket: classify category. A parsing rule that sets a category wins;
+  // otherwise the classifier decides. The classifier is injectable
+  // (options.classifier); if an injected one returns no usable category the
+  // default keyword classifier answers instead, so intake can never stall on
+  // a bad classifier.
+  const classifierInput = {
+    subject: msg.subject,
+    body: msg.body,
+    cleanBody: msg.cleanBody,
+    text: `${msg.subject}\n${msg.body}`,
+  };
+  let classified = (await classifier(classifierInput)) || {};
+  if (typeof classified.category !== "string" || !classified.category.trim()) {
+    logger.warn(
+      "[intake] classifier returned no usable category — falling back to the keyword classifier",
+    );
+    classified = await defaultClassifier(classifierInput);
+  }
   const category = ruleResult.effective.category ?? classified.category;
 
   // Priority policy for inbound email: MODERATE until triaged otherwise.

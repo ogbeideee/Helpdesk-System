@@ -2,6 +2,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 
 const express = require('express');
 const cors = require('cors');
+const { Prisma } = require('@prisma/client');
 const path = require('path');
 const prisma = require('./src/lib/prisma');
 
@@ -203,8 +204,39 @@ app.get('*', (req, res, next) => {
 });
 
 const PORT = process.env.PORT || 4000;
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, async () => {
   console.log(`Ticketing API listening on http://localhost:${PORT}`);
+
+  // Prisma client freshness guard. The generated client (node_modules/.prisma)
+  // is NOT rebuilt when prisma/schema.prisma changes — pulling new code without
+  // re-running `prisma generate` leaves every query touching a newer relation
+  // (e.g. Ticket.slaCycles) dying with PrismaClientValidationError ("Unknown
+  // field … for include statement"). Validate one such relation up front and
+  // fail boot with the fix instead of returning 500s from every route.
+  // The validation error is raised client-side, so a stale client is detected
+  // even before the database is reachable; other errors (e.g. the database
+  // being down) are only warned about and boot continues as before.
+  try {
+    await prisma.ticket.findFirst({
+      where: { id: -1 },
+      include: { slaCycles: { select: { id: true } } },
+    });
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientValidationError) {
+      console.error(
+        '[boot] The generated Prisma Client does not match prisma/schema.prisma.\n' +
+          '[boot] Queries using newer fields (e.g. Ticket.slaCycles) would fail on every request.\n' +
+          '[boot] Fix: from server/ run  npm run db:generate  and start the server again.\n' +
+          '[boot] Re-run it after every git pull that touches server/prisma/. If generate\n' +
+          '[boot] fails with EPERM, stop the running dev server first (it locks the query\n' +
+          '[boot] engine DLL); OneDrive-synced project folders can also block the write.'
+      );
+      process.exit(1);
+    }
+    console.warn(
+      `[boot] prisma client check skipped (${err.name}): ${String(err.message).split('\n')[0]}`
+    );
+  }
 
   // One-time initial-administrator bootstrap. Inert as soon as any active
   // admin exists, so it can never mint a second one.

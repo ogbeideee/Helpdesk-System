@@ -52,3 +52,9 @@ coverage/
 # --- client SSR checks (transient artifacts of live-check / ssr-check) ---
 client/.ssr-check/
 client/ssr-check-entry.mjs
+
+# --- AI benchmark artifacts (JSON exports / generated report / chart pages) ---
+server/.bench/
+server/bench-report-*.txt
+server/bench-runs-*.json
+server/bench-report*.html

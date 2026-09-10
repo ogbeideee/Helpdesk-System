@@ -30,7 +30,7 @@ Resolution                    mandatory resolution note, full audit history
 | Layer    | Technology |
 |----------|------------|
 | API      | Node.js + Express |
-| Database | SQLite via Prisma (`server/prisma/dev.db`) |
+| Database | PostgreSQL on Supabase via Prisma (connection string in gitignored `server/.env`) |
 | Frontend | React 18 + Vite SPA (served by the API in production) |
 | Auth     | JWT sessions (bcrypt-hashed passwords) |
 
@@ -40,9 +40,15 @@ Resolution                    mandatory resolution note, full audit history
 # --- one-time setup ---------------------------------------------------
 cd server
 npm install
-copy .env.example .env          # GRAPH_* vars can stay empty
-#   then set INITIAL_ADMIN_EMAIL in .env to your first administrator
-npm run db:push                 # create schema
+#
+# server/.env is NOT in the repository (gitignored). To work against the
+# shared team database, get the real .env from the project owner — it holds
+# DATABASE_URL, DIRECT_URL and JWT_SECRET — and never run migrations or
+# seeds against it. To stand up your own isolated database instead, create
+# server/.env from .env.example, point DATABASE_URL/DIRECT_URL at a fresh
+# PostgreSQL (e.g. your own Supabase project), then:
+npm run db:generate             # (re)build the Prisma Client from prisma/schema.prisma
+npm run db:deploy               # apply the committed Prisma migrations
 npm run db:init                 # assignment groups, routing rules, first admin
 
 # --- run backend (terminal 1) ----------------------------------------
@@ -58,6 +64,31 @@ npm run dev                     # UI on http://localhost:5173 (proxies /api)
 cd client && npm run build      # builds client/dist
 cd ../server && npm start       # single server serves app + API on :4000
 ```
+
+## Troubleshooting
+
+### "Unknown field 'slaCycles' for include statement on model 'Ticket'"
+
+The generated Prisma Client (`node_modules/.prisma/client`) was built from an
+older schema. The client is **not** rebuilt automatically when
+`server/prisma/schema.prisma` changes — a `git pull` alone is not enough.
+
+```bash
+cd server
+npm run db:generate
+```
+
+(`npx prisma generate` is equivalent; on some Windows setups the PowerShell
+execution policy blocks `npx` — `npm run` always works.)
+
+then restart the API. Run the same command after every pull that touches
+`server/prisma/`. The API checks this at startup now and exits with these
+instructions instead of serving 500 errors.
+
+If `prisma generate` fails with `EPERM ... query_engine-windows.dll.node`, the
+dev server is still running and holding a file lock — stop it first.
+OneDrive-synced project folders can cause the same lock; keeping the clone
+outside OneDrive avoids it.
 
 ## First sign-in
 
