@@ -1,0 +1,11 @@
+node_modules
+.env
+.env.*
+!.env.example
+!.env.test.example
+server/prisma/dev.db
+.git
+.gitignore
+*.md
+docs/
+backups/

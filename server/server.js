@@ -203,10 +203,30 @@ app.get('*', (req, res, next) => {
   res.sendFile(path.join(__dirname, '..', 'client', 'dist', 'index.html'));
 });
 
-const PORT = process.env.PORT || 4000;
-const server = app.listen(PORT, async () => {
-  console.log(`Ticketing API listening on http://localhost:${PORT}`);
+// NOTE: Everything from here down is the "standalone server" concern — binding a
+// TCP port and running the long-lived background timers. Vercel imports this module
+// as a serverless function and must get the Express `app` WITHOUT opening a port or
+// starting any of those timers, so the startup block below runs only when this file
+// is executed directly (`node server.js` / `npm start` / local production). The
+// exhaustion guard and the app itself are shared by both modes.
 
+// ---------------------------------------------------------------------------
+// Background jobs — these ALL rely on a long-lived process and/or a webhook callback
+// that a serverless function cannot guarantee. They are started ONLY in standalone mode
+// (see startStandalone below). On Vercel they must not run; see DEPLOYMENT notes.
+//   - workload rebalancer      (server/src/services/workloadService)
+//   - handover expiry sweeper  (server/src/services/handoverService)
+//   - SLA sweeper             (server/src/slaSweeper)
+//   - report scheduler        (server/src/reportScheduler)
+//   - Graph mailbox poller     (server/src/graph/poller)
+//   - IMAP mailbox poller      (server/src/imap/poller)
+//   - Graph subscription      lifecycle (server/src/graph/subscriptionService)
+// Vercel, in order of preference: (a) run these on a single always-on worker
+// (Fly.io / Render / a VPS) while Vercel serves the API + SPA; or
+// (b) leave them off on the Vercel function entirely.
+// ---------------------------------------------------------------------------
+
+async function bootStartupChecks() {
   // Prisma client freshness guard. The generated client (node_modules/.prisma)
   // is NOT rebuilt when prisma/schema.prisma changes — pulling new code without
   // re-running `prisma generate` leaves every query touching a newer relation
@@ -237,7 +257,9 @@ const server = app.listen(PORT, async () => {
       `[boot] prisma client check skipped (${err.name}): ${String(err.message).split('\n')[0]}`
     );
   }
+}
 
+function startBackgroundJobs() {
   // One-time initial-administrator bootstrap. Inert as soon as any active
   // admin exists, so it can never mint a second one.
   require('./src/services/userService')
@@ -258,53 +280,65 @@ const server = app.listen(PORT, async () => {
     .catch((err) => console.error(`[routing] default rule seeding failed: ${err.message}`));
 
   // Background workload balancing. Bounded per cycle and guarded against
-  // overlapping runs; every move is concurrency-safe.
+  // overlapping runs; every move is concurrency-safe. No-op with
+  // REBALANCE_INTERVAL_MS=0.
   require('./src/services/workloadService').startRebalancer({ logger: console });
 
   // Handover expiry. Bounded and guarded against overlapping sweeps; a paused
-  // (recipient unavailable) request is skipped by construction.
+  // (recipient unavailable) request is skipped by construction. No-op with
+  // HANDOVER_SWEEP_INTERVAL_MS=0.
   require('./src/services/handoverService').startExpirySweeper({ logger: console });
 
   // SLA approaching-breach/breach detection. Bounded, index-led scans guarded
-  // against overlapping sweeps; records TicketSlaEvent history and cycle latch
-  // flags only — ticket state and mirrors are never touched here. A no-op with
-  // SLA_SWEEP_INTERVAL_MS=0.
+  // against overlapping sweeps; no-op with SLA_SWEEP_INTERVAL_MS=0.
   require('./src/slaSweeper').startSlaSweeper({ logger: console });
 
-  // Scheduled weekly/monthly reports. Reads the configured recipients and
-  // send moments from the settings system; a failed report is logged and
-  // audited, never fatal. A no-op with REPORT_SCHEDULER_INTERVAL_MS=0.
+  // Scheduled weekly/monthly reports. No-op with REPORT_SCHEDULER_INTERVAL_MS=0.
   require('./src/reportScheduler').startReportScheduler({ logger: console });
 
   require('./src/graph/poller').startPolling();
 
-  // IMAP ingestion — the alternative email source feeding the same ticket
-  // intake pipeline. A safe no-op unless IMAP_HOST/IMAP_USER/IMAP_PASSWORD
+  // IMAP ingestion — safe no-op unless IMAP_HOST/IMAP_USER/IMAP_PASSWORD
   // are configured; a failed cycle is logged and the next tick retries.
   require('./src/imap/poller').startImapPoller();
 
   // Webhook subscription lifecycle. Safe no-op when WEBHOOK_PUBLIC_URL is
   // absent — polling remains the ingestion path.
   require('./src/graph/subscriptionService').getSubscriptionService().startLifecycle();
-});
-
-function shutdown(signal) {
-  console.log(`\n${signal} received — shutting down`);
-  require('./src/graph/poller').stopPolling();
-  require('./src/imap/poller').stopImapPoller();
-  require('./src/services/workloadService').stopRebalancer();
-  require('./src/services/handoverService').stopExpirySweeper();
-  require('./src/slaSweeper').stopSlaSweeper();
-  require('./src/reportScheduler').stopReportScheduler();
-  require('./src/graph/subscriptionService').getSubscriptionService().stopLifecycle();
-  server.close(async () => {
-    await prisma.$disconnect();
-    process.exit(0);
-  });
-  setTimeout(() => process.exit(0), 3000).unref();
 }
 
-process.on('SIGINT', () => shutdown('SIGINT'));
-process.on('SIGTERM', () => shutdown('SIGTERM'));
+const isStandalone = require.main === module;
 
-module.exports = app;
+if (isStandalone) {
+  const PORT = process.env.PORT || 4000;
+  const server = app.listen(PORT, async () => {
+    console.log(`Ticketing API listening on http://localhost:${PORT}`);
+
+    await bootStartupChecks();
+
+    startBackgroundJobs();
+  });
+
+  function shutdown(signal) {
+    console.log(`\n${signal} received — shutting down`);
+    require('./src/graph/poller').stopPolling();
+    require('./src/imap/poller').stopImapPoller();
+    require('./src/services/workloadService').stopRebalancer();
+    require('./src/services/handoverService').stopExpirySweeper();
+    require('./src/slaSweeper').stopSlaSweeper();
+    require('./src/reportScheduler').stopReportScheduler();
+    require('./src/graph/subscriptionService').getSubscriptionService().stopLifecycle();
+    server.close(async () => {
+      await prisma.$disconnect();
+      process.exit(0);
+    });
+    setTimeout(() => process.exit(0), 3000).unref();
+  }
+
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+}
+
+// Export the app so a hosting platform can mount it without starting the listener or
+// the background jobs (the 7 background timers run ONLY in standalone mode above).
+module.exports = { app, startBackgroundJobs, bootStartupChecks };

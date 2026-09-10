@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "framework": null,
+  "buildCommand": "npm --prefix client run build",
+  "outputDirectory": "client/dist",
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 10
+    }
+  }
+}

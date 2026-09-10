@@ -40,7 +40,22 @@ const { execFileSync } = require('child_process');
 const testpg = require('./testpg');
 
 const SERVER_DIR = path.join(__dirname, '..', '..');
-const PRISMA_CLI = path.join(SERVER_DIR, 'node_modules', 'prisma', 'build', 'index.js');
+
+// Resolve the Prisma CLI binary wherever npm hoisted it (workspaces may lift it
+// to the root node_modules). Tries the classic path first, then require.resolve.
+function resolvePrismaCli() {
+  const classic = path.join(SERVER_DIR, 'node_modules', 'prisma', 'build', 'index.js');
+  if (fs.existsSync(classic)) return classic;
+  // Workspace-hoisted: prisma lives in the root workspace node_modules.
+  // Starting from a known module in the server tree, walk up to find the
+  // prisma CLI that is hoisted above this package.
+  const resolved = require.resolve('prisma/build/index.js', { paths: [SERVER_DIR] });
+  if (fs.existsSync(resolved)) return resolved;
+  throw new Error(
+    `Cannot locate prisma CLI — expected at ${classic} or resolvable via require.resolve('prisma/build/index.js')`
+  );
+}
+const PRISMA_CLI = resolvePrismaCli();
 const ENV_TEST_FILE = path.join(SERVER_DIR, '.env.test');
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);

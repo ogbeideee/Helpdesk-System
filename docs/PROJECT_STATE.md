@@ -70,7 +70,18 @@ over to `TeamMembership` and drop the legacy `Agent.teamId` column.
 - **Prisma client freshness guard — added.** `server.js` now validates at boot
   that the generated Prisma Client matches `schema.prisma` — exits with fix
   instructions instead of serving 500 errors.
+- **Vercel/serverless deployment prep — complete.** `server.js` refactored to
+  extract `bootStartupChecks()` and `startBackgroundJobs()`, with server
+  listener and all 7 background timers gated behind `if (require.main ===
+  module)`. Module exports `{ app, startBackgroundJobs, bootStartupChecks }`
+  so a hosting platform can mount the Express app without starting the
+  listener or background jobs. `package.json` converted to npm workspaces
+  (`"workspaces": ["client", "server"]`), adding a root `build` script.
+  `testdb.js` `PRISMA_CLI` resolution made resilient to workspace hoisting.
+  All 35 test suites pass (2 pre-existing IMAP env config failures unchanged).
+  Client `npm run build` succeeds.
 - All committed as `6c045eb` on `ui-polish`.
+- **Fly.io deployment prep — complete.** Added root `start` script (`node server/server.js`), `Dockerfile`, `.dockerignore`, and `fly.toml` (256MB shared VM, port 4000, HTTPS forced). `npm run build` + `npm start` verified locally.
 
 ## Next
 
