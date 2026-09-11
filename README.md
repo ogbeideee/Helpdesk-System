@@ -29,40 +29,39 @@ Resolution                    mandatory resolution note, full audit history
 
 | Layer    | Technology |
 |----------|------------|
-| API      | Node.js + Express |
-| Database | PostgreSQL on Supabase via Prisma (connection string in gitignored `server/.env`) |
+| API      | Node.js + Express, **CommonJS** (`require`, not ESM) |
+| Database | **SQLite** locally (`server/prisma/dev.db`) via Prisma; **PostgreSQL** on Supabase in production |
 | Frontend | React 18 + Vite SPA (served by the API in production) |
+| Routing  | Hash-based (hand-rolled `parseHash()` in `App.jsx`) — no react-router |
 | Auth     | JWT sessions (bcrypt-hashed passwords) |
+| Deployment | Fly.io (`fly.toml`, Docker build) |
 
 ## Run the complete system locally
 
 ```bash
-# --- one-time setup ---------------------------------------------------
+# --- one-time server setup -------------------------------------------
 cd server
+copy .env.example .env               # or get the real .env from the project owner
 npm install
-#
-# server/.env is NOT in the repository (gitignored). To work against the
-# shared team database, get the real .env from the project owner — it holds
-# DATABASE_URL, DIRECT_URL and JWT_SECRET — and never run migrations or
-# seeds against it. To stand up your own isolated database instead, create
-# server/.env from .env.example, point DATABASE_URL/DIRECT_URL at a fresh
-# PostgreSQL (e.g. your own Supabase project), then:
-npm run db:generate             # (re)build the Prisma Client from prisma/schema.prisma
-npm run db:deploy               # apply the committed Prisma migrations
-npm run db:init                 # assignment groups, routing rules, first admin
+npm run db:push                       # apply schema to the SQLite database
+npm run db:init                       # seed groups + routing rules + admin bootstrap
 
 # --- run backend (terminal 1) ----------------------------------------
 cd server
-npm run dev                     # API on http://localhost:4000
+npm run dev                           # API on http://localhost:4000
 
 # --- run frontend (terminal 2) ---------------------------------------
 cd client
 npm install
-npm run dev                     # UI on http://localhost:5173 (proxies /api)
+npm run dev                           # UI on http://localhost:5173 (proxies /api)
 
 # --- production mode instead -----------------------------------------
-cd client && npm run build      # builds client/dist
-cd ../server && npm start       # single server serves app + API on :4000
+cd client && npm run build            # builds client/dist
+cd ../server && npm start             # single server serves app + API on :4000
+
+# --- deploy to Fly.io ------------------------------------------------
+fly deploy                            # builds Docker image, deploys to https://app-name.fly.dev
+fly ssh console -C "node /app/server/scripts/init-db.js"  # seed groups + admin on a fresh deploy
 ```
 
 ## Troubleshooting
@@ -111,12 +110,14 @@ the same way: Admin → Agents → New agent.
 
 ## Adding your team
 
-`npm run db:init` creates the five assignment groups and the default routing
+`npm run db:init` creates the six assignment groups and the default routing
 rules, and **no agents at all** — populating a real helpdesk with invented
 staff would corrupt routing and workload figures. Add real people through
-Admin → Agents, giving each one an assignment group and a skill level (L1
-junior / L2 mid / L3 senior). Until at least one agent exists in a group,
-tickets routed there are created unassigned and shown as *awaiting assignment*.
+**Admin → Agents**, giving each one a primary group, an optional supporting
+group (up to 2 additional), and a skill level (L1 junior / L2 mid / L3 senior).
+Supporting members receive only low/moderate priority tickets in their
+non-primary groups. Until at least one agent exists in a group, tickets routed
+there are created unassigned and shown as *awaiting assignment*.
 
 ## Development demo data (optional)
 
@@ -151,10 +152,10 @@ deliberately not documented here, in the UI, or in any configuration file.
   internal notes vs requester-facing updates, and a unified activity timeline
   (created, assignments, status changes, notes, resolution).
 - **Agents** (admin) — create/edit agents, skill levels L1–L3, availability
-  toggles, live workload; deactivation releases their open tickets.
+  toggles, live workload, **multi-group membership** (primary + up to 2 supporting
+  groups shown with distinct badges); deactivation releases their open tickets.
 - **Assignment Groups** — per-group capacity: active agents, open tickets,
-  unassigned queue; routing rules stay configurable in
-  `server/config/assignment.config.json`.
+  unassigned queue; create, edit and deactivate groups through the UI.
 - **Simulate Email** (development only, hide with
   `VITE_ENABLE_EMAIL_SIMULATOR=false` before building for production) — submits
   to `POST /api/tickets/from-email` and shows classification/routing results.
@@ -165,19 +166,29 @@ errors are surfaced verbatim in the UI.
 
 ## Tests
 
+Plain Node scripts — no test framework. Each suite creates its own throw-away
+SQLite database, runs against real Prisma queries, and cleans up after itself.
+No suite ever touches `server/prisma/dev.db`.
+
+Run individual suites during development:
+
 ```bash
 cd server
-npm test            # ingestion suite (33 checks) + API suite (49 checks)
-npm run test:e2e    # full user-journey scenario incl. edge cases (34 checks)
+npm run test:assignment-pool    # group pool, availability state, eligibility
+npm run test:routing            # routing rules + preview
+npm run test:assignment-groups  # multi-group membership (max 3, leads)
+npm run test:workload           # workload, claiming, rebalancing
+npm run test:handover           # handover lifecycle
+npm run test:api                # HTTP endpoints
+npm run test:e2e                # full end-to-end workflow
+npm run test:sla                # SLA cycle tracking
+npm run test:lifecycle          # ticket state machine
+npm run test:users              # role management
+# … ~30 suites total
 ```
 
-`test:e2e` boots a real server and walks the complete workflow: create agents
-across groups with different skills → simulated email → verify number,
-classification, routing and engine assignment → dashboard visibility →
-IN_PROGRESS → internal note → requester update → resolve-without-note rejected
-→ resolve → close → invalid transitions rejected → full audit trail →
-duplicate messageId idempotency → reassignment → priority/SLA recalculation →
-no-available-agent awaiting path → SPA served.
+`npm test` runs every suite in sequence. Each suite reports `PASS` / `FAIL`,
+then exits with code 0 (all pass) or 1 (any fail).
 
 ## Users, roles and administrators
 
@@ -455,9 +466,9 @@ unread badge.
 
 ### Assignment groups
 
-An assignment group is an IT team (`Team` in the schema - the historical table
-name). Each has a name, description, active flag and timestamps. Exactly one is
-the **default**: `General IT Support`, which receives anything no rule claims.
+An assignment group is an IT team (`Team` in the schema). Each has a name,
+description, active flag and timestamps. Exactly one is the **default**:
+`General IT Support`, which receives anything no rule claims.
 
 | Group | Purpose |
 |---|---|
@@ -466,12 +477,23 @@ the **default**: `General IT Support`, which receives anything no rule claims.
 | Software & Applications | Desktop and LOB applications |
 | Hardware & Devices | Laptops, peripherals, printers |
 | Network Team | WiFi, LAN, VPN, routers |
+| Field Operations | On-site installation: LAN cabling, router/switch setup, premises wiring (priority 30 routing rule) |
 
-A ticket's **current** group can change. `originatingTeamId` records the group
-it was first routed to and is **never** rewritten, so you can always see where a
-ticket started.
+Groups can be created and edited by an admin at **Routing → Assignment Groups**.
 
-Skill levels are `JUNIOR` (1), `MID` (2), `SENIOR` (3).
+### Multi-group membership
+
+An agent belongs to exactly one **primary group** (`Agent.teamId`) and may
+belong to up to **two additional supporting groups** via the `TeamMembership`
+join table. Manage these at **Admin → Agents** → Edit → Supporting groups.
+
+Supporting members receive only **low/moderate priority** tickets in their
+non-primary groups — they appear as in-group candidates for the assignment
+engine (not cross-team fallback). The threshold is configurable in
+`config/assignment.config.json` (`supportingMaxPriority`).
+
+An agent may lead multiple groups at once (lead status lives on the membership
+row, not on the agent or the group). A group has exactly one lead.
 
 ### Routing rules
 
@@ -503,16 +525,25 @@ Routing runs immediately on ticket creation:
 
 ```text
 category classifier  ->  matching rule (or the default group)
-      -> preferred agent, if active + available + in the group + skilled enough
-      -> else lowest open workload in the group, round-robin on ties
-      -> else lowest workload ANYWHERE (cross-team fallback)
+      -> preferred agent, if active + available + sufficiently skilled + eligible
+         (supporting members blocked for high/critical priority)
+      -> else lowest open workload among primary + supporting members in the group,
+         round-robin on ties
+      -> else lowest workload ANYWHERE (cross-team fallback, respecting the
+         supporting-member priority gate)
       -> else leave unassigned, group retained
 ```
 
 The **cross-team fallback deliberately does not change the assignment group.**
 A ticket can read `Assignment Group: General IT Support` while being worked by
 someone from the Network Team - the group is who owns it, the assignee is who is
-doing it.
+doing it. For high/critical tickets, the fallback also excludes supporting
+members of the ticket's group.
+
+Supporting members (agents whose primary team differs from the ticket's group)
+are considered **in-group candidates** for low/moderate priority tickets, not
+cross-team fallbacks — they appear in the assignment pool alongside primary
+members of the same group.
 
 Every decision is written to the ticket's audit trail, naming the rule that won
 and the keywords it matched. Rule administration itself is audited separately in
