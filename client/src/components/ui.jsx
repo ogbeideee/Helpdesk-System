@@ -278,12 +278,14 @@ function legacySlaInfo(ticket) {
 
 export function Modal({ title, onClose, children, width = 460 }) {
   const ref = useRef(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
-    const onKey = (e) => e.key === 'Escape' && onClose?.();
+    const onKey = (e) => e.key === 'Escape' && onCloseRef.current?.();
     window.addEventListener('keydown', onKey);
     ref.current?.querySelector('input, textarea, select, button')?.focus();
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, []);
   return (
     <div className="modal-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose?.()}>
       <div className="modal" style={{ maxWidth: width }} ref={ref} role="dialog" aria-modal="true" aria-label={title}>
