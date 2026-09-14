@@ -343,8 +343,16 @@ async function main() {
 
     // The initial IMAP poll fires ~5s after boot and fails (dead port) —
     // the server must stay healthy and record the error instead of crashing.
-    await new Promise((r) => setTimeout(r, 7000));
-    const afterFailure = await (await fetch(`${BASE}/api/health`)).json();
+    // Poll for lastError instead of sleeping a fixed 7s: on a busy machine
+    // the first cycle can land late, and the assertions below are
+    // deterministic the moment the error is recorded.
+    let afterFailure;
+    const deadline = Date.now() + 20000;
+    while (true) {
+      await new Promise((r) => setTimeout(r, 500));
+      afterFailure = await (await fetch(`${BASE}/api/health`)).json();
+      if ((afterFailure.integration.imap && afterFailure.integration.imap.lastError) || Date.now() > deadline) break;
+    }
     eq('F7 the server survives a failed IMAP poll', afterFailure.ok, true);
     check('F8 the failure is recorded for the administrator',
       Boolean(afterFailure.integration.imap.lastError) && /fetch|connect|ECONNREFUSED|timeout/i.test(afterFailure.integration.imap.lastError.message));

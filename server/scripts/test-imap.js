@@ -31,6 +31,17 @@ const { ensureTeams } = require('../src/teams');
 const { ensureDefaultRoutingRules } = require('../src/services/defaultRoutingRules');
 const imapStatus = require('../src/imap/imapStatus');
 
+// The suite derives every IMAP configuration it tests, including the
+// "unset → default" checks in part A. A developer .env holding a real
+// mailbox (IMAP_PORT, IMAP_POLL_INTERVAL_MS, ...) is loaded into
+// process.env by src/lib/prisma.js' dotenv call above and would leak into
+// those checks, so every IMAP_* variable is removed here — after .env has
+// been loaded, before any src/imap/* module takes its config snapshot.
+// `withEnv` re-adds exactly what each scenario needs.
+for (const key of Object.keys(process.env)) {
+  if (key.startsWith('IMAP_')) delete process.env[key];
+}
+
 let failures = 0;
 function check(name, cond, extra = '') {
   if (cond) console.log(`PASS  ${name}`);
