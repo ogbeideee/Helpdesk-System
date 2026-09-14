@@ -4,6 +4,7 @@ Durable project knowledge. Read this and `docs/PROJECT_STATE.md` at the start of
 a session, then open only the source files the current task needs.
 
 `README.md` (~890 lines) is the long-form manual — link to it, don't duplicate it.
+`QUICKSTART.md` is the short version for setup and daily commands.
 The **codebase is the source of truth for implementation**; this file is the
 source of truth for architecture and conventions.
 
@@ -21,7 +22,7 @@ Microsoft 365 credentials — a built-in email simulator stands in for Graph.
 | Layer | Technology |
 |---|---|
 | API | Node.js + Express, **CommonJS** (`require`, not ESM) |
-| Database | **SQLite** via Prisma — `server/prisma/dev.db` |
+| Database | **PostgreSQL** via Prisma — Supabase in production (`DATABASE_URL` / `DIRECT_URL` in `server/.env`) |
 | Frontend | React 18 + Vite SPA, served by the API in production |
 | Routing (UI) | **Hash-based**, hand-rolled — no react-router. `parseHash()` in `client/src/App.jsx` |
 | Auth | JWT sessions, bcrypt password hashes |
@@ -152,16 +153,17 @@ Reuse it; do not write a bare `update` for ownership.
   build a second notification system.
 - Four ticket categories are fixed: `Password Reset`, `Inquiry / Help`,
   `Software`, `Hardware`.
-- Tests must never touch `server/prisma/dev.db` — see below.
+- Tests must never touch the application database (the Supabase PostgreSQL) — see below.
 
 ## Commands
 
 ```bash
 npm run dev                  # root: API :4000 + UI :5173 via concurrently
-cd server && npm test        # all 12 suites (~1050 checks)
-cd server && npm run test:handover   # one suite — prefer while developing
+cd server && npm test        # all 35 suites (scripts/run-all-tests.js)
+cd server && node scripts/run-all-tests.js imap   # a few suites, by substring
+cd server && npm run test:pg:up      # one-time: disposable local test PostgreSQL
 cd client && npx vite build  # production build
-cd server && npm run db:push # apply schema changes
+cd server && npm run db:deploy       # apply the committed Prisma migrations
 cd server && npm run db:init # groups + routing rules + admin bootstrap
 cd server && npm run db:purge-demo   # dry run; --apply to remove demo data
 ```
@@ -172,10 +174,17 @@ backticks — write a Python patch script to the scratchpad instead.
 ## Test isolation
 
 Every DB-touching suite starts with `require('./lib/testdb').use('<name>')`
-**before any Prisma import**. That points `DATABASE_URL` at a throw-away
-`prisma/test-<name>.db`, pushes the schema, and deletes it afterwards. A full
-run leaves `dev.db` untouched. Suites create their own fixtures — never assume
-seeded accounts exist.
+**before any Prisma import**. Tests run on a disposable local PostgreSQL
+cluster — initialized once by `npm run test:pg:up` into
+`%USERPROFILE%\.ticketing-test-pg` (loopback-only, 127.0.0.1:5433) with its
+credentials in `server/.env.test`. `use()` drops and recreates a per-suite
+database, applies the committed migration history with `prisma migrate
+deploy`, and drops the database again afterwards. The helper refuses Supabase
+hosts, non-loopback hosts (unless `ALLOW_REMOTE_TEST_DATABASE=1`) and anything
+resolving to the application's own `DATABASE_URL`/`DIRECT_URL`. A full run
+leaves the application database — and the vestigial `server/prisma/dev.db` —
+untouched. Suites create their own fixtures — never assume seeded accounts
+exist.
 
 ## Intentionally NOT implemented
 
@@ -187,13 +196,13 @@ seeded accounts exist.
   Microsoft credentials.
 - **Attachment storage.** Attachments are parsed as metadata only — no file is
   stored anywhere.
-- **Supabase / Firebase.** Not used. SQLite is the database.
-- **Prisma migration history is minimal.** `server/prisma/migrations/` holds
-  one baseline migration for the assignment-group membership change. Day-to-day
-  schema changes still go through `db push`; `prisma migrate dev/reset` is
-  deliberately unused because it can reset the database. For `db push`-updated
-  databases, `npm run db:migrate-assignment-groups` re-creates the partial
-  unique index Prisma cannot express on SQLite.
+- **Firebase.** Not used anywhere. (Supabase, by contrast, **is** the
+  production PostgreSQL host.)
+- **Schema changes ship as committed migrations.** `server/prisma/migrations/`
+  holds the PostgreSQL history (init + dated migrations); `npm run db:deploy`
+  applies it, and the test harness runs `migrate deploy` per suite.
+  `prisma migrate dev/reset` is deliberately unused against the application
+  database because it can reset it.
 
 ## Known issues
 

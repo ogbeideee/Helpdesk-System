@@ -3,7 +3,7 @@
 Current checkpoint. Update this at the end of every task.
 Architecture and conventions live in `../CLAUDE.md`.
 
-_Last updated: 2026-09-10_
+_Last updated: 2026-09-14_
 
 ## Current Phase
 
@@ -51,6 +51,46 @@ Microsoft Graph against live credentials, then Prisma migrations.
 No active work in flight. The next phase (not started): wire a chosen AI
 classifier into the new production seam, then flip routing / workload / UI
 over to `TeamMembership` and drop the legacy `Agent.teamId` column.
+
+## Completed This Session (2026-09-14)
+
+- **Full-suite test runner — `npm test` rewritten.** The old 35-suite `&&`
+  chain stopped at the first failure, silently skipping every suite behind it
+  (one flake hid 22 suites during a verification run). `server/scripts/run-all-tests.js`
+  now runs every suite in the same fixed order, streams live output, prints a
+  per-suite `PASS/FAIL` summary and exits non-zero when anything failed.
+  Substring filters are supported: `node scripts/run-all-tests.js imap email-sources`.
+- **test:imap made environment-proof.** A developer `.env` holding a real
+  mailbox configuration (`IMAP_PORT=993`, `IMAP_POLL_INTERVAL_MS=30000`, …)
+  leaked through dotenv into the suite's "unset → default" assertions — A5
+  expected the plaintext default port 143, A9 the 120000 ms default interval.
+  The suite now scrubs every `IMAP_*` variable after `.env` is loaded and
+  before any `src/imap/*` module takes its config snapshot; `withEnv`
+  re-adds exactly what each scenario needs. Test-only change.
+- **test:email-sources F8 race removed.** The check slept a fixed 7 s for the
+  server's first IMAP poll (fires ~5 s after boot, `src/imap/poller.js`) to
+  fail against a dead port and record `lastError`; under load the poll landed
+  late and F8 failed while F7/F9 passed. It now polls `/api/health` every
+  500 ms for up to 20 s and asserts the moment the error is recorded — same
+  assertions, deterministic outcome. Test-only change; the 5 s boot delay in
+  the poller is deliberate and untouched.
+- **Full `npm test`: 35/35 suites pass** on the disposable local PostgreSQL
+  test cluster; `dev.db` untouched. `email-sources` additionally passed three
+  consecutive runs. `AGENTS.md`'s stale SQLite database description was
+  corrected in the same session (see below).
+- **Docs split — `QUICKSTART.md` added.** The 890-line `README.md` is kept
+  verbatim as the long-form manual (owner's choice); `QUICKSTART.md` now
+  carries the short path: requirements, setup, first sign-in, tests, email
+  ingestion, and pointers into the manual and `.env.example`.
+- **`AGENTS.md` / `CLAUDE.md` database story corrected.** Both files (line-for-line
+  mirrors) still described the database as SQLite with `db push` as the schema
+  workflow and "Supabase not used". Reality: production runs on Supabase
+  PostgreSQL (`DATABASE_URL`/`DIRECT_URL`), `server/prisma/migrations/` holds
+  the committed PostgreSQL history applied by `db:deploy` / `migrate deploy`,
+  and tests run on the disposable local cluster from `test:pg:up`. The Stack
+  table, the test-isolation section, the Commands block and the
+  "Intentionally NOT implemented" list now match the code. `dev.db` survives
+  only as a vestigial pre-migration artifact referenced by no code.
 
 ## Completed This Session (2026-09-10)
 
@@ -159,6 +199,16 @@ Not started, no order committed to:
   a real gmail address via the email simulator. Delete it if it was only a test.
 
 ## Last Verified
+
+**2026-09-14**, after the test-suite stabilisation:
+
+- `npm test` (new runner): **35/35 server suites pass**, exit 0, on the
+  disposable local PostgreSQL test cluster
+- `test:email-sources` passed 3 consecutive runs after the F8 race fix
+- `test:imap` A5/A9 pass with a real mailbox configured in `server/.env`
+- `dev.db` untouched by the full run; `git status -- server/` shows only the
+  two test-script fixes, the new `run-all-tests.js` and the `package.json`
+  `test` script change
 
 **2026-08-29**, after the reference-led second pass of the client redesign:
 
