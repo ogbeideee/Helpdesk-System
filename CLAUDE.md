@@ -3,8 +3,10 @@
 Durable project knowledge. Read this and `docs/PROJECT_STATE.md` at the start of
 a session, then open only the source files the current task needs.
 
-`README.md` (~890 lines) is the long-form manual — link to it, don't duplicate it.
-`QUICKSTART.md` is the short version for setup and daily commands.
+`README.md` is the public front door — what the product is, how to run it, the
+stack and the tests. The per-subsystem detail lives in `docs/`, indexed from the
+README. `QUICKSTART.md` is the short version for setup and daily commands.
+Link to those; don't duplicate them.
 The **codebase is the source of truth for implementation**; this file is the
 source of truth for architecture and conventions.
 
@@ -95,8 +97,17 @@ the queue already filters on are honoured.
 
 ## Database
 
-- `npx prisma db push` only. **There is no `migrations/` directory** — never run
-  `prisma migrate dev`, it would reset the database.
+- **Schema changes ship as committed migrations.** `server/prisma/migrations/`
+  holds the PostgreSQL history (init + dated migrations) and `npm run db:deploy`
+  (`prisma migrate deploy`) applies it — the test harness runs `migrate deploy`
+  per suite. `prisma migrate dev/reset` is deliberately unused against the
+  application database because it can reset it; `npm run db:push` is not the
+  workflow either.
+- `prisma/dev.db`, `prisma/migrations-sqlite-archive/` and
+  `prisma/postgres-baseline-preview.sql` are vestigial pre-PostgreSQL
+  artifacts. Nothing under `src/` or `routes/` reads them — only the one-off
+  `scripts/migrate-sqlite-to-pg.cjs` and `diag-ticket730.cjs` open `dev.db`,
+  and read-only.
 - Regenerating the client fails while a dev server holds the query engine DLL
   (Windows `EPERM`): stop the API first.
 - Models: `Team` (= assignment group), `Agent` (= every user, any role),
@@ -198,11 +209,6 @@ exist.
   stored anywhere.
 - **Firebase.** Not used anywhere. (Supabase, by contrast, **is** the
   production PostgreSQL host.)
-- **Schema changes ship as committed migrations.** `server/prisma/migrations/`
-  holds the PostgreSQL history (init + dated migrations); `npm run db:deploy`
-  applies it, and the test harness runs `migrate deploy` per suite.
-  `prisma migrate dev/reset` is deliberately unused against the application
-  database because it can reset it.
 
 ## Known issues
 
