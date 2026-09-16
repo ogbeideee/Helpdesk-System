@@ -15,5 +15,6 @@
   },
   "maxSkillLevel": 3,
   "maxActiveTicketsPerAgent": 25,
-  "tieBreaker": "least-recently-assigned"
+  "tieBreaker": "least-recently-assigned",
+  "supportingMaxPriority": "moderate"
 }

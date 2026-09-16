@@ -37,7 +37,10 @@ const FALLBACK_CONFIG = {
   prioritySkillBoost: { low: 0, moderate: 0, high: 1, critical: 2 },
   maxSkillLevel: 3,
   maxActiveTicketsPerAgent: 25,
+  supportingMaxPriority: 'moderate',
 };
+
+const PRIORITY_RANK = { low: 0, moderate: 1, high: 2, critical: 3 };
 
 let cachedConfig = null;
 let cachedMtime = 0;
@@ -56,6 +59,19 @@ function loadConfig(logger = console) {
     logger.warn(`[assignment] config unavailable (${err.message}) — using built-in defaults`);
     return { ...FALLBACK_CONFIG };
   }
+}
+
+/**
+ * Is `priority` within the supporting-member tier? Supporting members (primary
+ * team differs from the group being assigned within) are only eligible for
+ * tickets whose priority is at or below the configured supportingMaxPriority
+ * (default moderate). high and critical are never in tier.
+ */
+function isSupportingTier(priority, config) {
+  const max = (config && config.supportingMaxPriority) || FALLBACK_CONFIG.supportingMaxPriority;
+  const maxRank = PRIORITY_RANK[max] !== undefined ? PRIORITY_RANK[max] : 1;
+  const rank = PRIORITY_RANK[priority] !== undefined ? PRIORITY_RANK[priority] : 1;
+  return rank <= maxRank;
 }
 
 function clamp(value, min, max) {
@@ -173,11 +189,19 @@ async function assign(
   /* ---- 1. preferred agent named by the rule ------------------------ */
   if (rule && rule.preferredAgentId) {
     const preferred = await client.agent.findFirst({
-      where: { id: rule.preferredAgentId, ...eligibilityBase, ...(team ? { teamId: team.id } : {}) },
+      where: { id: rule.preferredAgentId, ...eligibilityBase },
       include: WORKLOAD_COUNT,
     });
 
-    if (preferred && preferred._count.assignedTickets < cap) {
+    // If the preferred agent is a supporting member of this group
+    // (their primary team differs), they are only eligible for
+    // low/moderate priority tickets.
+    let supportingBlock = false;
+    if (preferred && team && preferred.teamId !== team.id && !isSupportingTier(priority, config)) {
+      supportingBlock = true;
+    }
+
+    if (preferred && !supportingBlock && preferred._count.assignedTickets < cap) {
       await client.agent.update({ where: { id: preferred.id }, data: { lastAssignedAt: new Date() } });
       return {
         ...base,
@@ -191,46 +215,78 @@ async function assign(
     }
     // Not usable — say why once, then fall through to the normal search.
     const why = !preferred
-      ? 'unavailable, wrong group, or insufficient skill'
-      : `at or above the workload cap (${cap})`;
+      ? 'unavailable or insufficient skill'
+      : supportingBlock
+        ? `supporting member not eligible for ${priority} priority`
+        : `at or above the workload cap (${cap})`;
     logger.warn(
       `[assignment] preferred agent for rule "${rule.name}" not used — ${why}; falling back to the group`
     );
   }
 
   /* ---- 2. best agent inside the chosen group ----------------------- */
-  const inGroup = team
-    ? await client.agent.findMany({
+  // Primary members: agents whose primary team (Agent.teamId) is this group.
+  // Supporting members: agents with a TeamMembership in this group but a
+  // different primary team. Supporting members are only eligible for
+  // low/moderate priority tickets.
+  let primaryMembers = [];
+  let supportingMembers = [];
+  if (team) {
+    [primaryMembers, supportingMembers] = await Promise.all([
+      client.agent.findMany({
         where: { ...eligibilityBase, teamId: team.id },
         include: WORKLOAD_COUNT,
-      })
-    : [];
+      }),
+      isSupportingTier(priority, config)
+        ? client.agent.findMany({
+            where: {
+              ...eligibilityBase,
+              teamId: { not: team.id },
+              memberships: { some: { teamId: team.id } },
+            },
+            include: WORKLOAD_COUNT,
+          })
+        : Promise.resolve([]),
+    ]);
+  }
+
+  // Deduplicate (an agent could match both if their primary overlaps with a
+  // membership — rare but safe). Primary membership takes precedence.
+  const seenIds = new Set(primaryMembers.map((a) => a.id));
+  const inGroup = primaryMembers.concat(supportingMembers.filter((a) => !seenIds.has(a.id)));
   const groupEligible = inGroup.filter((a) => a._count.assignedTickets < cap);
 
   if (groupEligible.length) {
     groupEligible.sort(byWorkloadThenRoundRobin);
     const chosen = groupEligible[0];
     await client.agent.update({ where: { id: chosen.id }, data: { lastAssignedAt: new Date() } });
+    const isSupporting = chosen.teamId !== team.id;
     return {
       ...base,
       agent: chosen,
-      candidatesConsidered: inGroup.length,
+      candidatesConsidered: primaryMembers.length + supportingMembers.length,
       crossTeam: false,
       preferredAgentUsed: false,
-      reason: `selected by lowest workload (${chosen._count.assignedTickets} open), skill >= ${minSkillLevel}`,
+      supportingMember: isSupporting || undefined,
+      reason: isSupporting
+        ? `selected by lowest workload (${chosen._count.assignedTickets} open), supporting member for ${groupName || groupKey}`
+        : `selected by lowest workload (${chosen._count.assignedTickets} open), skill >= ${minSkillLevel}`,
       awaitingAssignment: false,
     };
   }
 
   /* ---- 3. cross-team fallback -------------------------------------- */
-  // Nobody in the group can take it. Rather than leave the ticket unassigned,
-  // find the lowest-workload qualified agent anywhere. The ticket KEEPS its
-  // assignment group: only the person working it comes from elsewhere.
-  // Applies even when the group is pinned: pinning fixes which group OWNS the
-  // ticket, not who may work it. Callers that require a same-group agent check
-  // the returned agent's teamId themselves.
+  // Nobody in the group can take it. Find the lowest-workload qualified
+  // agent anywhere. The ticket KEEPS its assignment group. For high/critical
+  // tickets, the cross-team fallback ALSO respects the supporting tier gate:
+  // any agent whose primary team is not the ticket's group is a supporting
+  // member of it, so they are blocked for high/critical.
   const anywhere = await client.agent.findMany({
-    where: { ...eligibilityBase, ...(team ? { NOT: { teamId: team.id } } : {}) },
+    where: {
+      ...eligibilityBase,
+      ...(team ? { NOT: { teamId: team.id } } : {}),
+      ...(!isSupportingTier(priority, config) && team ? { memberships: { none: { teamId: team.id } } } : {}),
+    },
     include: WORKLOAD_COUNT,
   });
   const globalEligible = anywhere.filter((a) => a._count.assignedTickets < cap);
@@ -246,7 +302,7 @@ async function assign(
     return {
       ...base,
       agent: chosen,
-      candidatesConsidered: inGroup.length + anywhere.length,
+      candidatesConsidered: primaryMembers.length + supportingMembers.length + anywhere.length,
       crossTeam: true,
       preferredAgentUsed: false,
       reason:
@@ -257,14 +313,14 @@ async function assign(
   }
 
   /* ---- 4. nobody at all -------------------------------------------- */
-  const reason = inGroup.length
-    ? `all ${inGroup.length} agent(s) in ${groupName || groupKey} at or above the workload cap (${cap}), and no one else qualifies`
+  const reason = (primaryMembers.length + supportingMembers.length)
+    ? `all ${primaryMembers.length + supportingMembers.length} agent(s) in ${groupName || groupKey} at or above the workload cap (${cap}), and no one else qualifies`
     : `no available agent with skill level >= ${minSkillLevel} in ${groupName || groupKey} or any other team`;
   logger.warn(`[assignment] ${groupName || groupKey}: awaiting assignment — ${reason}`);
   return {
     ...base,
     agent: null,
-    candidatesConsidered: inGroup.length + anywhere.length,
+    candidatesConsidered: primaryMembers.length + supportingMembers.length + anywhere.length,
     crossTeam: false,
     preferredAgentUsed: false,
     reason,

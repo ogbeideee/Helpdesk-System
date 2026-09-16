@@ -701,6 +701,8 @@ body {
 .chip-role-admin { background: var(--violet-soft-2); color: var(--violet); border-color: transparent; }
 .chip-role-agent { background: var(--info-soft); color: var(--info); border-color: transparent; }
 .chip-role-user  { background: var(--neutral-soft-2); color: var(--text-dim); border-color: transparent; }
+.chip-primary    { background: var(--primary-soft); color: var(--primary-2); border-color: transparent; }
+.chip-supporting { background: var(--warning-soft); color: var(--warning); border-color: transparent; font-style: italic; }
 
 .ticket-no {
   font-family: var(--font-mono);

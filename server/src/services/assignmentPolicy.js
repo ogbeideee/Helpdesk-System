@@ -76,22 +76,48 @@ function skillLabel(level) {
 async function listCandidates(ticket, actor, client = prisma) {
   const admin = isAdmin(actor);
 
-  // Agents an admin can reach: every staff member. An agent: the ticket's
-  // group only. USER-role accounts never appear — they cannot hold tickets.
-  const where = admin
-    ? { role: { in: STAFF_ROLES } }
-    : { teamId: ticket.teamId, role: { in: STAFF_ROLES } };
-  const agents = await client.agent.findMany({
-    where,
-    include: { team: true },
-    orderBy: [{ isActive: 'desc' }, { isAvailable: 'desc' }, { name: 'asc' }],
-  });
+  // Build the agent set for this context. An admin sees every staff member.
+  // An agent sees primary members of their group PLUS supporting members
+  // (agents with a TeamMembership in the group but a different primary team).
+  let agents;
+  if (admin) {
+    agents = await client.agent.findMany({
+      where: { role: { in: STAFF_ROLES } },
+      include: { team: true },
+      orderBy: [{ isActive: 'desc' }, { isAvailable: 'desc' }, { name: 'asc' }],
+    });
+  } else {
+    const [primary, supporting] = await Promise.all([
+      client.agent.findMany({
+        where: { teamId: ticket.teamId, role: { in: STAFF_ROLES } },
+        include: { team: true },
+        orderBy: [{ isActive: 'desc' }, { isAvailable: 'desc' }, { name: 'asc' }],
+      }),
+      ticket.teamId
+        ? client.agent.findMany({
+            where: {
+              role: { in: STAFF_ROLES },
+              teamId: { not: ticket.teamId },
+              memberships: { some: { teamId: ticket.teamId } },
+            },
+            include: { team: true },
+            orderBy: [{ isActive: 'desc' }, { isAvailable: 'desc' }, { name: 'asc' }],
+          })
+        : Promise.resolve([]),
+    ]);
+    // Deduplicate (primary wins if an agent somehow matches both).
+    const seen = new Set(primary.map((a) => a.id));
+    agents = primary.concat(supporting.filter((a) => !seen.has(a.id)));
+  }
 
   const counts = await workloadByAgent(agents.map((a) => a.id), client);
 
   return agents
     .map((a) => {
-      const decision = checkTarget(ticket, actor, a);
+      const isSupportingMember = Boolean(
+        ticket.teamId && a.teamId !== ticket.teamId
+      );
+      const decision = checkTarget(ticket, actor, a, { isSupportingMember });
       return {
         id: a.id,
         name: a.name,
@@ -104,13 +130,12 @@ async function listCandidates(ticket, actor, client = prisma) {
         assignmentGroupKey: a.team ? a.team.key : null,
         openTickets: counts.get(a.id) || 0,
         isCurrentAssignee: a.id === ticket.assignedAgentId,
+        isSupportingMember: isSupportingMember || undefined,
         selectable: decision.ok,
         reason: decision.ok ? null : decision.error,
       };
     })
     .sort((a, b) => {
-      // Prefer available agents, then the lightest workload. An unavailable
-      // agent is never the first suggestion, even for an admin.
       if (a.available !== b.available) return a.available ? -1 : 1;
       if (a.selectable !== b.selectable) return a.selectable ? -1 : 1;
       return a.openTickets - b.openTickets;
@@ -119,9 +144,10 @@ async function listCandidates(ticket, actor, client = prisma) {
 
 /**
  * May `actor` move `ticket` to `target`?
+ * @param {object} [opts] - { isSupportingMember: boolean }
  * @returns {{ ok: true } | { ok: false, status: number, error: string }}
  */
-function checkTarget(ticket, actor, target) {
+function checkTarget(ticket, actor, target, opts = {}) {
   if (!target) {
     return { ok: false, status: 404, error: 'Agent not found' };
   }
@@ -179,12 +205,19 @@ function checkTarget(ticket, actor, target) {
       error: 'This ticket has no assignment group — an administrator must route it first',
     };
   }
+  // A non-admin agent may assign to a supporting member (someone whose primary
+  // team differs but who belongs via TeamMembership) for low/moderate priority
+  // tickets only.
+  const LOW_MODERATE = ['low', 'moderate'];
   if (target.teamId !== ticket.teamId) {
-    return {
-      ok: false,
-      status: 403,
-      error: 'You can only reassign within your own assignment group',
-    };
+    const isSupporting = opts.isSupportingMember === true;
+    if (!isSupporting || !LOW_MODERATE.includes(ticket.priority)) {
+      return {
+        ok: false,
+        status: 403,
+        error: 'You can only reassign within your own assignment group',
+      };
+    }
   }
   return { ok: true };
 }

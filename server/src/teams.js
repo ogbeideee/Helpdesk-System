@@ -30,6 +30,11 @@ const TEAM_DEFS = [
     name: 'Network Team',
     description: 'Connectivity: WiFi, LAN, VPN, routers and firewalls.',
   },
+  {
+    key: 'field_ops',
+    name: 'Field Operations',
+    description: 'On-site installation: LAN cabling, router/switch setup, point-of-sale and premises wiring.',
+  },
 ];
 
 // Category -> default owning team.

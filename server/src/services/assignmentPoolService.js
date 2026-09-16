@@ -257,6 +257,7 @@ async function listGroupPools(client = prisma) {
             openTickets < cap,
           isLead: Boolean((leadByPair.get(a.id) || new Map()).get(team.id)),
           isPrimaryGroup: a.teamId === team.id,
+          isSupportingMember: a.teamId !== null && a.teamId !== team.id && (memberTeams.get(a.id) || new Set()).has(team.id),
           openTickets,
         };
       })

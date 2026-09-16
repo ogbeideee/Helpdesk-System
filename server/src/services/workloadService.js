@@ -132,8 +132,9 @@ function hoursUntilClaimable(ticket, now = Date.now()) {
  * own group at any time, or one assigned to somebody else only once it has
  * been unattended for the threshold.
  */
-function checkClaim(ticket, actor, now = Date.now()) {
+function checkClaim(ticket, actor, opts = {}) {
   const { isAdmin } = require('./assignmentPolicy');
+  const now = Date.now();
   if (!actor) return { ok: false, status: 401, error: 'Authentication required' };
 
   if (['RESOLVED', 'CLOSED'].includes(ticket.state)) {
@@ -150,7 +151,13 @@ function checkClaim(ticket, actor, now = Date.now()) {
     return { ok: false, status: 403, error: 'You must be active and available to take tickets' };
   }
   if (ticket.teamId && actor.teamId !== ticket.teamId) {
-    return { ok: false, status: 403, error: 'You can only take tickets in your own assignment group' };
+    // A supporting member (primary team differs, but a member of the ticket's
+    // group via TeamMembership) may only take low/moderate priority tickets.
+    const supporting = opts.isSupportingMember === true;
+    const lowModerate = ['low', 'moderate'].includes(ticket.priority);
+    if (!supporting || !lowModerate) {
+      return { ok: false, status: 403, error: 'You can only take tickets in your own assignment group' };
+    }
   }
 
   if (ticket.assignedAgentId) {
@@ -541,14 +548,19 @@ async function rebalanceOnce({ actor = 'system (workload balancer)', client = pr
   });
 
   // The receiving agent must actually be qualified for the ticket, which means
-  // asking the routing rules what skill it requires. Evaluated lazily, in
-  // preference order, so we stop at the first ticket they can take.
+  // asking the routing rules what skill it requires, AND for a cross-team move
+  // (quietest agent's primary team differs from the ticket's group) only
+  // low/moderate priority tickets qualify — supporting members cannot receive
+  // high/critical tickets.
   const qualified = async (t) => {
     const decision = await assignmentEngine.decide(
       { category: t.category, priority: t.priority, text: `${t.shortDescription}\n${t.body || ''}` },
       client
     );
-    return quietest.agent.skillLevel >= decision.minSkillLevel;
+    if (quietest.agent.skillLevel < decision.minSkillLevel) return false;
+    // Cross-team (supporting member) eligibility: only low/moderate tickets.
+    if (t.teamId && quietest.agent.teamId !== t.teamId && !['low', 'moderate'].includes(t.priority)) return false;
+    return true;
   };
 
   // Preference: NEW in the receiver's own group, then NEW anywhere, then

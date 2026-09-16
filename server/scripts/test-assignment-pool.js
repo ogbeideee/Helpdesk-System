@@ -245,7 +245,7 @@ async function mkTicket(overrides = {}) {
       prisma, QUIET
     );
     eq('D4 no unavailable/offline group member is chosen', decision.agent && decision.agent.id, carol.id);
-    eq('D5 the fallback is marked cross-team and keeps the group', decision.crossTeam, true);
+    eq('D5 the fallback uses the supporting member in-group (not cross-team)', decision.crossTeam, false);
     eq('D6 the ticket still belongs to its group', decision.teamId, net.id);
   }
 
@@ -546,6 +546,106 @@ async function mkTicket(overrides = {}) {
     eq('I5 no new cycle appeared', await prisma.ticketSlaCycle.count({ where: { ticketId: slaTicket.id } }), 1);
     eq('I6 no SLA events were written by availability changes',
       await prisma.ticketSlaEvent.count({ where: { ticketId: slaTicket.id } }), eventsBefore);
+  }
+
+  /* ==================================================================== */
+  /* J. Supporting member eligibility                                     */
+  /* ==================================================================== */
+  console.log('\n--- J. supporting member eligibility ---');
+  {
+    // carol: primary team = apps, supporting member of net (membership row).
+    // alice: primary team = net, supporting member of apps (membership row).
+    // Both online, active, skill-1 (carol) / skill-2 (alice).
+
+    // --- J1-J4: manual assignment via checkTarget ---
+    // Tickets must be assigned to the actor for checkTarget to pass the
+    // "you can only reassign tickets assigned to you" rule.
+    const ticketForNet = await mkTicket({ teamId: net.id, state: 'NEW', priority: 'low', assignedAgentId: alice.id });
+    const ticketForNetHigh = await mkTicket({ teamId: net.id, state: 'NEW', priority: 'high', assignedAgentId: alice.id });
+    const carolAgent = await prisma.agent.findUnique({ where: { id: carol.id } });
+    const bobAgent = await prisma.agent.findUnique({ where: { id: bob.id } });
+
+    // Non-admin alice (net primary) can assign low ticket to carol (net supporting).
+    eq('J1 agent assigns low ticket to supporting member: allowed',
+      assignmentPolicy.checkTarget(ticketForNet, { id: alice.id, role: 'agent' }, carolAgent, { isSupportingMember: true }).ok,
+      true);
+
+    // Non-admin alice cannot assign high ticket to carol (net supporting member).
+    eq('J2 agent assigns high ticket to supporting member: blocked',
+      assignmentPolicy.checkTarget(ticketForNetHigh, { id: alice.id, role: 'agent' }, carolAgent, { isSupportingMember: true }).ok,
+      false);
+
+    // Admin can assign any priority to a supporting member.
+    eq('J3 admin assigns high ticket to supporting member: allowed',
+      assignmentPolicy.checkTarget(ticketForNetHigh, { id: admin.id, role: 'admin' }, carolAgent, { isSupportingMember: true }).ok,
+      true);
+
+    // Same-team member unaffected: bob has teamId = net.id (same as ticket's
+    // team), so isSupportingMember is false and any priority works.
+    eq('J4 agent assigns high ticket to same-group member: allowed',
+      assignmentPolicy.checkTarget(ticketForNetHigh, { id: alice.id, role: 'agent' }, bobAgent, { isSupportingMember: false }).ok,
+      true);
+
+    // --- J5-J8: automatic assignment engine ---
+    // Carol is skill-1, supporting net. Low ticket in net: she should be
+    // reachable in the supporting group step (step 2).
+    const j5 = await assignmentEngine.assign(
+      { category: 'Inquiry / Help', priority: 'low', text: 'supporting test low', forceTeamId: net.id },
+      prisma, QUIET
+    );
+    // The engine should have found candidates and picked one.
+    check('J5 engine picks someone for low net ticket', Boolean(j5.agent));
+
+    // High ticket in net with carol as only supporting member and no primary
+    // members available: she should be blocked (step 2 excludes supporting
+    // members for high priority).
+// Make every agent except carol unavailable, so only carol (supporting
+    // member of net) is eligible for in-group assignment.
+    await prisma.agent.updateMany({
+      where: { id: { not: carol.id } },
+      data: { isAvailable: false },
+    });
+    const j6 = await assignmentEngine.assign(
+      { category: 'Inquiry / Help', priority: 'high', text: 'supporting test high', forceTeamId: net.id },
+      prisma, QUIET
+    );
+    eq('J6 high ticket in net with only supporting member available: awaiting assignment',
+      j6.awaitingAssignment, true);
+    eq('J6b no agent assigned', j6.agent, null);
+
+    // Low ticket in net with only supporting member available: should assign
+    // to carol (supporting member of net).
+    const j7 = await assignmentEngine.assign(
+      { category: 'Inquiry / Help', priority: 'low', text: 'supporting test low 2', forceTeamId: net.id },
+      prisma, QUIET
+    );
+    eq('J7 low ticket with only supporting member available: assigned',
+      j7.agent ? j7.agent.id : null, carol.id);
+
+    // Restore availability for everyone.
+    await prisma.agent.updateMany({ where: { isAvailable: false }, data: { isAvailable: true } });
+
+    // --- J9-J10: pool card flags ---
+    const poolsAfter = await poolService.listGroupPools();
+    const netPoolAfter = poolsAfter.find((p) => p.key === 'pool-net');
+    const carolCard = netPoolAfter.agents.find((a) => a.id === carol.id);
+    eq('J9 pool card marks carol as supporting member of net', carolCard.isSupportingMember, true);
+    const aliceCard = netPoolAfter.agents.find((a) => a.id === alice.id);
+    eq('J10 pool card marks alice as primary member of net', aliceCard.isSupportingMember, false);
+
+    // --- J11: preferred agent supporting member blocked for high ---
+    const prefRule = await prisma.routingRule.create({
+      data: {
+        name: 'Supporting preferred rule', keywords: 'supportrule', teamId: net.id,
+        preferredAgentId: carol.id, minimumSkillLevel: 1, priority: 2, isActive: true,
+      },
+    });
+    const j11 = await assignmentEngine.assign(
+      { category: 'Inquiry / Help', priority: 'high', text: 'supportrule must route to carol but she is supporting' },
+      prisma, QUIET
+    );
+    eq('J11 preferred supporting member blocked for high priority', j11.preferredAgentUsed, false);
+    await prisma.routingRule.delete({ where: { id: prefRule.id } });
   }
 
   console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILURE(S)`);

@@ -125,6 +125,7 @@ export const api = {
   updateRoutingRule: (id, payload) => request(`/routing/rules/${id}`, patch(payload)),
   deleteRoutingRule: (id) => request(`/routing/rules/${id}`, { method: 'DELETE' }),
   updateAssignmentGroup: (id, payload) => request(`/routing/groups/${id}`, patch(payload)),
+  createAssignmentGroup: (payload) => request('/routing/groups', body(payload)),
   routingAudit: () => request('/routing/audit'),
   previewRouting: (payload) => request('/routing/preview', body(payload)),
 
@@ -141,6 +142,8 @@ export const api = {
   // ---- agent administration ----
   createAgent: (payload) => request('/agents', body(payload)),
   updateAgent: (id, payload) => request(`/agents/${id}`, patch(payload)),
+  addAgentMembership: (id, teamId) => request(`/agents/${id}/memberships`, body({ teamId })),
+  removeAgentMembership: (id, teamId) => request(`/agents/${id}/memberships/${teamId}`, { method: 'DELETE' }),
 
   // ---- SLA settings (admin) ----
   slaSettings: () => request('/sla/settings'),

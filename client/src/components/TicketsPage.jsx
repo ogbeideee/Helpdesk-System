@@ -50,11 +50,11 @@ function fromQuery(query) {
 const PRIORITY_RANK = { critical: 0, high: 1, moderate: 2, low: 3 };
 const STATE_RANK = { NEW: 0, IN_PROGRESS: 1, RESOLVED: 2, CLOSED: 3 };
 const SORTS = {
-  updated: { label: 'Updated', get: (t) => -new Date(t.updatedAt).getTime() },
-  age: { label: 'Age', get: (t) => new Date(t.createdAt).getTime() },
-  priority: { label: 'Priority', get: (t) => PRIORITY_RANK[t.priority] ?? 9 },
-  status: { label: 'Status', get: (t) => STATE_RANK[t.state] ?? 9 },
-  ticket: { label: 'Ticket number', get: (t) => String(t.ticketNumber) },
+  updated: { label: 'Recently updated', dir: 'desc', get: (t) => new Date(t.updatedAt).getTime() },
+  created: { label: 'Created', dir: 'desc', get: (t) => new Date(t.createdAt).getTime() },
+  priority: { label: 'Priority', dir: 'asc', get: (t) => PRIORITY_RANK[t.priority] ?? 9 },
+  status: { label: 'Status', dir: 'asc', get: (t) => STATE_RANK[t.state] ?? 9 },
+  ticket: { label: 'Ticket number', dir: 'asc', get: (t) => String(t.ticketNumber) },
 };
 
 function SortArrow({ dir }) {
@@ -116,7 +116,7 @@ export default function TicketsPage({ onOpen, initialFilters }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
-  const [sort, setSort] = useState({ key: 'updated', dir: 'asc' });
+  const [sort, setSort] = useState({ key: 'updated', dir: SORTS.updated.dir });
   const [moreOpen, setMoreOpen] = useState(false);
   const searchRef = useRef(null);
 
@@ -267,6 +267,27 @@ export default function TicketsPage({ onOpen, initialFilters }) {
 
       {(moreOpen || secondaryCount > 0) && (
         <div className="filter-row">
+          <label className="mini-field">
+            <span>Sort by</span>
+            <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+              <select
+                value={sort.key}
+                onChange={(e) => setSort({ key: e.target.value, dir: SORTS[e.target.value].dir || sort.dir })}
+                style={{ flex: 1 }}
+              >
+                {Object.entries(SORTS).map(([key, s]) => <option key={key} value={key}>{s.label}</option>)}
+              </select>
+              <button
+                type="button"
+                className="btn btn-icon btn-sm"
+                style={{ padding: '2px 6px', fontSize: 13, whiteSpace: 'nowrap' }}
+                onClick={() => setSort((s) => ({ ...s, dir: s.dir === 'asc' ? 'desc' : 'asc' }))}
+                title={sort.dir === 'asc' ? 'Ascending' : 'Descending'}
+              >
+                {sort.dir === 'asc' ? '↑ Asc' : '↓ Desc'}
+              </button>
+            </div>
+          </label>
           <label className="mini-field">
             <span>Priority</span>
             <select value={filters.priority} onChange={(e) => setFilter('priority', e.target.value)}>

@@ -67,6 +67,20 @@ const DEFAULT_RULES = [
     groupKey: 'service_desk',
     keywords: [],
   },
+  {
+    name: 'Field Operations',
+    priority: 30,
+    category: null,
+    groupKey: 'field_ops',
+    minimumSkillLevel: 'JUNIOR',
+    keywords: [
+      'field', 'on-site', 'site', 'cable', 'cabling', 'wiring', 'terminate',
+      'router setup', 'switch installation', 'pos', 'point of sale',
+      'cctv', 'data rack', 'outlet', 'premises', 'branch',
+      'installation', 'install', 'physical',
+      'cable run', 'cable management', 'patch panel', 'faceplate', 'keystone',
+    ],
+  },
 ];
 
 /**

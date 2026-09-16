@@ -6,6 +6,7 @@ const { OPEN_STATES } = require('../src/states');
 const userService = require('../src/services/userService');
 const workloadService = require('../src/services/workloadService');
 const handoverService = require('../src/services/handoverService');
+const membershipService = require('../src/services/groupMembershipService');
 
 const router = express.Router();
 router.use(requireAdmin);
@@ -25,6 +26,10 @@ router.get('/', async (req, res) => {
         orderBy: [{ teamId: 'asc' }, { name: 'asc' }],
         include: {
           team: true,
+          memberships: {
+            include: { team: true },
+            orderBy: { id: 'asc' },
+          },
           _count: {
             select: { assignedTickets: { where: { state: { in: OPEN_STATES } } } },
           },
@@ -42,6 +47,12 @@ router.get('/', async (req, res) => {
         skillLevel: a.skillLevel,
         assignmentGroup: a.team ? a.team.name : null,
         assignmentGroupKey: a.team ? a.team.key : null,
+        memberships: a.memberships.map((m) => ({
+          teamId: m.teamId,
+          teamKey: m.team.key,
+          teamName: m.team.name,
+          isLead: m.isLead,
+        })),
         externalIdentityId: a.externalId,
         externalProvider: a.externalProvider,
         lastAssignedAt: a.lastAssignedAt,
@@ -242,6 +253,60 @@ router.get('/:id/audit', async (req, res) => {
     });
     res.json({ agentId: id, events });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---- group membership management (admin only) ----------------------------
+
+// POST /api/agents/:id/memberships — add agent to an assignment group
+router.post('/:id/memberships', async (req, res) => {
+  try {
+    const agentId = Number(req.params.id);
+    if (!Number.isInteger(agentId)) return res.status(404).json({ error: 'Agent not found' });
+
+    const teamId = Number(req.body.teamId);
+    if (!Number.isInteger(teamId)) return res.status(400).json({ error: 'teamId is required' });
+
+    const row = await membershipService.addMember({
+      agentId,
+      teamId,
+      isLead: Boolean(req.body.isLead),
+      actor: req.agent,
+    });
+    const team = await prisma.team.findUnique({ where: { id: teamId }, select: { name: true, key: true } });
+    res.status(201).json({
+      id: row.id,
+      teamId: row.teamId,
+      teamName: team.name,
+      teamKey: team.key,
+      isLead: row.isLead,
+    });
+  } catch (err) {
+    if (err.name === 'GroupMembershipError') {
+      return res.status(409).json({ error: err.message, code: err.code });
+    }
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/agents/:id/memberships/:teamId — remove agent from a group
+router.delete('/:id/memberships/:teamId', async (req, res) => {
+  try {
+    const agentId = Number(req.params.id);
+    const teamId = Number(req.params.teamId);
+    if (!Number.isInteger(agentId) || !Number.isInteger(teamId)) {
+      return res.status(404).json({ error: 'Agent or group not found' });
+    }
+
+    await membershipService.removeMember({ agentId, teamId, actor: req.agent });
+    res.json({ removed: true, teamId });
+  } catch (err) {
+    if (err.name === 'GroupMembershipError') {
+      return err.code === 'LEAD_REMOVAL_FORBIDDEN'
+        ? res.status(409).json({ error: err.message, code: err.code })
+        : res.status(404).json({ error: err.message });
+    }
     res.status(500).json({ error: err.message });
   }
 });

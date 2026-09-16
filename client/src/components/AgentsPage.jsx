@@ -230,9 +230,18 @@ export default function AgentsPage({ me }) {
                     </td>
                     <td><span className={`chip chip-role-${a.role}`}>{String(a.role || '').toUpperCase()}</span></td>
                     <td>
-                      {a.assignmentGroup
-                        ? <span className="chip">{a.assignmentGroup}</span>
-                        : <span className="muted small">Triage</span>}
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
+                        {a.assignmentGroup
+                          ? <span className="chip chip-primary">{a.assignmentGroup}</span>
+                          : <span className="chip chip-off">Triage</span>}
+                        {(a.memberships || [])
+                          .filter((m) => m.teamName !== a.assignmentGroup)
+                          .map((m) => (
+                            <span key={m.teamId} className="chip chip-supporting" title="Supporting member">
+                              {m.teamName}{m.isLead ? ' ★' : ''}
+                            </span>
+                          ))}
+                      </div>
                     </td>
                     <td><span className={`chip chip-skill-${a.skillLevel}`}>{SKILL_SHORT[a.skillLevel]} · {SKILL_LABELS[a.skillLevel]}</span></td>
                     <td>
@@ -474,6 +483,12 @@ function AvailabilityTimeline({ agents, dataVersion }) {
 
 function AgentEditor({ agent, teams, onClose, onSaved }) {
   const editing = Boolean(agent);
+  // Derive supporting teams directly from props every render, never stale.
+  const supportingTeams = editing
+    ? (agent.memberships || []).filter(
+        (m) => m.teamKey !== (teams.find((t) => t.id === agent.teamId) || {}).key
+      ).map((m) => m.teamKey)
+    : [];
   const [form, setForm] = useState({
     name: agent?.name || '',
     email: agent?.email || '',
@@ -482,13 +497,47 @@ function AgentEditor({ agent, teams, onClose, onSaved }) {
     skillLevel: agent?.skillLevel || 2,
     role: agent?.role || 'agent',
   });
+  const [addingTeamKey, setAddingTeamKey] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  // Changing an existing agent's password is a separate, deliberate act. The
-  // field is not rendered until it is requested, so there is nothing for the
-  // browser's password manager to fill while an admin edits a name or a group.
   const [changingPassword, setChangingPassword] = useState(false);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  // Teams not already selected as primary or supporting.
+  const availableTeams = teams.filter(
+    (t) => t.key !== form.teamKey && !supportingTeams.includes(t.key)
+  );
+
+  async function addSupportingTeam() {
+    if (!addingTeamKey || !editing) return;
+    setBusy(true);
+    setError('');
+    try {
+      const team = teams.find((t) => t.key === addingTeamKey);
+      await api.addAgentMembership(agent.id, team.id);
+      setAddingTeamKey('');
+      onSaved(`Added to ${team.name}`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeSupportingTeam(teamKey) {
+    if (!editing) return;
+    setBusy(true);
+    setError('');
+    try {
+      const team = teams.find((t) => t.key === teamKey);
+      await api.removeAgentMembership(agent.id, team.id);
+      onSaved(`Removed from ${team.name}`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -502,9 +551,6 @@ function AgentEditor({ agent, teams, onClose, onSaved }) {
           skillLevel: Number(form.skillLevel),
           role: form.role,
         };
-        // Gated on the admin having opened the password control, not merely on
-        // the field holding a value: autofill puts a value there without anyone
-        // typing, and that used to be enough to overwrite the real password.
         if (changingPassword && form.password) patchBody.password = form.password;
         await api.updateAgent(agent.id, patchBody);
         onSaved(`${form.name} updated`);
@@ -527,7 +573,7 @@ function AgentEditor({ agent, teams, onClose, onSaved }) {
   }
 
   return (
-    <Modal title={editing ? `Edit ${agent.name}` : 'New agent'} onClose={onClose} width={480}>
+    <Modal title={editing ? `Edit ${agent.name}` : 'New agent'} onClose={onClose} width={520}>
       <form onSubmit={handleSubmit} autoComplete="off">
         {error && <div className="callout callout-error">{error}</div>}
         <Field label="Full name" required>
@@ -574,7 +620,7 @@ function AgentEditor({ agent, teams, onClose, onSaved }) {
           )
         )}
         <div className="form-grid-2">
-          <Field label="Assignment group">
+          <Field label="Primary group" hint="The agent's main assignment group">
             <select value={form.teamKey} onChange={set('teamKey')}>
               <option value="">Triage (no group)</option>
               {teams.map((t) => <option key={t.key} value={t.key}>{t.name}</option>)}
@@ -588,6 +634,62 @@ function AgentEditor({ agent, teams, onClose, onSaved }) {
             </select>
           </Field>
         </div>
+
+        {editing && (
+          <Field label="Supporting groups" hint="Up to 3 groups total including the primary. Supporting members receive only low/moderate priority tickets in these groups.">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {/* Current supporting groups */}
+              {supportingTeams.length === 0 && (
+                <span className="muted small">None yet</span>
+              )}
+              {supportingTeams.map((key) => {
+                const t = teams.find((x) => x.key === key);
+                return (
+                  <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span className="chip chip-supporting">{t ? t.name : key}</span>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => removeSupportingTeam(key)}
+                      disabled={busy}
+                      title="Remove from this group"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                );
+              })}
+              {/* Add new supporting group */}
+              {(supportingTeams.length + (form.teamKey ? 1 : 0)) < 3 ? (
+                availableTeams.length > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                    <select
+                      value={addingTeamKey}
+                      onChange={(e) => setAddingTeamKey(e.target.value)}
+                      style={{ flex: 1 }}
+                    >
+                      <option value="">Select a group…</option>
+                      {availableTeams.map((t) => <option key={t.key} value={t.key}>{t.name}</option>)}
+                    </select>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={addSupportingTeam}
+                      disabled={busy || !addingTeamKey}
+                    >
+                      Add
+                    </button>
+                  </div>
+                )
+              ) : availableTeams.length > 0 ? (
+                <span className="muted small">Max groups reached (3/3)</span>
+              ) : (
+                <span className="muted small">No other groups available</span>
+              )}
+            </div>
+          </Field>
+        )}
+
         <Field label="Role" hint="USER cannot be assigned tickets. ADMIN can manage users.">
           <select value={form.role} onChange={set('role')}>
             <option value="user">User</option>

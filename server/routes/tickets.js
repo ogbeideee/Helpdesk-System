@@ -798,7 +798,16 @@ async function takeTicket(req, res) {
     });
     if (!ticket) return;
 
-    const verdict = workloadService.checkClaim(ticket, req.agent);
+    const verdict = workloadService.checkClaim(ticket, req.agent, {
+      isSupportingMember: Boolean(
+        ticket.teamId &&
+        req.agent.teamId !== ticket.teamId &&
+        (await prisma.teamMembership.findUnique({
+          where: { agentId_teamId: { agentId: req.agent.id, teamId: ticket.teamId } },
+          select: { id: true },
+        }))
+      ),
+    });
     if (!verdict.ok) return res.status(verdict.status).json({ error: verdict.error });
 
     const outcome = await workloadService.moveTicket({

@@ -4,6 +4,73 @@ import {
   Spinner, ErrorState, EmptyState, Modal, ConfirmDialog, Field, useToast, timeAgo,
 } from './ui.jsx';
 
+function GroupEditor({ group, onClose, onSaved, showToast }) {
+  const editingExisting = Boolean(group);
+  const [form, setForm] = useState({
+    name: group?.name || '',
+    key: group?.key || '',
+    description: group?.description || '',
+  });
+  const [busy, setBusy] = useState(false);
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  async function submit(e) {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      if (editingExisting) {
+        await api.updateAssignmentGroup(group.id, {
+          name: form.name,
+          description: form.description || null,
+        });
+        showToast('Assignment group updated');
+      } else {
+        await api.createAssignmentGroup({
+          name: form.name,
+          key: form.key,
+          description: form.description || null,
+        });
+        showToast('Assignment group created');
+      }
+      await onSaved();
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title={editingExisting ? `Edit ${group.name}` : 'New assignment group'} onClose={onClose} width={460}>
+      <form onSubmit={submit}>
+        <Field label="Name" required>
+          <input value={form.name} onChange={set('name')} required autoFocus placeholder="e.g. IT Security" />
+        </Field>
+        {!editingExisting && (
+          <Field label="Key" required hint="Unique lowercase slug.">
+            <input
+              value={form.key}
+              onChange={set('key')}
+              required
+              placeholder="e.g. it_security"
+              pattern="[a-zA-Z0-9_]+"
+            />
+          </Field>
+        )}
+        <Field label="Description">
+          <textarea rows={2} value={form.description} onChange={set('description')} />
+        </Field>
+        <div className="modal-actions">
+          <button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>Cancel</button>
+          <button type="submit" className="btn btn-primary" disabled={busy}>
+            {busy ? 'Saving…' : editingExisting ? 'Save changes' : 'Create group'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 const SKILL_OPTIONS = [
   { value: '', label: 'Any skill' },
   { value: 'JUNIOR', label: 'Junior' },
@@ -18,6 +85,7 @@ export default function RoutingPage() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [editingGroup, setEditingGroup] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [previewText, setPreviewText] = useState('');
   const [preview, setPreview] = useState(null);
@@ -162,7 +230,10 @@ export default function RoutingPage() {
       )}
 
       <section className="card" style={{ paddingTop: 16 }}>
-        <div className="card-head"><h2>Assignment Groups</h2></div>
+        <div className="card-head">
+          <h2>Assignment Groups</h2>
+          <button className="btn btn-ghost btn-sm" onClick={() => setEditingGroup('new')}>New group</button>
+        </div>
         {groups.map((g) => (
           <div key={g.id} className="kv-row">
             <span>
@@ -171,7 +242,10 @@ export default function RoutingPage() {
               {!g.isActive && <span className="chip chip-off" style={{ marginLeft: 6 }}>inactive</span>}
               {g.description && <span className="muted small" style={{ marginLeft: 6 }}>— {g.description}</span>}
             </span>
-            <span className="muted small tnum">{g.agentCount} agents · {g.ruleCount} rules</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span className="muted small tnum">{g.agentCount} agents · {g.ruleCount} rules</span>
+              <button className="btn btn-ghost btn-sm" onClick={() => setEditingGroup(g)}>Edit</button>
+            </span>
           </div>
         ))}
       </section>
@@ -184,6 +258,15 @@ export default function RoutingPage() {
           agents={agents}
           onClose={() => setEditing(null)}
           onSaved={async () => { setEditing(null); await load(); }}
+          showToast={showToast}
+        />
+      )}
+
+      {editingGroup && (
+        <GroupEditor
+          group={editingGroup === 'new' ? null : editingGroup}
+          onClose={() => setEditingGroup(null)}
+          onSaved={async () => { setEditingGroup(null); await load(); }}
           showToast={showToast}
         />
       )}

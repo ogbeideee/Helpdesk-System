@@ -315,6 +315,20 @@ async function backfillFromLegacyTeamId(client = prisma) {
   return { total: agents.length, created, existing };
 }
 
+/**
+ * Is this agent a "supporting" member of the given team?
+ * An agent is a supporting member when they belong to the team (via
+ * TeamMembership) but their primary group (Agent.teamId) is a different team.
+ */
+async function isSupportingMember(agentId, teamId, client = prisma) {
+  const agent = await client.agent.findUnique({
+    where: { id: agentId },
+    select: { teamId: true },
+  });
+  if (!agent || agent.teamId === null || agent.teamId === teamId) return false;
+  return isMember(agentId, teamId, client);
+}
+
 module.exports = {
   MAX_GROUPS_PER_AGENT,
   GroupMembershipError,
@@ -330,4 +344,5 @@ module.exports = {
   removeMember,
   ensureSingleLeadIndex,
   backfillFromLegacyTeamId,
+  isSupportingMember,
 };

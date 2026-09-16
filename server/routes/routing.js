@@ -169,6 +169,42 @@ router.get('/groups', async (req, res) => {
   }
 });
 
+// POST /api/routing/groups — create a new assignment group (admin only)
+router.post('/groups', async (req, res) => {
+  try {
+    const name = String(req.body.name || '').trim();
+    const key = String(req.body.key || '').trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_|_$/g, '');
+    const description = req.body.description ? String(req.body.description).trim() : null;
+
+    const errors = [];
+    if (!name) errors.push('name is required');
+    if (!key) errors.push('key is required (alphanumeric slug, e.g. "it_security")');
+    if (errors.length) return res.status(400).json({ errors });
+
+    const existing = await prisma.team.findUnique({ where: { key } });
+    if (existing) return res.status(409).json({ error: `A group with key "${key}" already exists` });
+
+    const team = await prisma.team.create({
+      data: { name, key, description, isActive: true, isDefault: false },
+    });
+    await auditService.record(prisma, {
+      action: 'group.created',
+      entityType: 'Team',
+      entityId: team.id,
+      entityLabel: team.name,
+      actor: req.agent,
+      to: { key: team.key, name: team.name, description: team.description },
+      description: `Assignment group "${team.name}" created`,
+    });
+    res.status(201).json(team);
+  } catch (err) {
+    if (err.code === 'P2002') {
+      return res.status(409).json({ error: 'A group with that key already exists' });
+    }
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // PATCH /api/routing/groups/:id — description / active / default
 router.patch('/groups/:id', async (req, res) => {
   try {
