@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
 import { api, getToken } from './api.js';
 import { PageHeaderContext } from './pageHeader.js';
 import { Avatar, Icon } from './components/ui.jsx';
@@ -6,24 +6,31 @@ import Login from './components/Login.jsx';
 import ErrorBoundary from './components/ErrorBoundary.jsx';
 import Dashboard from './components/Dashboard.jsx';
 import TicketsPage from './components/TicketsPage.jsx';
-import TicketDetail from './components/TicketDetail.jsx';
-import TicketForm from './components/TicketForm.jsx';
-import AgentsPage from './components/AgentsPage.jsx';
-import RoutingPage from './components/RoutingPage.jsx';
-import SlaSettingsPage from './components/SlaSettingsPage.jsx';
-import SlaReportsPage from './components/SlaReportsPage.jsx';
-import ReportsPage from './components/ReportsPage.jsx';
-import AuditTrailPage from './components/AuditTrailPage.jsx';
-import GroupsPage from './components/GroupsPage.jsx';
-import SimulateEmailPage from './components/SimulateEmailPage.jsx';
 import AvailabilityControl from './components/AvailabilityControl.jsx';
-import HandoversPage from './components/HandoversPage.jsx';
-import EmailRulesPage from './components/EmailRulesPage.jsx';
-import Microsoft365Page from './components/Microsoft365Page.jsx';
 import TopBar from './components/TopBar.jsx';
+
+// Everything below the first screen loads on demand: each screen is its own
+// chunk, fetched the first time its route is opened. The shell — Login,
+// Dashboard, the ticket list and the sidebar — stays in the entry bundle.
+const TicketDetail = lazy(() => import('./components/TicketDetail.jsx'));
+const TicketForm = lazy(() => import('./components/TicketForm.jsx'));
+const AgentsPage = lazy(() => import('./components/AgentsPage.jsx'));
+const RoutingPage = lazy(() => import('./components/RoutingPage.jsx'));
+const SlaSettingsPage = lazy(() => import('./components/SlaSettingsPage.jsx'));
+const SlaReportsPage = lazy(() => import('./components/SlaReportsPage.jsx'));
+const ReportsPage = lazy(() => import('./components/ReportsPage.jsx'));
+const AuditTrailPage = lazy(() => import('./components/AuditTrailPage.jsx'));
+const GroupsPage = lazy(() => import('./components/GroupsPage.jsx'));
+const SimulateEmailPage = lazy(() => import('./components/SimulateEmailPage.jsx'));
+const HandoversPage = lazy(() => import('./components/HandoversPage.jsx'));
+const EmailRulesPage = lazy(() => import('./components/EmailRulesPage.jsx'));
+const Microsoft365Page = lazy(() => import('./components/Microsoft365Page.jsx'));
 
 const EMAIL_SIMULATOR_ENABLED = import.meta.env.VITE_ENABLE_EMAIL_SIMULATOR !== 'false';
 const SIDEBAR_KEY = 'td_sidebar';
+/* The width below which the navigation rail becomes a drawer. Kept in step
+   with the `max-width: 768px` block in index.css — change both together. */
+const MOBILE_NAV_QUERY = '(max-width: 768px)';
 
 /**
  * Default header text per route. A screen with something better to say — a live
@@ -60,6 +67,9 @@ export default function App() {
   const [collapsed, setCollapsed] = useState(() => {
     try { return localStorage.getItem(SIDEBAR_KEY) === '1'; } catch { return false; }
   });
+  // Phone-only state: the rail slides over the workspace instead of taking a
+  // column of its own. It never applies on a wide viewport.
+  const [navOpen, setNavOpen] = useState(false);
 
   useEffect(() => {
     if (!getToken()) {
@@ -77,6 +87,30 @@ export default function App() {
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
+
+  const closeNav = useCallback(() => setNavOpen(false), []);
+
+  /* Leaving the phone layout closes the drawer, so returning to a wide window
+     never leaves the rail in a state the wide layout cannot show. */
+  useEffect(() => {
+    const mq = window.matchMedia(MOBILE_NAV_QUERY);
+    const onChange = () => { if (!mq.matches) setNavOpen(false); };
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  /* While the drawer is open: Escape closes it, and the page behind it stays
+     put — on a phone a scrolling background reads as a broken overlay. */
+  useEffect(() => {
+    if (!navOpen) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') setNavOpen(false); };
+    window.addEventListener('keydown', onKey);
+    document.body.classList.add('is-nav-open');
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.classList.remove('is-nav-open');
+    };
+  }, [navOpen]);
 
   useEffect(() => {
     if (!me) return undefined;
@@ -125,6 +159,8 @@ export default function App() {
 
   function navigate(path) {
     window.location.hash = path;
+    // A drawer that stays open hides the screen it just navigated to.
+    setNavOpen(false);
   }
 
   function handleLogout() {
@@ -220,8 +256,18 @@ export default function App() {
   const userLabel = me.name || me.email;
 
   return (
-    <div className={`shell ${collapsed ? 'is-collapsed' : ''}`}>
-      <aside className="sidebar">
+    <div className={`shell ${collapsed ? 'is-collapsed' : ''} ${navOpen ? 'is-nav-open' : ''}`}>
+      {/* The scrim exists at every width — CSS only shows it while the drawer is
+          open on a phone. As a button it is reachable by keyboard, and
+          `visibility: hidden` keeps it out of the tab order when closed. */}
+      <button
+        type="button"
+        className="nav-scrim"
+        aria-label="Close navigation"
+        tabIndex={navOpen ? 0 : -1}
+        onClick={closeNav}
+      />
+      <aside className="sidebar" id="app-nav">
         <div className="sidebar-top">
           <div className="brand" onClick={() => navigate('/')} role="button" tabIndex={0}
             onKeyDown={(e) => { if (e.key === 'Enter') navigate('/'); }}>
@@ -290,11 +336,15 @@ export default function App() {
           dev={!pageMeta?.title && meta.dev}
           me={me}
           isAdmin={isAdmin}
+          navOpen={navOpen}
+          onOpenNav={() => setNavOpen(true)}
           onLogout={handleLogout}
         />
         <main className="content">
           <PageHeaderContext.Provider value={setPageMeta}>
-            <ErrorBoundary key={route.name + (route.id ?? '') + (route.search || '')}>{content}</ErrorBoundary>
+            <ErrorBoundary key={route.name + (route.id ?? '') + (route.search || '')}>
+              <Suspense fallback={<div className="page"><span className="spinner" /></div>}>{content}</Suspense>
+            </ErrorBoundary>
           </PageHeaderContext.Provider>
         </main>
       </div>

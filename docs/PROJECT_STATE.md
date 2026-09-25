@@ -3,7 +3,7 @@
 Current checkpoint. Update this at the end of every task.
 Architecture and conventions live in `../CLAUDE.md`.
 
-_Last updated: 2026-09-14_
+_Last updated: 2026-09-23_
 
 ## Current Phase
 
@@ -11,7 +11,10 @@ _Last updated: 2026-09-14_
 theme and the reference-led visual polish are all complete, committed
 (`7ae07c3` on `ui-polish`) and **approved as the baseline**.
 
-No UI work is in flight, and none is planned. The next phase is backend:
+**Mobile responsiveness — complete (2026-09-23).** The console was designed
+desktop-first; it is now usable on a phone. See "Mobile pass" below.
+
+No UI work is in flight. The next phase is backend:
 Microsoft Graph against live credentials, then Prisma migrations.
 
 ## Completed
@@ -45,6 +48,94 @@ Microsoft Graph against live credentials, then Prisma migrations.
   idempotent runner `npm run db:migrate-assignment-groups`. Focused suite:
   `npm run test:assignment-groups`. `Agent.teamId` is retained as a
   transition field for this phase only.
+- **Mobile responsiveness — complete (2026-09-23).** See the section below.
+
+## Mobile pass (2026-09-23)
+
+The client was desktop-first: on a phone the navigation rail turned into a
+horizontally-scrolling strip of chips above every screen, the header's three
+action controls fought the title for one row, wide admin tables pushed the page
+sideways, and focusing any field zoomed the whole page. All of that is gone.
+
+**Shell.** At **≤768px** the rail is an off-canvas **drawer**: `App.jsx` holds
+`navOpen`, `TopBar` renders a `.nav-toggle` (hamburger, `aria-controls="app-nav"`
+/ `aria-expanded`), `.sidebar` is `position: fixed` and slides, a `.nav-scrim`
+closes it, Escape closes it, navigating closes it, `document.body` stops
+scrolling behind it, and leaving the phone layout closes it. The drawer always
+shows full labels — it re-points the `--rail-*` tokens for `.shell` *and*
+`.shell.is-collapsed`, since collapsing is a desktop preference. Between 769 and
+900px the rail is now a proper **icon column**, not the strip (the old
+`max-width: 900px` block restacked `.shell` into a column with a full-width
+sidebar, which is what produced the strip; the `--rail-w: 62px` block further
+down the file was silently losing to it).
+
+**Header.** At ≤768px the header anchors its own menus (`.topbar .popover-anchor
+{ position: static }`) so a 340px notification feed no longer hangs off the
+right edge of the screen; the search-results panel is explicitly exempt and
+stays pinned under the field. Title, drawer toggle and the three actions share
+the first row, search takes the second. At ≤560px the subtitle steps aside.
+
+**Tables.** Folding is opt-in and prints each cell's own column name:
+`.table-stack` on the wrapper + `data-label` on the cells. Applied to the agents
+table, the availability timeline, the audit trail and the Microsoft 365 variable
+table; the ticket queue already folded from 860px. Frames the table needs
+(border, radius, scroll) are dropped only while folded, and `overflow: visible`
+lets the in-row availability dropdown out of the card.
+
+**Everywhere else.** The KPI row is two-up on a phone, the breakdown row and
+assignment-group grid are single-column, `.insp-row` and `.props` put the label
+above the value, handover items and routing rule cards move their controls under
+the thing they control, the composer's hint stops sharing a row with its
+buttons, dialogs fill the width with stacked full-width actions, the toast spans
+the screen, and the search-result row drops the redundant age.
+
+**Phone basics.** `viewport-fit=cover` + `env(safe-area-inset-*)` on the header,
+content, drawer and toast; `-webkit-text-size-adjust: 100%` so rotating does not
+inflate type; fields 16px on phones (below that iOS zooms on focus and stays
+zoomed); the `Ctrl K` hint hidden where there is no keyboard; taller buttons and
+nav rows for thumbs; `100dvh` for the drawer; `overscroll-behavior` so swiping a
+table does not become a browser back gesture.
+
+**Ticket queue and detail (2026-09-23, follow-up).** The first pass folded the
+queue into cards but left it reading like a folded *table*: every ticket printed
+its column names, so one ticket took eight rows and the screen became a column of
+labels. The queue is now **scoped** with `.queue-cards` (the dashboard's
+"recent tickets" panel keeps the simple stack) and each row is **composed** as a
+grid — `id + age` / `subject (2-line clamp) + requester` / `status + priority` /
+`SLA + group` / `owner` — with the printed labels switched off. Restored
+**sorting on phones**: the column headers are the sort control and they are
+`display:none` once folded, so `SortControl` (field picker + direction toggle,
+`.queue-sort`, hidden above 768px) now lives in the control strip. The control
+strip itself is three predictable rows, the secondary filters open full-width,
+and the loading skeleton draws the same two lines a card shows.
+
+**Ticket detail.** The inspector (status, priority, assignment, group, SLA,
+remote access) sat **below the entire conversation** once the two-column layout
+stacked, so on a phone the controls for the ticket you had just opened were two
+screens down. `.detail-layout` is a flex column at ≤768px with
+`.inspector { order: -1 }` and the reply box left last. Card padding drops from
+18/20 to 16/14, `.card-head` may wrap, and the detail action buttons share their
+rows.
+
+**One search, in the header (2026-09-23).** The queue's own search field is
+gone. It duplicated the header search — which is on every screen — and two
+search boxes on one screen is the fastest way to stop people trusting either.
+The header search is the one that runs `api.listTickets({ q })`; that server
+parameter is untouched and still powers the header, only the second entry point
+went away. Removed with it: the `/`-to-focus shortcut (it had no field left to
+focus), the `debouncedQ` state and the 250ms debounce, and `q` from
+`EMPTY_FILTERS` — keeping a filter with no visible control would have left
+`#/tickets?q=…` applying an invisible, unclearable filter, so the key is now
+simply ignored, exactly as the hash-query contract says for keys the queue does
+not filter on. The status segments take the free width the field left
+(`.queue-controls .segmented { flex: 1 1 auto; max-width: 560px }`), and the
+empty-state hint points at the bar above rather than "widening the search".
+
+Not a browser: `client/mobile-check.mjs` (in `client/npm test`) pins the
+breakpoint ladder, the drawer wiring, the stacked-table labels and the iOS input
+size by reading the CSS and shell markup. **The visual result has not been
+checked in a real browser or on a device from this environment — open the app at
+320 / 375 / 414px and confirm.**
 
 ## In Progress
 
@@ -90,7 +181,42 @@ over to `TeamMembership` and drop the legacy `Agent.teamId` column.
   and tests run on the disposable local cluster from `test:pg:up`. The Stack
   table, the test-isolation section, the Commands block and the
   "Intentionally NOT implemented" list now match the code. `dev.db` survives
+- **Performance pass — delivery, splitting and indexes.** `server/server.js`
+  now serves the SPA behind `compression` with immutable caching for hashed
+  `/assets/*` and `no-cache` for `index.html` (mirrored into `vercel.json` so
+  the serverless path agrees). `App.jsx` code-splits with `React.lazy`:
+  Login/Dashboard/Tickets stay eager, the other 14 screens load on demand —
+  the entry bundle went from 235 KB to 217.67 kB (67 kB gzip) plus 14 chunks.
+  `Ticket` gained `@@index([assignedAgentId, state])` and
+  `@@index([teamId, state])` (queue filters as volume grows), shipped as the
+  committed migration `20260914000000_ticket_queue_indexes` and applied by the
+  test harness via `migrate deploy`. `dev.db`-era lesson re-confirmed: warm-up
+  dev servers left running hold `query_engine-windows.dll.node` and make
+  `prisma generate` fail with EPERM — kill them first (AGENTS.md, Database).
+- **Third IMAP_* scrub — `test-email-sources.js`.** The full gate after the
+  perf work exposed the same leak class in a sibling suite: it spawns
+  `server.js` with `...process.env`, so the real `IMAP_OAUTH2_REFRESH_TOKEN`
+  from `server/.env` reached the F-block server, which attempted a live Gmail
+  refresh (`invalid_grant`) instead of hitting the fixture on 127.0.0.1 —
+  recording a `lastError.message` that failed F8's regex. Fixed with the same
+  ambient `IMAP_*` scrub as `test-imap.js`; the suite then passed three
+  consecutive runs.
   only as a vestigial pre-migration artifact referenced by no code.
+- **Performance pass — first paint and hot paths.** `server.js` now applies
+  `compression` (new dependency) and sends `Cache-Control: public,
+  max-age=31536000, immutable` for `/assets/*` (Vite content-hashes those
+  names) with `no-cache` for `index.html`; `vercel.json` sets the same headers
+  so the Vercel path behaves identically. `App.jsx` code-splits 14 of the 16
+  routes with `React.lazy` (everything except Login and Dashboard) under one
+  `Suspense` boundary: the initial bundle dropped from 235.6 kB (77 kB gzip)
+  to 217.7 kB (67 kB gzip) with 14 on-demand chunks — admin screens load only
+  for admins who open them. `ssr-check` and `live-check` (9/9) pass against
+  the split build. A committed migration
+  (`20260914000000_ticket_queue_indexes`) adds `Ticket_assignedAgentId_state_idx`
+  and `Ticket_teamId_state_idx`; verified with `migrate deploy` onto a
+  throw-away test-cluster database — indexes present, and EXPLAIN shows the
+  agent open-list and group-queue plans using them (the workload aggregate
+  correctly prefers the existing `state` index).
 
 ## Completed This Session (2026-09-10)
 
@@ -199,6 +325,16 @@ Not started, no order committed to:
   a real gmail address via the email simulator. Delete it if it was only a test.
 
 ## Last Verified
+
+**2026-09-23**, after the mobile pass:
+
+- `npx vite build` succeeds (client production bundle)
+- `cd client && npm test` — every existing check script still passes, plus the
+  new `mobile-check.mjs`: **56/56 responsive contract checks pass, exit 0**
+- Backend untouched: no `server/` file was edited for this pass
+- **Not verified: the rendered layout.** No browser or device was available
+  from this environment; `mobile-check.mjs` reads the CSS and the shell markup,
+  it does not lay anything out. Confirm at 320 / 375 / 414 / 768px.
 
 **2026-09-14**, after the test-suite stabilisation:
 

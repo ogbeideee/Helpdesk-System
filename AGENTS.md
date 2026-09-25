@@ -50,6 +50,35 @@ write a second implementation of a component for light mode.
 - Any new colour must come from a token. Seeded avatars set `--avatar-h` only;
   saturation and lightness are theme tokens.
 
+## Responsive layout
+
+One implementation, a documented breakpoint ladder, and no second stylesheet
+for small screens. The mobile rules live in one section at the end of
+`client/src/index.css`; nothing above them changes.
+
+- Ladder, largest first: **1240 / 1180 / 1100 / 1080 / 900 / 860 / 768 / 640 /
+  620 / 560**. A new width means editing the ladder and
+  `client/mobile-check.mjs` together.
+- **Wider than 768px** the rail is a standing column — labelled, or icons below
+  900px. **At 768px and below** it is a drawer: `App.jsx` owns `navOpen`,
+  `TopBar` renders `.nav-toggle`, `.sidebar` is fixed and slides in, a
+  `.nav-scrim` closes it and the page behind it stops scrolling. That width is
+  stated twice on purpose — `MOBILE_NAV_QUERY` in `App.jsx` and the
+  `max-width: 768px` block — so **change both together**.
+- The drawer always shows full labels: it re-points the `--rail-*` tokens for
+  `.shell` *and* `.shell.is-collapsed`, because collapsing is a desktop
+  preference with no meaning on a phone.
+- A table either folds into cards or scrolls inside its own frame — never
+  widens the page. Folding is opt-in (`.table-stack` on the wrapper) and every
+  cell carries the `data-label` it prints; the ticket queue folds from 860px
+  because it is the screen people live in.
+- Fields are 16px on phones: below that iOS zooms the page when one takes
+  focus and leaves it zoomed.
+- `cd client && npm test` includes `mobile-check.mjs`, which pins this contract
+  (ladder, drawer wiring, stacked-table labels, input size, safe-area opt-in).
+  It is static analysis of the CSS and shell markup, not a browser — it cannot
+  see a layout, only the rules that produce it.
+
 ## Major modules
 
 **Services** (`server/src/services/`)
@@ -163,6 +192,7 @@ cd server && npm test        # all 35 suites (scripts/run-all-tests.js)
 cd server && node scripts/run-all-tests.js imap   # a few suites, by substring
 cd server && npm run test:pg:up      # one-time: disposable local test PostgreSQL
 cd client && npx vite build  # production build
+cd client && npm test        # client check scripts, incl. mobile-check.mjs (responsive contract)
 cd server && npm run db:deploy       # apply the committed Prisma migrations
 cd server && npm run db:init # groups + routing rules + admin bootstrap
 cd server && npm run db:purge-demo   # dry run; --apply to remove demo data

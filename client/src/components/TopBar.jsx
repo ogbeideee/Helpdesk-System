@@ -258,7 +258,7 @@ function AccountMenu({ me, isAdmin, onLogout }) {
 /* Header                                                              */
 /* ------------------------------------------------------------------ */
 
-export default function TopBar({ title, subtitle, dev, me, isAdmin, onLogout }) {
+export default function TopBar({ title, subtitle, dev, me, isAdmin, navOpen, onOpenNav, onLogout }) {
   const [people, setPeople] = useState([]);
   const peopleAsked = useRef(false);
 
@@ -273,11 +273,25 @@ export default function TopBar({ title, subtitle, dev, me, isAdmin, onLogout }) 
   return (
     <header className="topbar">
       <div className="topbar-title">
-        <h1>
-          {title}
-          {dev && <span className="chip-dev topbar-dev">DEV</span>}
-        </h1>
-        {subtitle && <p>{subtitle}</p>}
+        {/* Phone only: on a wide screen the rail is always visible, so there is
+            nothing to open and the control hides itself. */}
+        <button
+          type="button"
+          className="nav-toggle"
+          aria-label="Open navigation"
+          aria-controls="app-nav"
+          aria-expanded={navOpen}
+          onClick={onOpenNav}
+        >
+          <Icon name="menu" size={18} />
+        </button>
+        <div className="topbar-heading">
+          <h1>
+            <span className="topbar-heading-text">{title}</span>
+            {dev && <span className="chip-dev topbar-dev">DEV</span>}
+          </h1>
+          {subtitle && <p>{subtitle}</p>}
+        </div>
       </div>
 
       <GlobalSearch people={people} onFirstUse={loadPeople} />

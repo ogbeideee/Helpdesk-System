@@ -208,6 +208,9 @@ body {
   letter-spacing: -0.005em;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Rotating a phone must not inflate the type. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 /* Selection */
@@ -1183,28 +1186,13 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
 
 /* ============================== Responsive ======================= */
 
+/* Narrow viewports keep the vertical rail but drop its labels: the icons stay
+   anchored to the left edge and the workspace keeps a usable measure. Below
+   768px the rail leaves the flow entirely and becomes a drawer — see the
+   mobile section at the end of this file. */
 @media (max-width: 900px) {
-  .shell { flex-direction: column; }
-  .sidebar {
-    width: 100%;
-    height: auto;
-    position: static;
-    flex-direction: column;
-    padding: 6px 10px;
-    gap: 8px;
-  }
-  .brand { border: none; padding: 4px 6px; }
-  .side-nav { flex-direction: row; padding: 0; gap: 4px; overflow-x: auto; }
-  .side-group { flex-direction: row; gap: 4px; }
-  .side-group-label { display: none; }
-  .nav-item { white-space: nowrap; padding: 6px 10px; }
-  .sidebar-footer { border: none; padding: 0; flex-direction: row; align-items: center; }
-  .user-meta { display: none; }
-  .content { padding: 18px 14px 50px; }
-  .detail-layout { grid-template-columns: 1fr; }
+  .content { padding: 18px 16px 64px; }
   .stat-strip { grid-template-columns: repeat(2, 1fr); }
-  .stat-strip-cell { border-right: none; border-bottom: 1px solid var(--border-soft); }
-  .stat-strip-cell:nth-child(2n) { border-right: none; }
 }
 
 /* ============================== Reassignment dialog ============== */
@@ -1701,6 +1689,11 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
   flex-wrap: wrap;
   margin-bottom: 14px;
 }
+/* The status segments lead the strip now that there is no search field in
+   front of them, so they take the free space — one row of equal-weight
+   controls instead of a small switch marooned on the left. */
+.queue-controls .segmented { flex: 1 1 auto; max-width: 560px; }
+.queue-controls .segment { flex: 1 1 auto; justify-content: center; }
 
 .search-field {
   position: relative;
@@ -2285,6 +2278,10 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
 .agents-table .table td:last-child { white-space: nowrap; text-align: right; }
 .agents-table .table td:last-child .btn { padding: 3px 8px; font-size: 11.5px; }
 .agents-table .chip { white-space: nowrap; }
+/* The workload column holds a bar and a pill: it needs room to be read
+   rather than a width of its own. */
+.cell-workload { min-width: 180px; }
+.workload-split { display: flex; flex-direction: column; gap: 4px; min-width: 160px; }
 
 /* ---- Routing rules -------------------------------------------------
    Six separately bordered boxes read as six unrelated things. One
@@ -2387,7 +2384,37 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
   background: var(--bg);
   border-bottom: 1px solid var(--border-soft);
 }
-.topbar-title { min-width: 0; }
+.topbar-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.topbar-heading { display: flex; flex-direction: column; min-width: 0; }
+/* The title text keeps its own box so a long one still ends in an ellipsis
+   rather than being clipped mid-word by the flex header. */
+.topbar-heading-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Opens the navigation drawer. Only the phone layout shows it: above the
+   drawer breakpoint the rail is always on screen, so there is nothing to
+   open. The class is declared here and switched on at the end of this file. */
+.nav-toggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background var(--t), color var(--t), border-color var(--t);
+}
+.nav-toggle:hover { background: var(--surface-2); color: var(--text); border-color: var(--border-strong); }
+/* Tapping the area beside the drawer closes it. Hidden everywhere the drawer
+   cannot be open, so the desktop layout never pays for it. */
+.nav-scrim { display: none; }
 .topbar-title h1 {
   display: flex;
   align-items: center;
@@ -3101,6 +3128,32 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
 
 .page-actions { display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 14px; }
 .queue-new { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+
+/* Phone-only sort control. On a wide screen the column headers are the sort
+   control, so this is hidden until the queue folds and they disappear. */
+.queue-sort { display: none; }
+.queue-sort-field { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.mini-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--muted-2);
+  white-space: nowrap;
+}
+.queue-sort-field select {
+  min-width: 0;
+  width: auto;
+  padding: 5px 8px;
+  font-size: 12.5px;
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: inherit;
+}
+.queue-sort-dir { padding: 5px 8px; }
+.queue-sort-dir .sort-arrow { color: var(--text-dim); }
 .cell-requester-inline {
   display: block;
   font-size: 12.5px;
@@ -3164,7 +3217,6 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
 
 @media (max-width: 620px) {
   .kpi-row { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
-  .topbar-title h1 { font-size: 17px; }
 }
 
 /* ------------------------------------------------------------------ */
@@ -3206,3 +3258,468 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
 .ra-history-row { display: flex; align-items: baseline; gap: 8px; font-size: 12px; }
 .ra-who { color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ra-when { color: var(--muted); margin-left: auto; text-align: right; white-space: nowrap; }
+
+/* ==================================================================
+   Mobile
+   ==================================================================
+   Everything below is for phones and small tablets: one column, a navigation
+   drawer instead of a standing rail, and no sideways scrolling inside a
+   screen. Nothing above the 768px breakpoint is affected — that is the width
+   at which the rail stops being affordable as a column of its own.
+   ================================================================== */
+
+@media (max-width: 768px) {
+  /* ---- navigation drawer ------------------------------------------
+     The rail leaves the flow and slides over the workspace, carrying the
+     labels the icon-only rail has no room for. `is-collapsed` is a desktop
+     preference with no meaning here: inside the drawer nothing may hide. */
+  .shell,
+  .shell.is-collapsed {
+    --rail-w: min(300px, 84vw);
+    --rail-inline: inline;
+    --rail-stack: flex;
+    --rail-block: block;
+    --rail-justify: flex-start;
+    --rail-badge: static;
+  }
+  .sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: var(--rail-w);
+    height: 100vh;
+    height: 100dvh;
+    z-index: 130;
+    border-right: 1px solid var(--border);
+    box-shadow: var(--shadow-lg);
+    transform: translateX(-102%);
+    visibility: hidden;
+    transition: transform var(--t), visibility var(--t);
+  }
+  .shell.is-nav-open .sidebar { transform: none; visibility: visible; }
+  /* A drawer over a page that still scrolls reads as broken. */
+  body.is-nav-open { overflow: hidden; }
+
+  .nav-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 120;
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: var(--overlay);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity var(--t), visibility var(--t);
+  }
+  .shell.is-nav-open .nav-scrim { opacity: 1; visibility: visible; pointer-events: auto; }
+
+  /* Full labels, and a row tall enough to hit with a thumb. */
+  .nav-toggle { display: inline-flex; }
+  .sidebar-collapse { display: none; }
+  .brand { padding: 16px 16px 12px; }
+  .side-nav { padding: 4px 10px 14px; gap: 10px; }
+  .nav-item { padding: 10px 12px; font-size: 14px; }
+  .nav-item .nav-icon { width: 20px; font-size: 15px; }
+  .side-group-label { padding: 8px 12px 4px; }
+  .sidebar-footer { padding: 10px 12px 16px; }
+
+  /* ---- header ------------------------------------------------------
+     Title and actions share the first row, search takes the second. The
+     drawer toggle appears; the header menus hang from the header instead of
+     from a button near the right edge, so a 340px feed still fits. */
+  .topbar { padding: 10px 14px; gap: 10px; row-gap: 10px; }
+  .topbar-title { gap: 10px; }
+  .topbar-title h1 { font-size: 16px; gap: 7px; }
+  .topbar-title p { font-size: 12px; }
+  .topbar-actions { gap: 4px; }
+  .icon-btn { width: 36px; height: 36px; }
+  .account-btn { margin-left: 0; }
+  .search-field input { padding-right: 14px; }
+
+  .topbar .popover-anchor { position: static; }
+  .topbar .menu {
+    left: auto;
+    right: 14px;
+    min-width: 0;
+    width: min(320px, calc(100vw - 28px));
+    max-width: none;
+  }
+  /* ...except the search results, which belong under the field itself. */
+  .topbar .global-search { position: relative; }
+  .topbar .menu-search {
+    left: 0;
+    right: 0;
+    width: auto;
+    max-width: none;
+  }
+
+  /* ---- content ----------------------------------------------------- */
+  .content { padding: 16px 14px 64px; }
+
+  /* ---- touch ergonomics --------------------------------------------
+     iOS zooms the whole page the moment a field smaller than 16px takes
+     focus, and stays zoomed afterwards. Every field a phone can focus is
+     listed rather than relying on the base rule, because the component
+     rules that set a smaller size would otherwise win. */
+  input,
+  select,
+  textarea,
+  .search-field input,
+  .filter-search,
+  .composer textarea,
+  .props select,
+  .insp-select,
+  .filter-bar select,
+  .mini-field select,
+  .mini-field input {
+    font-size: 16px;
+  }
+  .btn { padding: 9px 14px; }
+  .btn-sm { padding: 6px 11px; }
+  .btn-icon { padding: 8px; }
+  /* A keyboard shortcut hint is noise where there is no keyboard. */
+  .kbd-hint { display: none; }
+  /* Swiping inside one of these scrolls it and stops there: a sideways swipe
+     must not become a browser back gesture, and a vertical one must not drag
+     the page along behind a menu. */
+  .table-wrap,
+  .queue-table-wrap,
+  .segmented {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+  .side-nav,
+  .notif-feed,
+  .meter-scroll,
+  .menu {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+  }
+
+  /* ---- the ticket queue --------------------------------------------
+     The queue folds at 860px, but a folded table is not yet a good list:
+     printing "STATUS  NEW" above every ticket spends eight rows on facts
+     nobody scans for, and the whole screen becomes a column of labels.
+     Here each ticket is composed instead — id and age on the first line,
+     the subject as the title, the two badges that decide what happens
+     next — and the printed labels are switched off, because the card is
+     self-describing. Everything is still there; it just reads top-down. */
+  .queue-cards { background: transparent; border: none; border-radius: 0; overflow: visible; }
+  .queue-cards .queue-table { display: block; }
+  .queue-cards .queue-table tbody { display: block; }
+  .queue-cards .queue-table tbody tr {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas:
+      "id       age"
+      "subject  subject"
+      "status   priority"
+      "sla      group"
+      "owner    owner";
+    gap: 7px 10px;
+    align-items: center;
+    padding: 12px 14px;
+    border: 1px solid var(--border-soft);
+    border-top: 1px solid var(--border-soft);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+  }
+  .queue-cards .queue-table tbody tr + tr { margin-top: 10px; }
+  .queue-cards .queue-table td {
+    width: auto;
+    padding: 0;
+    border-bottom: none;
+  }
+  .queue-cards .queue-table td[data-label]::before { display: none; }
+  .queue-cards .queue-table td[data-label="Ticket"]     { grid-area: id; }
+  .queue-cards .queue-table .cell-main                { grid-area: subject; max-width: none; width: auto; }
+  .queue-cards .queue-table td[data-label="Status"]   { grid-area: status; justify-self: start; }
+  .queue-cards .queue-table td[data-label="Priority"] { grid-area: priority; justify-self: end; }
+  .queue-cards .queue-table td[data-label="SLA"]      { grid-area: sla; justify-self: start; }
+  .queue-cards .queue-table td[data-label="Group"]    { grid-area: group; justify-self: end; }
+  .queue-cards .queue-table td[data-label="Assigned to"] { grid-area: owner; }
+  .queue-cards .queue-table .cell-age { grid-area: age; text-align: right; }
+
+  /* Two lines of subject: enough to recognise the ticket, never so much
+     that one long subject pushes the badges off the card. */
+  .queue-cards .cell-subject {
+    font-size: 14.5px;
+    line-height: 1.35;
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .queue-cards .cell-requester { margin-top: 3px; }
+  /* SLA reads as one line of chips rather than a stacked pair. */
+  .queue-cards .sla-cell { flex-direction: row; flex-wrap: wrap; gap: 4px; }
+  .queue-cards .cell-agent { min-width: 0; }
+  .queue-cards tbody tr:active { background: var(--surface-hover); }
+
+  /* Skeleton rows keep the card's shape, so the list does not jump when the
+     real rows land. Only the two lines a card actually shows are drawn;
+     the other seven cells of the loading row would otherwise spill into
+     phantom rows the card has no room for. */
+  .queue-cards .skeleton-row { grid-template-areas: "a b" "c c"; }
+  .queue-cards .skeleton-row td { display: block; }
+  .queue-cards .skeleton-row td:nth-child(1) { grid-area: a; }
+  .queue-cards .skeleton-row td:nth-child(2) { grid-area: c; }
+  .queue-cards .skeleton-row td:nth-child(n + 3) { display: none; }
+
+  /* ---- the queue's control strip ------------------------------------
+     The status segments take a row of their own and scroll sideways; the
+     sort control appears here because the column headers it replaces are
+     hidden once the queue folds. */
+  .queue-controls { flex-direction: row; align-items: center; gap: 8px; }
+  .queue-controls .segmented {
+    flex: 1 1 100%;
+    max-width: none;
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+  }
+  /* Back to intrinsic width: the strip scrolls, it does not stretch five
+     segments across 320px. */
+  .queue-controls .segment { flex: 0 0 auto; justify-content: center; scroll-snap-align: start; }
+  .queue-sort { display: flex; align-items: center; gap: 4px; min-width: 0; }
+  .queue-sort-field { flex: 0 1 auto; }
+  .queue-sort-field select { flex: 0 1 auto; }
+  .queue-new { margin-left: auto; }
+
+  /* The secondary filters open as a full-width stack: a 130px select is
+     not a target a thumb can hit with confidence. */
+  .filter-row { flex-direction: column; align-items: stretch; }
+  .mini-field { min-width: 0; }
+
+  /* ---- tables that fold into cards ---------------------------------
+     Opt in with `.table-stack`: each row becomes a card and every cell prints
+     its own column name, so nothing is lost and nothing has to be swiped
+     sideways. The ticket queue does the same thing from 860px (see
+     `.queue-table` above) because it is the screen people live in. */
+  .table-stack {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    /* A dropdown inside a row must not be clipped by the scroll frame. */
+    overflow: visible;
+  }
+  .table-stack thead { display: none; }
+  /* The table element itself is un-tabled first: a block `tbody` inside a
+     `display: table` box would be wrapped in an anonymous cell and lose the
+     width. This is the same pattern `.queue-table` uses on the ticket list. */
+  .table-stack > table { display: block; width: 100%; }
+  .table-stack tbody,
+  .table-stack tr,
+  .table-stack td { display: block; width: 100%; }
+  .table-stack tbody tr {
+    position: relative;
+    padding: 12px 14px;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+  }
+  .table-stack tbody tr + tr { margin-top: 10px; }
+  .table-stack td { padding: 4px 0; border-bottom: none; }
+  .table-stack td[data-label]::before {
+    content: attr(data-label);
+    display: inline-block;
+    width: 86px;
+    vertical-align: top;
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted-2);
+  }
+  /* The action cell is a row of buttons under the facts, not another fact. */
+  .table-stack .table-actions { padding-top: 10px; }
+  .table-stack .table-actions::before { display: none; }
+  .table-stack .nowrap { white-space: normal; }
+  /* The audit trail keeps its expand affordance, moved into the card corner. */
+  .table-stack .audit-chevron {
+    position: absolute;
+    top: 12px;
+    right: 10px;
+    padding: 0;
+  }
+  .table-stack .audit-detail-tr { padding: 0; border: none; background: transparent; }
+  .table-stack .audit-detail-tr + tr { margin-top: 10px; }
+  /* A cell that was truncated to keep the columns narrow wraps once it is a
+     card — nothing stays out of reach behind an ellipsis. */
+  .audit-table .audit-when,
+  .audit-table .audit-actor,
+  .audit-table .audit-entity,
+  .audit-table .audit-summary {
+    white-space: normal;
+    overflow: visible;
+    overflow-wrap: anywhere;
+  }
+  /* The agents row is a card now, so the width caps the table needed go. */
+  .agents-table .table td:first-child { max-width: none; }
+  .table-stack .cell-workload { min-width: 0; }
+  /* The split bar fills the card instead of holding a 160px floor. */
+  .table-stack .workload-split { min-width: 0; }
+  .table-stack .workload-pill { min-width: 24px; }
+  /* Row actions are touched with a thumb, not clicked with a mouse. */
+  .agents-table .table td:last-child .btn { padding: 6px 10px; font-size: 12.5px; }
+
+  /* ---- dialogs ------------------------------------------------------
+     Filling the width and stacking the buttons is both easier to hit and
+     easier to read than a 420px dialog squeezed into 320px. */
+  .modal-overlay { padding: 12px; }
+  .modal { padding: 16px 14px; }
+  .modal-actions {
+    flex-direction: column-reverse;
+    align-items: stretch;
+    justify-content: flex-start;
+  }
+  .modal-actions .btn { width: 100%; }
+
+  /* ---- ticket detail ------------------------------------------------
+     On a wide screen the inspector sits beside the conversation. Stacked,
+     it used to land *below the whole thread* — so on a phone the status,
+     assignment and SLA controls were two screens down from the ticket you
+     opened. It now comes first, and the reply box stays last. */
+  .detail-layout { display: flex; flex-direction: column; }
+  .detail-layout .inspector { order: -1; position: static; }
+  .detail-layout .stack { order: 0; }
+
+  .detail-title { font-size: 18px; }
+  .detail-head .pill-row { margin-top: 8px; }
+  /* 40px of card padding is 12% of a 320px screen. */
+  .activity-card { padding: 14px 14px 16px; }
+  .card { padding: 16px 14px; }
+  /* The composer heading and its Public/Internal switch share a head; on a
+     phone they get a line each rather than fighting for one. */
+  .card-head { flex-wrap: wrap; }
+  .insp-section { padding: 14px 14px 12px; }
+  .insp-select { max-width: 100%; }
+  .props select { max-width: 100%; }
+  .props dd { max-width: 62%; }
+  /* The action row is thumb territory: full-width buttons stack cleanly. */
+  .detail-actions { gap: 8px; }
+  .detail-actions .btn { flex: 1 1 auto; justify-content: center; }
+
+  /* ---- handovers, routing, agents, availability ---------------------
+     These are two-object rows on a wide screen: the thing, then its
+     controls. On a phone the controls move under the thing. */
+  .handover-item { flex-direction: column; align-items: stretch; gap: 10px; }
+  .handover-main { min-width: 0; }
+  .rule-card { grid-template-columns: 34px minmax(0, 1fr); align-items: start; row-gap: 10px; }
+  .rule-card .rule-actions { grid-column: 1 / -1; justify-content: flex-end; }
+  .avail-timeline-controls { flex-wrap: wrap; margin-left: 0; width: 100%; }
+  .avail-timeline-controls select { flex: 1 1 130px; }
+
+  /* ---- login -------------------------------------------------------- */
+  .login-pane { padding: 20px 16px; }
+  .login-card { padding: 26px 20px; }
+}
+
+/* ==================================================================
+   Phone
+   ==================================================================
+   The last step down: a 320–430px screen. Rows that still read as two
+   columns at 768px become one, and the furniture that only earns its
+   space on a wider screen steps aside.
+   ================================================================== */
+
+@media (max-width: 560px) {
+  /* Two figures per row is the most a phone can show without clipping. */
+  .kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dash-breakdowns { grid-template-columns: minmax(0, 1fr); }
+  /* A 280px track cannot fit a 280px screen; the card is the whole column. */
+  .group-grid { grid-template-columns: minmax(0, 1fr); }
+  .meter-row { grid-template-columns: minmax(0, 1fr) 72px 30px; gap: 8px; }
+  /* Narrower label column leaves the value more of the card. */
+  .queue-table td[data-label]::before,
+  .table-stack td[data-label]::before { width: 74px; }
+
+  /* The queue's control strip: sort and filters share a row, and the new
+     ticket button takes a row of its own rather than squeezing into a
+     320px line with three other controls. */
+  .queue-controls .queue-sort { flex: 1 1 auto; }
+  .queue-controls .filter-more { flex: 0 0 auto; }
+  .queue-controls .queue-new {
+    flex: 1 1 100%;
+    justify-content: center;
+    margin-left: 0;
+  }
+  .queue-sort .mini-label { display: none; }
+  .queue-sort-field select { max-width: 130px; }
+  .queue-cards .queue-table tbody tr { padding: 11px 12px; }
+  .queue-cards .queue-table tbody tr + tr { margin-top: 8px; }
+
+  .page-head { align-items: flex-start; gap: 10px; margin-bottom: 16px; }
+  .page-actions { justify-content: flex-start; width: 100%; }
+  /* The header's subtitle cannot say anything useful in ~140px, and the
+     screen underneath carries the same words. */
+  .topbar-title p { display: none; }
+  .topbar-title h1 { font-size: 15px; }
+
+  /* Label above value — a 92px label column leaves too little for the value. */
+  .insp-row { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .insp-label { white-space: normal; }
+  .props > div {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+  .props dd,
+  .props-inline dd { text-align: left; max-width: 100%; }
+  /* The hint and the buttons stop sharing a row: at this width the hint
+     would push the buttons off the edge. */
+  .composer-toolbar { flex-direction: column; align-items: stretch; gap: 8px; }
+  .composer-toolbar .btn-row { justify-content: flex-end; }
+
+  .callout { flex-direction: column; align-items: stretch; gap: 10px; }
+  .pagination { flex-direction: column; align-items: stretch; gap: 8px; }
+  .pagination-controls { justify-content: space-between; }
+  .search-field { min-width: 0; }
+  /* A search hit carries four things in a row; a phone has room for three,
+     so the age (already implied by the state) steps out. */
+  .search-result { gap: 8px; padding: 8px; }
+  .search-kind { width: 58px; }
+  .search-age { display: none; }
+  .empty-state { padding: 30px 14px; }
+
+  /* One dialog-width to the edge of the screen, and a toast that can be
+     read without squinting at a corner. */
+  .toast { left: 12px; right: 12px; bottom: 12px; }
+  .modal-overlay { padding: 8px; align-items: flex-start; }
+  .modal { padding: 14px 12px; max-height: calc(100vh - 16px); overflow-y: auto; }
+}
+
+
+/* Notches and home indicators. `index.html` opts into `viewport-fit=cover`,
+   so the edges that reach the screen edge have to keep clear of the inset
+   themselves — max() keeps the normal padding on devices that report none. */
+@supports (padding: env(safe-area-inset-left)) {
+  @media (max-width: 768px) {
+    .topbar {
+      padding-left: max(14px, env(safe-area-inset-left));
+      padding-right: max(14px, env(safe-area-inset-right));
+    }
+    .content {
+      padding-left: max(14px, env(safe-area-inset-left));
+      padding-right: max(14px, env(safe-area-inset-right));
+      padding-bottom: max(64px, calc(24px + env(safe-area-inset-bottom)));
+    }
+    .sidebar {
+      padding-left: env(safe-area-inset-left);
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+    .toast {
+      left: max(12px, env(safe-area-inset-left));
+      right: max(12px, env(safe-area-inset-right));
+    }
+    /* Header menus sit 14px in from the edge; on a notched device that edge
+       is the inset, not the screen. (`.menu-search` is left alone — it is
+       pinned under the search field.) */
+    .topbar .menu-right { right: max(14px, env(safe-area-inset-right)); }
+  }
+}
+

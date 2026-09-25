@@ -101,34 +101,36 @@ export default function Microsoft365Page() {
           <h2>Required configuration</h2>
           <span className="muted small">Set in the server environment — restart the server after changing them</span>
         </div>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Environment variable</th>
-              <th>What it is</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {checkRows.map((row) => (
-              <tr key={row.variable}>
-                <td className="mono-sm">{row.variable}</td>
-                <td>
-                  {row.label}
-                  {row.problem && <div className="small" style={{ color: 'var(--danger)' }}>{row.problem}</div>}
-                </td>
-                <td>
-                  <span className={`chip ${row.present ? 'chip-ok' : 'chip-warn'}`}>
-                    {row.present ? (row.secret ? 'set (hidden)' : 'set') : 'missing'}
-                  </span>
-                </td>
+        <div className="table-stack">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Environment variable</th>
+                <th>What it is</th>
+                <th>Status</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {checkRows.map((row) => (
+                <tr key={row.variable}>
+                  <td className="mono-sm" data-label="Variable">{row.variable}</td>
+                  <td data-label="What it is">
+                    {row.label}
+                    {row.problem && <div className="small" style={{ color: 'var(--danger)' }}>{row.problem}</div>}
+                  </td>
+                  <td data-label="Status">
+                    <span className={`chip ${row.present ? 'chip-ok' : 'chip-warn'}`}>
+                      {row.present ? (row.secret ? 'set (hidden)' : 'set') : 'missing'}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </section>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16, marginBottom: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(320px, 100%), 1fr))', gap: 16, marginBottom: 16 }}>
         <section className="card" style={{ padding: 16 }}>
           <div className="card-head"><h2>Effective configuration</h2></div>
           {configRows(data).map((row) => (

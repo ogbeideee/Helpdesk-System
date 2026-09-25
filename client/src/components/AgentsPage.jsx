@@ -199,7 +199,7 @@ export default function AgentsPage({ me }) {
           action={<button className="btn btn-primary" onClick={() => setEditorAgent('new')}>New agent</button>}
         />
       ) : (
-        <div className="table-wrap agents-table">
+        <div className="table-wrap agents-table table-stack">
           <table className="table">
             <thead>
               <tr>
@@ -218,7 +218,7 @@ export default function AgentsPage({ me }) {
                 const hasSplit = w.new || w.inProgress;
                 return (
                   <tr key={a.id} className={a.isActive ? '' : 'row-inactive'}>
-                    <td>
+                    <td data-label="Agent">
                       <span className="cell-agent">
                         <Avatar name={a.name} size={26} />
                         <span style={{ minWidth: 0 }}>
@@ -228,14 +228,14 @@ export default function AgentsPage({ me }) {
                         {me && a.id === me.id && <span className="chip chip-you" style={{ marginLeft: 6 }}>you</span>}
                       </span>
                     </td>
-                    <td><span className={`chip chip-role-${a.role}`}>{String(a.role || '').toUpperCase()}</span></td>
-                    <td>
+                    <td data-label="Role"><span className={`chip chip-role-${a.role}`}>{String(a.role || '').toUpperCase()}</span></td>
+                    <td data-label="Team">
                       {a.assignmentGroup
                         ? <span className="chip">{a.assignmentGroup}</span>
                         : <span className="muted small">Triage</span>}
                     </td>
-                    <td><span className={`chip chip-skill-${a.skillLevel}`}>{SKILL_SHORT[a.skillLevel]} · {SKILL_LABELS[a.skillLevel]}</span></td>
-                    <td>
+                    <td data-label="Skill"><span className={`chip chip-skill-${a.skillLevel}`}>{SKILL_SHORT[a.skillLevel]} · {SKILL_LABELS[a.skillLevel]}</span></td>
+                    <td data-label="Availability">
                       <AvailabilityStateCell
                         agent={a}
                         isSelf={me && a.id === me.id}
@@ -243,7 +243,7 @@ export default function AgentsPage({ me }) {
                         onSet={setAgentState}
                       />
                     </td>
-                    <td style={{ minWidth: 180 }}>
+                    <td className="cell-workload" data-label="Workload">
                       {a.isActive ? (
                         hasSplit ? (
                           <WorkloadSplit newCount={w.new} inProgressCount={w.inProgress} total={w.total} />
@@ -257,7 +257,7 @@ export default function AgentsPage({ me }) {
                         <span className="chip chip-off">Inactive</span>
                       )}
                     </td>
-                    <td className="nowrap" style={{ textAlign: 'right' }}>
+                    <td className="nowrap table-actions" style={{ textAlign: 'right' }}>
                       <button className="btn btn-ghost btn-sm" onClick={() => setEditorAgent(a)}>Edit</button>
                       {me && a.id !== me.id && (
                         <>
@@ -330,7 +330,7 @@ export default function AgentsPage({ me }) {
 function WorkloadSplit({ newCount, inProgressCount, total }) {
   const newPct = total > 0 ? (newCount / total) * 100 : 0;
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 160 }}>
+    <div className="workload-split">
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--muted)' }}>
         <span><span style={{ color: 'var(--primary-2)' }}>●</span> NEW {newCount}</span>
         <span><span style={{ color: 'var(--warning)' }}>●</span> IN PROGRESS {inProgressCount}</span>
@@ -426,7 +426,7 @@ function AvailabilityTimeline({ agents, dataVersion }) {
       )}
 
       {!loading && !error && rows.length > 0 && (
-        <div className="table-wrap">
+        <div className="table-wrap table-stack">
           <table className="table">
             <thead>
               <tr>
@@ -442,8 +442,8 @@ function AvailabilityTimeline({ agents, dataVersion }) {
             <tbody>
               {rows.map((r) => (
                 <tr key={r.key} className={r.isOpen ? 'avail-row-open' : ''}>
-                  {wide && <td><strong>{r.agent}</strong></td>}
-                  <td>
+                  {wide && <td data-label="Agent"><strong>{r.agent}</strong></td>}
+                  <td data-label="Transition">
                     <span className="cell-agent" style={{ gap: 8 }}>
                       <span className={`availability-dot ${r.meta.dot}`} aria-hidden="true" />
                       <span>{r.transition}</span>
@@ -451,11 +451,11 @@ function AvailabilityTimeline({ agents, dataVersion }) {
                     {r.isOpen && <span className="chip chip-open">Ongoing</span>}
                     {r.note && <div className="muted small" style={{ marginTop: 2, maxWidth: 320 }}>{r.note}</div>}
                   </td>
-                  <td className="nowrap">{r.started}</td>
-                  <td className="nowrap">{r.isOpen ? <span className="muted">—</span> : r.ended}</td>
-                  <td className="nowrap tnum">{r.isOpen ? `${r.duration} so far` : r.duration}</td>
-                  <td>{r.actor}</td>
-                  <td><span className={`chip chip-source-${r.source.toLowerCase()}`}>{r.source}</span></td>
+                  <td className="nowrap" data-label="Started">{r.started}</td>
+                  <td className="nowrap" data-label="Ended">{r.isOpen ? <span className="muted">—</span> : r.ended}</td>
+                  <td className="nowrap tnum" data-label="Duration">{r.isOpen ? `${r.duration} so far` : r.duration}</td>
+                  <td data-label="By">{r.actor}</td>
+                  <td data-label="Source"><span className={`chip chip-source-${r.source.toLowerCase()}`}>{r.source}</span></td>
                 </tr>
               ))}
             </tbody>

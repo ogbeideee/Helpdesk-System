@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { api } from '../api.js';
 import { STATES, PRIORITIES, CATEGORIES } from '../constants.js';
 import { usePageHeader } from '../pageHeader.js';
@@ -32,7 +32,11 @@ function SlaCell({ ticket }) {
 }
 
 const PAGE_SIZE = 25;
-const EMPTY_FILTERS = { q: '', status: '', priority: '', category: '', group: '', agentId: '' };
+/* The queue filters. `q` is deliberately not one of them: the product's search
+   lives in the header, on every screen, so a second field here would only
+   duplicate it. A `#/tickets?q=…` link is therefore ignored like any other
+   key the queue does not filter on. */
+const EMPTY_FILTERS = { status: '', priority: '', category: '', group: '', agentId: '' };
 
 /* A link may arrive carrying queue filters - `#/tickets?agentId=4`. Only keys
    the queue actually filters on are honoured; anything else is ignored. */
@@ -63,6 +67,41 @@ function SortArrow({ dir }) {
       stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       {dir === 'asc' ? <path d="M4 10l4-4 4 4" /> : <path d="M4 6l4 4 4-4" />}
     </svg>
+  );
+}
+
+/* The column headers are the desktop sort control, and they disappear when the
+   queue folds into cards. This is the same sort for a screen that has no
+   headers: a field picker plus a direction toggle. */
+function SortControl({ sort, setSort }) {
+  const setKey = (key) => setSort((s) => ({
+    key,
+    dir: s.key === key ? (s.dir === 'asc' ? 'desc' : 'asc') : 'asc',
+  }));
+  return (
+    <div className="queue-sort">
+      <label className="queue-sort-field">
+        <span className="mini-label">Sort</span>
+        <select
+          value={sort.key}
+          onChange={(e) => setKey(e.target.value)}
+          aria-label="Sort tickets by"
+        >
+          {Object.entries(SORTS).map(([key, s]) => (
+            <option key={key} value={key}>{s.label}</option>
+          ))}
+        </select>
+      </label>
+      <button
+        type="button"
+        className="btn btn-ghost btn-sm queue-sort-dir"
+        onClick={() => setSort((s) => ({ ...s, dir: s.dir === 'asc' ? 'desc' : 'asc' }))}
+        aria-label={sort.dir === 'asc' ? 'Sort descending' : 'Sort ascending'}
+        title={sort.dir === 'asc' ? 'Ascending' : 'Descending'}
+      >
+        <SortArrow dir={sort.dir} />
+      </button>
+    </div>
   );
 }
 
@@ -109,7 +148,6 @@ function SkeletonRows({ rows = 6 }) {
 
 export default function TicketsPage({ onOpen, initialFilters }) {
   const [filters, setFilters] = useState(() => fromQuery(initialFilters));
-  const [debouncedQ, setDebouncedQ] = useState('');
   const [tickets, setTickets] = useState(null);
   const [groups, setGroups] = useState([]);
   const [agentOptions, setAgentOptions] = useState([]);
@@ -118,32 +156,10 @@ export default function TicketsPage({ onOpen, initialFilters }) {
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState({ key: 'updated', dir: 'asc' });
   const [moreOpen, setMoreOpen] = useState(false);
-  const searchRef = useRef(null);
-
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedQ(filters.q), 250);
-    return () => clearTimeout(t);
-  }, [filters.q]);
 
   useEffect(() => {
     api.groups().then(setGroups).catch(() => {});
     api.dashboard().then((d) => setAgentOptions(d.ticketsPerAgent || [])).catch(() => {});
-  }, []);
-
-  // Ctrl/Cmd-K belongs to the global search in the header. This field filters
-  // the queue rather than searching the product, so it takes "/" - the
-  // convention for an in-page filter - and says so in the field.
-  useEffect(() => {
-    const onKey = (e) => {
-      if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return;
-      const tag = document.activeElement?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-      e.preventDefault();
-      searchRef.current?.focus();
-      searchRef.current?.select();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
   }, []);
 
   const load = useCallback(() => {
@@ -151,7 +167,6 @@ export default function TicketsPage({ onOpen, initialFilters }) {
     setError('');
     api
       .listTickets({
-        q: debouncedQ || undefined,
         status: filters.status || undefined,
         priority: filters.priority || undefined,
         category: filters.category || undefined,
@@ -166,7 +181,7 @@ export default function TicketsPage({ onOpen, initialFilters }) {
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [debouncedQ, filters.status, filters.priority, filters.category, filters.group, filters.agentId]);
+  }, [filters.status, filters.priority, filters.category, filters.group, filters.agentId]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
@@ -208,21 +223,11 @@ export default function TicketsPage({ onOpen, initialFilters }) {
 
   return (
     <div className="page">
-      {/* Search + status segments read as one control strip, not a form. */}
+      {/* Status segments, sort and filters read as one control strip, not a
+          form. Search is not here: the header's search is the product's, it
+          is on every screen, and a second field doing the same job in one
+          screen is the kind of duplication people stop trusting. */}
       <div className="queue-controls">
-        <div className="search-field">
-          <span className="search-icon"><Icon name="search" size={15} /></span>
-          <input
-            ref={searchRef}
-            type="search"
-            placeholder="Search tickets, subjects, requesters…"
-            value={filters.q}
-            onChange={(e) => setFilter('q', e.target.value)}
-            aria-label="Search tickets"
-          />
-          <kbd className="kbd-hint" aria-hidden="true">/</kbd>
-        </div>
-
         <div className="segmented" role="group" aria-label="Filter by status">
           <button
             type="button"
@@ -245,6 +250,8 @@ export default function TicketsPage({ onOpen, initialFilters }) {
             </button>
           ))}
         </div>
+
+        <SortControl sort={sort} setSort={setSort} />
 
         <button
           type="button"
@@ -307,7 +314,7 @@ export default function TicketsPage({ onOpen, initialFilters }) {
       {error && <ErrorState message={error} onRetry={load} />}
 
       {!error && (
-        <div className="queue-table-wrap">
+        <div className="queue-table-wrap queue-cards">
           <table className="queue-table">
             <thead>
               <tr>
@@ -383,7 +390,7 @@ export default function TicketsPage({ onOpen, initialFilters }) {
               title={anyFilter ? 'No tickets match these filters' : 'The queue is empty'}
               hint={
                 anyFilter
-                  ? 'Try widening the search, or clear the filters to see everything.'
+                  ? 'Clear the filters to see everything, or search from the bar above.'
                   : 'Tickets arrive by email, or you can raise one manually.'
               }
               action={
