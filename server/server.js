@@ -2,12 +2,17 @@ require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 
 const express = require('express');
 const cors = require('cors');
+const compression = require('compression');
 const { Prisma } = require('@prisma/client');
 const path = require('path');
 const prisma = require('./src/lib/prisma');
 
 const app = express();
 app.use(cors());
+// gzip every response — the SPA bundle and API payloads alike. Express serves
+// no compression by default, so a first visit previously downloaded the bundle
+// uncompressed.
+app.use(compression());
 app.use(express.json());
 
 // Public routes (auth endpoints + health + the Graph change-notification
@@ -197,7 +202,19 @@ app.get('/api/health', async (req, res) => {
   });
 });
 
-app.use(express.static(path.join(__dirname, '..', 'client', 'dist')));
+// Static SPA. Vite fingerprints files under assets/, so they can be cached
+// forever — a new deploy produces new filenames and a stale cache is never
+// wrong. index.html must revalidate, otherwise a returning visitor keeps
+// running the previous deployment's bundle.
+app.use(express.static(path.join(__dirname, '..', 'client', 'dist'), {
+  setHeaders(res, filePath) {
+    if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    } else if (filePath.endsWith('index.html')) {
+      res.setHeader('Cache-Control', 'no-cache');
+    }
+  },
+}));
 app.get('*', (req, res, next) => {
   if (req.path.startsWith('/api/')) return next();
   res.sendFile(path.join(__dirname, '..', 'client', 'dist', 'index.html'));
