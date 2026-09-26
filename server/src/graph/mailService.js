@@ -99,6 +99,10 @@ function createMailService(options = {}) {
           contentType: att.contentType || 'application/octet-stream',
           size: typeof att.size === 'number' && att.size > 0 ? att.size : content.length,
           content,
+          // Graph's own inline flag, carried into the shared storage policy
+          // (decorative body/signature images are never persisted).
+          isInline: Boolean(att.isInline),
+          contentDisposition: att.isInline ? 'inline' : null,
         });
       } catch (err) {
         logger.warn(

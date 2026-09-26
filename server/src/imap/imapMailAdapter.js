@@ -133,6 +133,11 @@ async function extractMessage({ uid, source, internalDate }) {
   // extra and never flows into the shared parser. Empty-content entries
   // (e.g. linked resources a server did not inline) are dropped here and are
   // reported neither as stored nor as rejected.
+  //
+  // `isInline`/`contentDisposition` are carried through verbatim: a decorative
+  // inline image (signature logo, social icon, pasted picture) is a `related`
+  // part, and the storage policy in attachmentService uses exactly that fact to
+  // keep the object store free of mail-client decoration.
   const attachments = (Array.isArray(parsed.attachments) ? parsed.attachments : [])
     .filter((a) => a && Buffer.isBuffer(a.content) && a.content.length > 0)
     .map((a) => ({
@@ -140,6 +145,8 @@ async function extractMessage({ uid, source, internalDate }) {
       contentType: a.contentType || 'application/octet-stream',
       size: typeof a.size === 'number' && a.size > 0 ? a.size : a.content.length,
       content: a.content,
+      isInline: Boolean(a.related),
+      contentDisposition: typeof a.contentDisposition === 'string' ? a.contentDisposition : null,
     }));
 
   const messageId = stripAngleBrackets(parsed.messageId);

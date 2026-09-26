@@ -15,6 +15,7 @@
 /** @typedef {import('./types').EmailAttachment} EmailAttachment */
 
 const { htmlToPlainText, looksLikeHtml } = require('./htmlToText');
+const { splitSignature } = require('./signature');
 
 // ---------------------------------------------------------------------------
 // Configurable limits — read once at module load, per the server's env
@@ -334,11 +335,16 @@ const SIGNATURE_DELIMITER_RE = /^-- ?$/;
  *
  * Deterministic and conservative — only unambiguous markers are separated:
  *   - a standard signature delimiter line ("-- " / "--") starts the signature
+ *     and wins over the free-form rules below (it is the explicit marker)
  *   - lines beginning with ">" are quoted content
  *   - "On ... wrote:" / "Am ... schrieb:" / … intro lines are quoted content
  *     when quoted (or forwarded) content follows them
  *   - "-----Original Message-----" / "---------- Forwarded message ----------"
  *     and the From/Sent/To/Subject header run that follows are quoted content
+ *   - a corporate signature: the trailing run of contact/company/role lines,
+ *     the closing salutation above them, and any legal/social footer (see
+ *     `signature.js`). Detected on the sender's own lines only, so quoted
+ *     history is never swallowed, and only at the END of a message.
  *
  * Nothing is removed from the normalized body — the full text stays intact —
  * this only exposes a clean view for consumers that want one.
@@ -401,9 +407,16 @@ function separateQuotedContent(text) {
     own.push(line);
   }
 
-  const cleanBody = own.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  const cleanOwn = own.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+
+  // 3) Signature. The explicit delimiter wins when the sender's client wrote
+  // one; otherwise a corporate signature is recognised on the sender's own
+  // lines (contact block, closing salutation, legal/social footer). Quoted
+  // content was separated above, so a signature can never swallow it.
+  const sig = signature ? { own: cleanOwn, signature } : splitSignature(cleanOwn);
+  const cleanBody = sig.own.replace(/\n{3,}/g, '\n\n').trim();
   const quotedText = quoted.length ? quoted.join('\n').trim() || null : null;
-  return { cleanBody, quotedText, signature };
+  return { cleanBody, quotedText, signature: sig.signature };
 }
 
 /**

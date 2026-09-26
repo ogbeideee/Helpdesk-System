@@ -2,6 +2,25 @@
 
 Major implementation milestones only — not individual code edits.
 
+## 2026-09-26
+
+- Kept email signatures and their logos out of tickets. A new deterministic
+  `email/signature.js` strips free-form corporate signature blocks and legal
+  footers from `cleanBody` — a footer marker, or a trailing run of contact lines
+  behind a closing salutation, never a lone line and never a contact detail
+  written mid-request — while the raw `body` (and therefore the ticket and its
+  audit trail) keeps everything the sender sent.
+- Stopped storing decorative inline images. Signature logos, social icons and
+  pasted pictures are `Content-Disposition: inline` image parts that nothing can
+  ever render, because the ticket body is text; the IMAP adapter and Graph
+  `mailService` now pass `isInline` through, and `attachmentService` skips them
+  (logged by name, counted as `inlineImagesSkipped` in the audit metadata,
+  excluded from the size/count limits). `ATTACHMENT_SKIP_INLINE_IMAGES=false`
+  restores the previous behaviour.
+- Added `db:purge-signature-images` as a dry-run-by-default cleanup script for
+  the inline images stored before the policy existed (277 of 308 attachments in
+  the live database, ~8.8 MB, across 50 tickets — 31 named attachments excluded).
+
 ## 2026-09-25
 
 - Added the cloud-first email relevance triage foundation: Groq provider integration,

@@ -32,16 +32,56 @@ class AttachmentStorageError extends Error {
   }
 }
 
+const INLINE_IMAGE_RE = /^image\//i;
+
+/**
+ * Is this a decorative image the mail client embedded in the body rather than a
+ * file the sender attached?
+ *
+ * Every corporate signature carries its logo, the social footer its icons, and
+ * a pasted screenshot arrives the same way: a `multipart/related` part with
+ * `Content-Disposition: inline` (or Graph's `isInline`). The ticket body is
+ * stored and shown as text, so those bytes are never rendered from the ticket —
+ * persisting them is pure storage growth (in one live mailbox: 277 of 308
+ * stored objects, ~8.8 MB, were exactly that).
+ *
+ * Only *images* are affected: an inline text/calendar part is still stored, and
+ * a real attached image (`Content-Disposition: attachment`) is always stored.
+ * Set `ATTACHMENT_SKIP_INLINE_IMAGES=false` to keep the old behaviour.
+ */
+function isInlineImage(att) {
+  if (!att || typeof att !== 'object') return false;
+  const mime = String(att.contentType || att.mimeType || '').trim();
+  if (!INLINE_IMAGE_RE.test(mime)) return false;
+  const disposition = String(att.contentDisposition || '').trim().toLowerCase();
+  return Boolean(att.isInline) || disposition === 'inline';
+}
+
+/** Env-configured default for the inline-image policy (default: skip). */
+function skipInlineImages() {
+  const raw = process.env.ATTACHMENT_SKIP_INLINE_IMAGES;
+  if (raw === undefined || raw === null || String(raw).trim() === '') return true;
+  return !/^(?:0|false|no|off)$/i.test(String(raw).trim());
+}
+
 /**
  * Plan the persistence of one message's attachments.
  *
- * @param {Array<{filename?: string, contentType?: string, size?: number, content?: Buffer}>} attachments
- * @param {{ limits?: Partial<typeof LIMITS> }} [options]
- * @returns {{ accepted: Array<{filename, mimeType, size, content, storageKey}>, rejected: Array<{filename, reason}> }}
+ * Three outcomes, and nothing is ever silently dropped:
+ *   - `accepted` : stored (binaries uploaded, metadata rows created)
+ *   - `skipped`  : deliberately not stored — decorative inline images
+ *   - `rejected` : could not be stored — no content, or over a limit
+ *
+ * @param {Array<{filename?: string, contentType?: string, size?: number, content?: Buffer, isInline?: boolean, contentDisposition?: string|null}>} attachments
+ * @param {{ limits?: Partial<typeof LIMITS>, skipInlineImages?: boolean }} [options]
+ * @returns {{ accepted: Array, skipped: Array<{filename, reason, code}>, rejected: Array<{filename, reason}> }}
  */
 function prepareForStorage(attachments, options = {}) {
   const limits = { ...LIMITS, ...(options.limits || {}) };
+  const dropInlineImages =
+    options.skipInlineImages === undefined ? skipInlineImages() : Boolean(options.skipInlineImages);
   const accepted = [];
+  const skipped = [];
   const rejected = [];
   const list = Array.isArray(attachments) ? attachments : [];
 
@@ -51,6 +91,14 @@ function prepareForStorage(attachments, options = {}) {
     const content = att && att.content;
     const size = content ? content.length : Number(att && att.size) || 0;
 
+    if (dropInlineImages && isInlineImage(att)) {
+      skipped.push({
+        filename: display,
+        reason: 'inline image embedded in the message body (signature/decoration)',
+        code: 'inline_image',
+      });
+      continue;
+    }
     if (!Buffer.isBuffer(content) || content.length === 0) {
       rejected.push({ filename: display, reason: 'no content' });
       continue;
@@ -77,7 +125,7 @@ function prepareForStorage(attachments, options = {}) {
       storageKey: generateStorageKey(),
     });
   }
-  return { accepted, rejected };
+  return { accepted, skipped, rejected };
 }
 
 /**
@@ -144,5 +192,7 @@ module.exports = {
   uploadAll,
   deleteUploaded,
   createRows,
+  isInlineImage,
+  skipInlineImages,
   LIMITS,
 };

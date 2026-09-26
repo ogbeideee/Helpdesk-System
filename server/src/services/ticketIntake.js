@@ -298,6 +298,16 @@ async function intakeEmailMessage(
   // and the message stays unseen for retry.
   const storageClient = storage || getAttachmentStorage();
   const plan = prepareForStorage(attachments);
+  if (plan.skipped.length) {
+    // Deliberate, not silent: decorative inline images (signature logos, social
+    // icons, pasted pictures) are never persisted — the ticket body is text, so
+    // storing them only grows the object store. Reported by name, once per
+    // message.
+    logger.log(
+      `[intake] ${plan.skipped.length} inline image(s) not stored: ` +
+        plan.skipped.map((s) => s.filename).join("; "),
+    );
+  }
   if (plan.rejected.length) {
     logger.warn(
       `[intake] ${plan.rejected.length} attachment(s) rejected: ` +
@@ -643,6 +653,11 @@ async function intakeEmailMessage(
               // never names, keys or storage details).
               ...(plan.accepted.length
                 ? { attachments: plan.accepted.length }
+                : {}),
+              // Decorative inline images (signature logos and the like) are
+              // deliberately not stored; the count is part of the trail.
+              ...(plan.skipped.length
+                ? { inlineImagesSkipped: plan.skipped.length }
                 : {}),
             },
           });

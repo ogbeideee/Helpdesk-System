@@ -3,7 +3,7 @@
 Current checkpoint. Update this at the end of every task.
 Architecture and conventions live in `../CLAUDE.md`.
 
-_Last updated: 2026-09-24_
+_Last updated: 2026-09-26_
 
 ## Current Phase
 
@@ -44,6 +44,24 @@ can only receive low/moderate priority tickets from those secondary groups.
 - **Notification poll interval reduced** — 60s → 10s for near-real-time updates
 - **Previous session (2026-09-10):** AI classifier seam + benchmark,
   Prisma guard, Vercel/Fly prep (all committed as `6c045eb` etc.)
+
+## Completed This Session (2026-09-26)
+
+- **Signatures and inline images no longer pollute tickets or storage.** New
+  `email/signature.js` (pure, deterministic) strips free-form corporate
+  signature blocks and legal footers from `cleanBody` via a footer marker or a
+  trailing contact run behind a closing salutation; the raw `body` is untouched.
+  `imapMailAdapter` and `graph/mailService` propagate `isInline` /
+  `contentDisposition`, and `attachmentService.prepareForStorage()` skips
+  decorative inline images instead of storing them (reported in `skipped`, logged
+  once per message by intake, counted as `inlineImagesSkipped` in the audit
+  metadata, excluded from the size/count limits). New
+  `db:purge-signature-images` cleans the backlog: dry run reports **277 of 308**
+  stored attachments (8.8 MB, 50 tickets) match; the other 31 are real named
+  attachments. **Not yet applied — awaiting the go-ahead for `--apply`.**
+  Suites green: parser (182), attachments, email-sources, classifier-seam,
+  email-rules, email-integration, imap, ingest, triage ×2, screening,
+  graph-mailbox, m365.
 
 ## Completed This Session (2026-09-24)
 

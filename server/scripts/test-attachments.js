@@ -200,6 +200,38 @@ async function main() {
   try { await uploadAll(accepted, failingStorage); } catch { uploadFailed = true; }
   check('C15 a storage failure surfaces as an error, never silent success', uploadFailed);
 
+  /* ---- C16+. inline (signature) images are never stored -------------------- */
+  const { isInlineImage, skipInlineImages } = require('../src/services/attachmentService');
+  const inlinePlan = prepareForStorage([
+    // Outlook/Exchange signature logo: a related part, Content-Disposition inline.
+    { filename: 'image001.png', contentType: 'image/png', size: 4942, content: BUF('png-bytes'), isInline: true },
+    // The same part as Graph reports it (isInline, no disposition field).
+    { filename: 'image002.png', contentType: 'image/jpeg', content: BUF('jpeg-bytes'), isInline: true },
+    // A social-footer icon the adapter flagged by disposition alone.
+    { filename: 'icon.png', contentType: 'image/png', content: BUF('icon'), contentDisposition: 'inline' },
+    // Real work: a file the sender actually attached.
+    { filename: 'app.log', contentType: 'text/plain', content: BUF('log line') },
+    // An image the sender ATTACHED (not inline) is still stored.
+    { filename: 'screenshot.png', contentType: 'image/png', content: BUF('screenshot'), contentDisposition: 'attachment' },
+  ]);
+  eq('C16 only the real attachments are accepted',
+    inlinePlan.accepted.map((a) => a.filename).join(','), 'app.log,screenshot.png');
+  eq('C17 the three decorative images are skipped, not rejected',
+    inlinePlan.skipped.map((s) => s.filename).join(','), 'image001.png,image002.png,icon.png');
+  check('C18 every skip carries the inline_image code and a reason',
+    inlinePlan.skipped.every((s) => s.code === 'inline_image' && /inline image/.test(s.reason)));
+  eq('C19 skipped parts never reach the size/count/rejection buckets', inlinePlan.rejected.length, 0);
+  check('C20 the rule is narrow: images only, inline only',
+    isInlineImage({ contentType: 'image/png', isInline: true }) === true
+    && isInlineImage({ contentType: 'text/calendar', isInline: true }) === false
+    && isInlineImage({ contentType: 'image/png', isInline: false }) === false
+    && isInlineImage({ contentType: 'image/png', contentDisposition: 'attachment' }) === false);
+  const optedIn = prepareForStorage([
+    { filename: 'image001.png', contentType: 'image/png', content: BUF('png-bytes'), isInline: true },
+  ], { skipInlineImages: false });
+  eq('C21 the policy can be turned off (previous behaviour)', optedIn.accepted.length, 1);
+  eq('C22 the env default is to skip', skipInlineImages(), true);
+
   /* ---- D. IMAP flow through intake ---------------------------------------- */
   console.log('\n--- D. IMAP flow ---');
   // The D-part flow uses the SAME private local directory the spawned
@@ -280,6 +312,33 @@ async function main() {
   const replyRow = await prisma.attachment.findFirst({ where: { messageId: 'att-imap-reply@attach.test' } });
   check('D16 the attachment is bound to the comment', replyRow.commentId === reply.comment.id);
   eq('D17 the ticket binding is intact too', replyRow.ticketId, created.ticket.id);
+
+  // D18: a message carrying a signature logo (inline, related) plus a real
+  // attachment stores only the real one — end to end through intake.
+  const withSignature = await intakeEmailMessage({
+    messageId: 'att-imap-sig@attach.test',
+    subject: 'Signature image probe',
+    body: 'Here is the log.',
+    from: 'rita@attach.test',
+  }, {
+    logger: QUIET, mailer, channel: 'imap', storage: imapStorage,
+    attachments: [
+      { filename: 'image001.png', contentType: 'image/png', content: BUF('logo'), isInline: true },
+      { filename: 'image002.png', contentType: 'image/png', content: BUF('icon'), isInline: true },
+      { filename: 'diagnostics.log', contentType: 'text/plain', content: BUF('only real file') },
+    ],
+  });
+  eq('D18 the ticket is created', withSignature.status, 'created');
+  const sigRows = await prisma.attachment.findMany({ where: { ticketId: withSignature.ticket.id } });
+  eq('D19 only the real attachment has a row', sigRows.map((r) => r.filename).join(','), 'diagnostics.log');
+  eq('D20 nothing was uploaded for the signature images',
+    (await prisma.attachment.count({ where: { messageId: 'att-imap-sig@attach.test' } })), 1);
+  const sigAudit = await prisma.auditEvent.findFirst({ where: { action: 'ticket.created', entityId: withSignature.ticket.id } });
+  const sigMeta = typeof sigAudit.metadata === 'string' ? JSON.parse(sigAudit.metadata) : sigAudit.metadata;
+  eq('D21 the audit trail counts the stored attachments', sigMeta.attachments, 1);
+  eq('D22 and records how many inline images were skipped', sigMeta.inlineImagesSkipped, 2);
+  check('D23 no skip detail (name or key) reaches the audit trail',
+    !JSON.stringify(sigAudit.metadata).includes('image001') && !JSON.stringify(sigAudit.metadata).includes('att/'));
 
   /* ---- E. Graph flow -------------------------------------------------------- */
   console.log('\n--- E. Graph flow ---');

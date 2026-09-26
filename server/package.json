@@ -15,6 +15,7 @@
     "seed:demo": "node scripts/seed-demo.js",
     "db:purge-demo": "node scripts/purge-demo-data.js",
     "db:purge-automated": "node scripts/purge-automated-tickets.js",
+    "db:purge-signature-images": "node scripts/purge-signature-images.js",
     "test:intake-screening": "node scripts/test-intake-screening.js",
     "test:email-triage": "node scripts/test-email-triage.js",
     "test:email-triage-intake": "node scripts/test-email-triage-intake.js",

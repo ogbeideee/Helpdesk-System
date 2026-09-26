@@ -526,6 +526,126 @@ function eq(name, actual, expected) {
   eq('Q11 a fully quoted body yields an empty clean view', quoteOnly.cleanBody, '');
   eq('Q12 the full text is still intact', quoteOnly.body, '> entirely quoted');
 
+  /* ---- corporate signatures (free-form, no "-- " delimiter) -------------- */
+  // The shape real Outlook/Exchange mail arrives with: closing salutation,
+  // name / title / company / contact lines and a legal footer. None of it may
+  // reach the classifier's view; all of it stays in the stored body.
+  const corporateBody = [
+    'Dear Mr. Kunle,',
+    '',
+    'Good morning, sir.',
+    '',
+    'Kindly see the attached consolidated weekly report for your perusal.',
+    '',
+    'Thank you.',
+    '',
+    'Regards,',
+    '',
+    'IT Help Desk Portal - Please mail ithelpdesk@example.com for',
+    'quick resolution of all IT issues.',
+    '',
+    'Bashir A. Oladipo',
+    '',
+    'IT Infrastructure',
+    '',
+    'Bestaf Technologies Nig. Ltd',
+    '',
+    'C: 08184886650',
+    '',
+    'E:',
+    'obashir@example.com',
+    '',
+    'This email is sent on behalf of EXAMPLE HOLDINGS, a Company registered in Nigeria (RC No. 1482448) with its Registered Office at No. 2 Tincan Island Port Road, Apapa Lagos, Nigeria. The contents of this e-mail and any attachments are confidential to the intended recipient.',
+  ].join('\n');
+  const corporate = parseEmail({
+    messageId: 'h-q6', from: 'obashir@example.com', subject: 'Weekly report', body: corporateBody,
+  });
+  eq('Q13 the signature is separated from the sender’s words',
+    corporate.cleanBody,
+    ['Dear Mr. Kunle,', '', 'Good morning, sir.', '',
+      'Kindly see the attached consolidated weekly report for your perusal.', '',
+      'Thank you.'].join('\n'));
+  check('Q14 the salutation, contact block and legal footer are the signature',
+    corporate.signature.startsWith('Regards,')
+    && corporate.signature.includes('obashir@example.com')
+    && corporate.signature.includes('confidential'));
+  eq('Q15 the stored body keeps every line of the signature', corporate.body, corporateBody);
+
+  // A signature whose footer is the social-media line plus the MRS/Holdings
+  // disclaimer (the second real-world shape).
+  const socialBody = [
+    'Dear Nurse Nneka,',
+    '',
+    'Your mail is acknowledged.',
+    '',
+    'Dear Yemi, kindly help.',
+    '',
+    'Kind regards,',
+    '',
+    'Mary Charles-Onum|MRS Holdings Ltd',
+    'Admin Manager (Shared Services)',
+    '',
+    '2 Tincan Island Port Road,',
+    'Apapa-Lagos, Nigeria.',
+    'Mobile : + 234 803 535 4262',
+    'Telephone: +234 809 030 0000',
+    'Ext : 5414',
+    'Email : mcharles-onum@example.com',
+    'Web : www.example.com',
+    '',
+    'We are on Social Media - follow us @ LinkedIn Twitter Facebook Instagram',
+    '',
+    'This email is sent on behalf of MRSHOLDINGS, a Company registered in Nigeria (RC No. 617376).',
+  ].join('\n');
+  const social = parseEmail({ messageId: 'h-q7', from: 'a@b.com', subject: 's', body: socialBody });
+  eq('Q16 the social line and disclaimer end the sender’s words',
+    social.cleanBody,
+    ['Dear Nurse Nneka,', '', 'Your mail is acknowledged.', '', 'Dear Yemi, kindly help.'].join('\n'));
+  check('Q17 the job title and contacts are part of the signature',
+    social.signature.includes('Mary Charles-Onum') && social.signature.includes('Ext : 5414')
+    && social.signature.includes('We are on Social Media') && social.signature.includes('MRSHOLDINGS'));
+  eq('Q18 the body with a signature is never modified', social.body, socialBody);
+
+  // A reply: the one sentence the sender wrote must survive the signature.
+  const replyWithSig = parseEmail({
+    messageId: 'h-q8', from: 'rita@company.com', subject: 'Re: printer',
+    body: [
+      'It happened again.',
+      '',
+      'Kind regards,',
+      'Rita Requester',
+      'IT Support, Example Ltd',
+      'E: rita@example.com',
+      '',
+      'On 1 Sep 2026, IT Helpdesk wrote:',
+      '> Please try rebooting.',
+    ].join('\n'),
+  });
+  eq('Q19 a signature cannot swallow the sender’s sentence', replyWithSig.cleanBody, 'It happened again.');
+  check('Q20 the quoted history is still separated separately',
+    replyWithSig.quotedText.includes('Please try rebooting.'));
+
+  // False positives: a request that merely mentions a phone number, a "Thanks,"
+  // mid-message, and a bare "Regards, Name" with nothing signature-like.
+  eq('Q21 a phone number inside a request is not a signature',
+    parseEmail({
+      messageId: 'h-q9', from: 'a@b.com', subject: 's',
+      body: 'My laptop will not connect.\n\nPlease call me at +234 803 000 0000 if you need more information.',
+    }).cleanBody,
+    'My laptop will not connect.\n\nPlease call me at +234 803 000 0000 if you need more information.');
+  eq('Q22 a salutation followed by prose is not a signature',
+    parseEmail({ messageId: 'h-q10', from: 'a@b.com', subject: 's', body: 'Thanks,\n\nthat worked after the reboot.' }).cleanBody,
+    'Thanks,\n\nthat worked after the reboot.');
+  eq('Q23 a bare salutation and name are left alone (no contact markers)',
+    parseEmail({ messageId: 'h-q11', from: 'a@b.com', subject: 's', body: 'Please reset my password.\n\nRegards,\nJohn' }).cleanBody,
+    'Please reset my password.\n\nRegards,\nJohn');
+  eq('Q24 a short body plus one footer line is not a signature',
+    parseEmail({
+      messageId: 'h-q12', from: 'a@b.com', subject: 's',
+      body: 'Please check the printer.\n\nIt is on floor 3.\n\nThis email is sent on behalf of EXAMPLE LTD. The contents of this e-mail and any attachments are confidential.',
+    }).signature, null);
+
+
   /* ---- limits ----------------------------------------------------------- */
   const bigBody = 'x'.repeat(LIMITS.bodyChars + 5000);
   const bigParsed = parseEmail({ messageId: 'h-l1', from: 'a@b.com', subject: 's', body: bigBody });
@@ -556,10 +676,21 @@ function eq(name, actual, expected) {
   eq('E4 international characters and emoji pass through', unicode.body, 'Héllo wörld — 日本語テスト 🎉');
 
   /* ---- determinism -------------------------------------------------------- */
-  const sample = { messageId: 'h-d1', from: 'Rita <rita@x.com>', subject: 'Re: café', body: 'body > quoted\nmore' };
+  // The sample pins `receivedAt` on purpose: the parser is deterministic except
+  // for its one documented clock use (a missing provider timestamp falls back to
+  // "now"), and an unpinned sample would fail this check whenever the two calls
+  // straddle a millisecond — a race, not a determinism bug.
+  const sample = {
+    messageId: 'h-d1',
+    from: 'Rita <rita@x.com>',
+    subject: 'Re: café',
+    body: 'body > quoted\nmore',
+    receivedAt: '2026-01-02T03:04:05.000Z',
+  };
   const first = JSON.stringify(parseEmail(sample));
   const second = JSON.stringify(parseEmail(sample));
   eq('D1 parsing is deterministic for identical input', first, second);
+  eq('D2 the pinned timestamp is used verbatim', JSON.parse(first).receivedAt, sample.receivedAt);
 }
 
 /* ================================================================== */

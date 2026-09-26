@@ -153,6 +153,19 @@ lower id. Classification and routing read only the sender's own words (quoted
 history and the signature are stripped first). Matching is deterministic and
 punctuation/case-insensitive. **No LLM anywhere in routing or parsing.**
 
+**The sender's own words** — `cleanBody` is the body minus quoted history,
+forwarded blocks and the signature. `email/signature.js` is pure and
+conservative: it strips only a legal/social footer marker, or a *trailing run*
+of contact lines behind a closing salutation — never a lone line, never a
+contact detail written mid-request. The raw `body` always keeps everything.
+
+**Attachments** — bytes are fetched and uploaded by `attachmentService`; the
+body stays text, so decorative inline images (signature logos, social icons,
+pasted pictures) are **skipped, not stored** — inline images only, and they
+never consume the size/count limits. Skips are logged and counted in the
+`ticket.created` audit metadata. `ATTACHMENT_SKIP_INLINE_IMAGES=false` restores
+the old behaviour.
+
 **Email relevance triage** — `emailTriageService` runs only after deterministic
 screening and thread resolution, and only for new-ticket candidates. Groq may
 recommend `ticket`, `skip`, or `review`; it never chooses category, priority,
@@ -192,6 +205,7 @@ cd client && npx vite build  # production build
 cd server && npm run db:deploy       # apply the committed Prisma migrations
 cd server && npm run db:init # groups + routing rules + admin bootstrap
 cd server && npm run db:purge-demo   # dry run; --apply to remove demo data
+cd server && npm run db:purge-signature-images  # dry run; --apply to drop stored signature images
 ```
 
 Shell is **PowerShell / Git Bash on Windows**. Heredocs break on JSX and
