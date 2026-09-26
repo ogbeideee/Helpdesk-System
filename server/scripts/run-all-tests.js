@@ -41,6 +41,7 @@ const SUITES = [
   'test-classifier-seam',
   'test-ai-benchmark',
   'test-attachments',
+  'test-secret-scan',
   'test-m365',
   'test-assignment-pool',
   'test-availability-history',

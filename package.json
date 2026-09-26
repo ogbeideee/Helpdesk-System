@@ -11,7 +11,10 @@
     "dev": "concurrently -k -n api,ui -c blue,green \"npm:server\" \"npm:client\"",
     "server": "npm run dev --prefix server",
     "client": "npm run dev --prefix client",
-    "build": "npm run build --prefix client"
+    "build": "npm run build --prefix client",
+    "scan:secrets": "node scripts/secret-scan.js --all",
+    "scan:staged": "node scripts/secret-scan.js --staged",
+    "hooks:install": "node scripts/install-hooks.js"
   },
   "dependencies": {
     "docx": "^9.7.1",

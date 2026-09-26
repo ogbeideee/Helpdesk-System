@@ -1,0 +1,46 @@
+# gitleaks configuration.
+#
+# The project scanner (scripts/secret-scan.js) is the primary gate because it
+# encodes the rules for THIS codebase; gitleaks is the broad second net. This
+# file tunes gitleaks so the two agree instead of contradicting each other.
+#
+# Two deliberate allowances, both documented at their rule:
+#   - the scanner and its test suite contain correctly-shaped samples of every
+#     credential format, which is the only way to prove a rule works;
+#   - the local test-cluster DSN in testpg.js is a loopback address.
+title = "ticketing-system gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Non-secret credential shapes that are legitimately in the repo"
+paths = [
+  '''^scripts/secret-scan\.js$''',
+  '''^server/scripts/test-secret-scan\.js$''',
+  '''^package-lock\.json$''',
+  '''(^|/)node_modules/''',
+  '''(^|/)dist/''',
+  '''(^|/)build/''',
+  '''\.log$''',
+]
+regexes = [
+  # The disposable local test cluster, written to server/.env.test by
+  # server/scripts/lib/testpg.js. A password on 127.0.0.1 is not an exposure.
+  '''postgresql://[^:/@\s]+:[^:/@\s]+@(127\.0\.0\.1|localhost|\[::1\]|0\.0\.0\.0)''',
+  # OAuth token endpoints and the redirect URI of the local dev flow.
+  '''https://oauth2\.googleapis\.com/token''',
+  '''http://localhost:3000''',
+]
+
+[[rules]]
+description = "Google OAuth client secret"
+id = "google-oauth-client-secret"
+regex = '''GOCSPX-[A-Za-z0-9_-]{20,}'''
+keywords = ["GOCSPX-"]
+
+[[rules]]
+description = "Google OAuth client id"
+id = "google-oauth-client-id"
+regex = '''\d{10,}-[a-z0-9]{10,}\.apps\.googleusercontent\.com'''
+keywords = ["apps.googleusercontent.com"]

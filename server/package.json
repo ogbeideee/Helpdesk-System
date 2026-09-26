@@ -37,6 +37,7 @@
     "test:imap-oauth": "node scripts/test-imap-oauth.js",
     "test:email-rules": "node scripts/test-email-rules.js",
     "test:attachments": "node scripts/test-attachments.js",
+    "test:secret-scan": "node scripts/test-secret-scan.js",
     "test:assignment-pool": "node scripts/test-assignment-pool.js",
     "test:m365": "node scripts/test-m365.js",
     "test:sla": "node scripts/test-sla.js",

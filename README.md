@@ -205,6 +205,7 @@ then exits with code 0 (all pass) or 1 (any fail).
 | [`docs/email-parsing.md`](docs/email-parsing.md) | the deterministic email-to-ticket pipeline |
 | [`docs/email-relevance-triage.md`](docs/email-relevance-triage.md) | Groq relevance filtering, safety policy, monitoring and admin controls |
 | [`docs/microsoft-graph.md`](docs/microsoft-graph.md) | Graph ingestion, polling, webhooks and the optional direct mailbox source |
+| [`docs/credential-rotation.md`](docs/credential-rotation.md) | every credential, how to rotate it, and the secret-scanning controls |
 | [`AGENTS.md`](AGENTS.md) | architecture and conventions, for contributors |
 | [`docs/PROJECT_STATE.md`](docs/PROJECT_STATE.md) | the live checkpoint — current phase, known issues |
 | [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | major implementation milestones |

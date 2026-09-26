@@ -183,8 +183,14 @@ Reuse it; do not write a bare `update` for ownership.
 
 ## Constraints
 
-- Never hardcode credentials. Never expose a client secret or access token to
-  the frontend. Never log tokens, secrets or full email bodies.
+- Never hardcode credentials. **This repository is public**, so a committed
+  secret is a published secret — one was, on 2026-09-26, and only GitHub push
+  protection stopped it. Credentials live in `server/.env` (git-ignored) and
+  the Fly secret store. `docs/credential-rotation.md` is the runbook. A
+  pre-commit hook (`npm run hooks:install`) and the `Secret scan` CI workflow
+  both block a commit that contains one; run the hook installer once per clone.
+- Never expose a client secret or access token to the frontend. Never log
+  tokens, secrets or full email bodies.
 - No demo data on startup. `seed:demo` requires `--confirm` and refuses under
   `NODE_ENV=production`.
 - Notifications go through `src/mailer.js` and the `Notification` table. Do not
@@ -205,6 +211,9 @@ cd server && npm run db:deploy       # apply the committed Prisma migrations
 cd server && npm run db:init # groups + routing rules + admin bootstrap
 cd server && npm run db:purge-demo   # dry run; --apply to remove demo data
 cd server && npm run db:purge-signature-images  # dry run; --apply to drop stored signature images
+npm run hooks:install         # pre-commit secret scan (once per clone)
+npm run scan:secrets          # scan every tracked file for credentials
+cd server && npm run test:secret-scan   # the scanner's own suite
 ```
 
 Shell is **PowerShell / Git Bash on Windows**. Heredocs break on JSX and
