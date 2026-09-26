@@ -1675,6 +1675,14 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
   background: var(--bg);
 }
 
+/* Requester status page (#/status/<token>) — reuses the login shell; the
+   facts list mirrors the queue's pill vocabulary, tokens only. */
+.status-facts { margin: 0; display: grid; gap: 8px; }
+.status-facts > div { display: flex; justify-content: space-between; gap: 16px; font-size: 13px; }
+.status-facts dt { color: var(--muted); }
+.status-facts dd { margin: 0; color: var(--text); text-align: right; }
+.status-facts dd, .status-facts dt { line-height: 1.4; }
+
 /* ==================================================================
    Theme control + sidebar refinements
    ================================================================== */

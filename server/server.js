@@ -8,6 +8,9 @@ const path = require('path');
 const prisma = require('./src/lib/prisma');
 
 const app = express();
+// Deployed behind the Fly.io proxy — honor one hop of X-Forwarded-For so
+// rate limiting keys on the real client address, not the proxy's.
+app.set('trust proxy', 1);
 app.use(cors());
 // gzip every response — the SPA bundle and API payloads alike. Express serves
 // no compression by default, so a first visit previously downloaded the bundle
@@ -15,12 +18,13 @@ app.use(cors());
 app.use(compression());
 app.use(express.json());
 
-// Public routes (auth endpoints + health + the Graph change-notification
-// callback, which Microsoft calls unauthenticated and authenticates via
-// clientState inside the route).
+// Public routes (auth endpoints + health + the requester status lookup + the
+// Graph change-notification callback, which Microsoft calls unauthenticated
+// and authenticates via clientState inside the route).
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/profile', require('./routes/profile'));
 app.use('/api/webhooks', require('./routes/webhooks'));
+app.use('/api/public', require('./routes/public'));
 
 // Development-only tooling (email parser harness). The router itself returns
 // 404 when NODE_ENV=production, and it never creates or stores anything.
@@ -225,16 +229,17 @@ app.get('*', (req, res, next) => {
 });
 
 // NOTE: Everything from here down is the "standalone server" concern — binding a
-// TCP port and running the long-lived background timers. Vercel imports this module
-// as a serverless function and must get the Express `app` WITHOUT opening a port or
-// starting any of those timers, so the startup block below runs only when this file
-// is executed directly (`node server.js` / `npm start` / local production). The
-// exhaustion guard and the app itself are shared by both modes.
+// TCP port and running the long-lived background timers. server.js is THE entry
+// point (`node server.js`, the Docker CMD); the export at the bottom exists so
+// tests and tooling can mount the Express `app` without opening a port.
 
 // ---------------------------------------------------------------------------
-// Background jobs — these ALL rely on a long-lived process and/or a webhook callback
-// that a serverless function cannot guarantee. They are started ONLY in standalone mode
-// (see startStandalone below). On Vercel they must not run; see DEPLOYMENT notes.
+// Background jobs — these ALL rely on a long-lived process and are started
+// ONLY in standalone mode (see below). Single-instance by design: polling,
+// rebalancing and the sweepers guard against overlapping runs within a
+// process but there is no cross-process leader election, so run exactly one
+// machine (fly.toml: min_machines_running = 1). Ticket-creation idempotency
+// makes a second instance merely wasteful, not incorrect.
 //   - workload rebalancer      (server/src/services/workloadService)
 //   - handover expiry sweeper  (server/src/services/handoverService)
 //   - SLA sweeper             (server/src/slaSweeper)
@@ -242,9 +247,6 @@ app.get('*', (req, res, next) => {
 //   - Graph mailbox poller     (server/src/graph/poller)
 //   - IMAP mailbox poller      (server/src/imap/poller)
 //   - Graph subscription      lifecycle (server/src/graph/subscriptionService)
-// Vercel, in order of preference: (a) run these on a single always-on worker
-// (Fly.io / Render / a VPS) while Vercel serves the API + SPA; or
-// (b) leave them off on the Vercel function entirely.
 // ---------------------------------------------------------------------------
 
 async function bootStartupChecks() {

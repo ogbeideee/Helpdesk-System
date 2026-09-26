@@ -12,9 +12,21 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const { requireAuth, sanitizeAgent } = require('../src/authMiddleware');
 const userService = require('../src/services/userService');
+const { rateLimit } = require('../src/rateLimit');
 
 const router = express.Router();
 router.use(requireAuth);
+
+// Throttle current-password guessing: the endpoint verifies the existing
+// password, so without a limit it is a second online-guessing surface that
+// bypasses the login throttle. Keyed by account, not IP — a hijacked session
+// may come from anywhere.
+const passwordLimiter = rateLimit({
+  windowMs: Number(process.env.PASSWORD_RATE_LIMIT_WINDOW_MS) || 5 * 60 * 1000,
+  max: Number(process.env.PASSWORD_RATE_LIMIT_MAX) || 10,
+  keyFn: (req) => (req.agent ? `agent:${req.agent.id}` : ''),
+  message: 'Too many password attempts — wait a few minutes and try again',
+});
 
 const NAME_MAX = 80;
 const PASSWORD_MIN = 8; // same policy as routes/agents.js
@@ -40,7 +52,7 @@ router.patch('/', async (req, res) => {
 
 // POST /api/profile/password — change your own password. The current password
 // is required: a hijacked session must not be able to lock the owner out.
-router.post('/password', async (req, res) => {
+router.post('/password', passwordLimiter, async (req, res) => {
   try {
     const currentPassword = String(req.body.currentPassword || '');
     const newPassword = String(req.body.newPassword || '');
@@ -61,8 +73,9 @@ router.post('/password', async (req, res) => {
     if (bcrypt.compareSync(newPassword, req.agent.passwordHash)) {
       return res.status(400).json({ error: 'New password must differ from the current password' });
     }
-    // Sessions are stateless 12h JWTs: the current session stays valid until
-    // it expires, the next sign-in uses the new password.
+    // applyUserUpdate also stamps Agent.passwordChangedAt, and requireAuth
+    // rejects any token issued before that instant — so every session other
+    // than the one being established next is invalidated immediately.
     await userService.applyUserUpdate(req.agent, req.agent, {
       passwordHash: bcrypt.hashSync(newPassword, 10),
     });

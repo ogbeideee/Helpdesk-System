@@ -113,6 +113,10 @@ model Agent {
   name                    String
   email                   String            @unique
   passwordHash            String? // null once an account is Entra-only
+  // Stamped whenever the password changes (self-service or admin reset).
+  // requireAuth rejects any token issued before this instant, so a password
+  // change invalidates every existing session without needing revocation.
+  passwordChangedAt       DateTime?
   // "user" | "agent" | "admin" — see src/services/userService.js (ROLES).
   // New sign-ins default to "agent"; "admin" is only ever granted by an
   // existing admin or the one-time initial-admin bootstrap.
@@ -312,6 +316,11 @@ model Ticket {
   @@index([state])
   @@index([graphConversationId])
   @@index([dueAt])
+  // Queue composites — workload counts, group pools and the filtered ticket
+  // list filter on owner/group combined with the open/closed state. Shipped in
+  // migration 20260914000000_ticket_queue_indexes.
+  @@index([assignedAgentId, state])
+  @@index([teamId, state])
 }
 
 model TicketAuditLog {

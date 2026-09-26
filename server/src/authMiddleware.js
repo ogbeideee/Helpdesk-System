@@ -71,6 +71,13 @@ async function requireAuth(req, res, next) {
   if (!agent || !agent.isActive) {
     return res.status(401).json({ error: 'Account is disabled or no longer exists' });
   }
+  // Password-change session invalidation: a token issued before the stamp is
+  // a pre-change session and must not survive it. Second-granularity compare —
+  // iat is whole seconds, and a sign-in in the same second as the change must
+  // not lock the owner out of the session they just created.
+  if (agent.passwordChangedAt && payload.iat < Math.floor(agent.passwordChangedAt.getTime() / 1000)) {
+    return res.status(401).json({ error: 'Password changed — please sign in again' });
+  }
   req.agent = agent;
   next();
 }

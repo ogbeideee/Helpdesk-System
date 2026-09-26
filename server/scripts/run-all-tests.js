@@ -57,6 +57,7 @@ const SUITES = [
   'test-sla-sweeper',
   'test-sla-notify',
   'test-assignment-groups',
+  'test-status-link',
   'test-e2e',
 ];
 

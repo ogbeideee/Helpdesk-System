@@ -146,6 +146,9 @@ async function applyUserUpdate(target, actor, changes, client = prisma) {
   }
   if (changes.passwordHash !== undefined) {
     data.passwordHash = changes.passwordHash;
+    // Stamp the change so requireAuth retires every session issued before it
+    // (see authMiddleware). Covers self-service changes and admin resets.
+    data.passwordChangedAt = new Date();
     // Record that the credential changed — never the credential itself.
     auditEvents.push({
       action: 'agent.password_changed',

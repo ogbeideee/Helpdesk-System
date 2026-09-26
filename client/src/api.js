@@ -47,6 +47,9 @@ export const api = {
   updateProfile: (payload) => request('/profile', patch(payload)),
   changePassword: (payload) => request('/profile/password', body(payload)),
 
+  // ---- public (no session — the emailed self-service status link) ----
+  ticketStatus: (token) => request(`/public/ticket-status?token=${encodeURIComponent(token)}`),
+
   // ---- reference / analytics ----
   teams: () => request('/teams'),
   agents: () => request('/agents'),

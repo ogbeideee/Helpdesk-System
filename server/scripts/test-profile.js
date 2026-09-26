@@ -165,6 +165,62 @@ async function req(pathname, { method = 'GET', token, body } = {}) {
   check('E3 the raw responses contain no plaintext password',
     responses.every((r) => !JSON.stringify(r.data).includes(NEW_PASSWORD)));
 
+  /* ---- F. a password change invalidates earlier sessions --------------- */
+  console.log('\n--- F. session invalidation on password change ---');
+  const reloginToken = relogin.data.token;
+  eq('F1 a session established after the change is valid',
+    (await req('/api/auth/me', { token: reloginToken })).status, 200);
+  // Deterministic ordering: iat is second-granularity, so push the stamp just
+  // past "now" — both tokens issued so far must then be rejected.
+  await prisma.agent.update({
+    where: { id: agent.id },
+    data: { passwordChangedAt: new Date(Date.now() + 5000) },
+  });
+  eq('F2 the token issued before the change is rejected',
+    (await req('/api/auth/me', { token })).status, 401);
+  eq('F3 the post-change token is also rejected once the stamp moves past it',
+    (await req('/api/auth/me', { token: reloginToken })).status, 401);
+  // Restore the real stamp: the post-change token's iat is now at/after it.
+  await prisma.agent.update({
+    where: { id: agent.id },
+    data: { passwordChangedAt: new Date(Date.now() - 2000) },
+  });
+  eq('F4 a token issued at/after the stamp works again',
+    (await req('/api/auth/me', { token: reloginToken })).status, 200);
+
+  /* ---- G. rate limiting ------------------------------------------------ */
+  console.log('\n--- G. rate limiting ---');
+  // Login limiter: 20 attempts per window per IP+email; the 21st is a 429.
+  // The account does not exist, so failures are cheap (no bcrypt) — exactly
+  // the work this limiter exists to cap.
+  let loginLast;
+  for (let i = 0; i < 21; i++) {
+    loginLast = await req('/api/auth/login', {
+      method: 'POST', body: { email: `brute@${DOMAIN}`, password: 'wrong-password' },
+    });
+  }
+  eq('G1 the 21st login attempt for one account is 429', loginLast.status, 429);
+  const rlRaw = await fetch(`http://localhost:${process.env.PORT}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: `brute@${DOMAIN}`, password: 'wrong-password' }),
+  });
+  eq('G2 a still-limited request answers 429 with Retry-After set',
+    rlRaw.status === 429 && rlRaw.headers.get('retry-after') !== null, true);
+  // Password limiter: 10 per window per account. nopass used one in D10 —
+  // ten more makes the 11th a 429 regardless of the per-attempt outcome.
+  let pwLast;
+  for (let i = 0; i < 10; i++) {
+    pwLast = await req('/api/profile/password', {
+      method: 'POST', token: nopassToken, body: { currentPassword: 'x', newPassword: NEW_PASSWORD },
+    });
+  }
+  eq('G3 the 11th password attempt for one account is 429', pwLast.status, 429);
+  eq('G4 a different account is unaffected by that account\'s limit',
+    (await req('/api/profile/password', {
+      method: 'POST', token: reloginToken, body: { currentPassword: NEW_PASSWORD, newPassword: `${NEW_PASSWORD}x` },
+    })).status, 200);
+
   await stopServer(server);
 
   console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`);

@@ -45,6 +45,7 @@
     "test:sla-sweeper": "node scripts/test-sla-sweeper.js",
     "test:sla-notify": "node scripts/test-sla-notify.js",
     "test:assignment-groups": "node scripts/test-assignment-groups.js",
+    "test:status-link": "node scripts/test-status-link.js",
     "graph:check": "node scripts/graph-check.js",
     "test:pg:up": "node scripts/lib/testpg.js up",
     "test:pg:down": "node scripts/lib/testpg.js down",

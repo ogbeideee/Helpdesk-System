@@ -3,6 +3,7 @@ import { api, getToken } from './api.js';
 import { PageHeaderContext } from './pageHeader.js';
 import { Avatar, Icon } from './components/ui.jsx';
 import Login from './components/Login.jsx';
+import StatusPage from './components/StatusPage.jsx';
 import ErrorBoundary from './components/ErrorBoundary.jsx';
 import Dashboard from './components/Dashboard.jsx';
 import TicketsPage from './components/TicketsPage.jsx';
@@ -173,6 +174,9 @@ export default function App() {
     window.dispatchEvent(new CustomEvent('td:changed'));
   }, []);
 
+  // The requester status page is public: it renders without a session and
+  // without the staff shell — and without waiting on /api/auth/me.
+  if (route.name === 'status') return <StatusPage token={route.token} />;
   if (me === undefined) return <div className="boot-screen"><span className="spinner" /></div>;
   if (me === null) return <Login onLogin={setMe} />;
 
@@ -370,6 +374,9 @@ function parseHash() {
   if (detailMatch) return { name: 'detail', id: Number(detailMatch[1]), path: `/tickets/${detailMatch[1]}`, search, query };
   const editMatch = /^\/tickets\/(\d+)\/edit$/.exec(hash);
   if (editMatch) return { name: 'edit', id: Number(editMatch[1]), path: `/tickets/${editMatch[1]}`, search, query };
+  // Public requester status lookup — the signed link from helpdesk emails.
+  const statusMatch = /^\/status\/([A-Za-z0-9._~-]+)$/.exec(hash);
+  if (statusMatch) return { name: 'status', token: statusMatch[1], path: '/status', search, query };
 
   const base = { search, query };
   switch (hash) {

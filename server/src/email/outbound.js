@@ -24,6 +24,7 @@
 // assemble their own wording but reuse the shared formatting here and send
 // through the same mailer; both are internal-only.
 const PORTAL_BASE_URL = (process.env.PORTAL_BASE_URL || '').replace(/\/+$/, '');
+const statusLink = require('./statusLink');
 
 /* ------------------------------------------------------------------ */
 /* Shared formatting — the single source of the email conventions      */
@@ -89,6 +90,12 @@ function ticketFooter(ticket) {
   return lines.join('\r\n');
 }
 
+/** One-line self-service status link for REQUESTER mails (signed, no login). */
+function statusLine(ticket) {
+  const url = statusLink.statusUrl(ticket);
+  return url ? `Check progress any time: ${url}` : null;
+}
+
 /* ------------------------------------------------------------------ */
 /* Message builders — one per notification type, pure, no sending      */
 /* ------------------------------------------------------------------ */
@@ -144,8 +151,9 @@ function ticketAcknowledgementMail(ticket) {
       '',
       'You will receive updates as we work on it. To add information,',
       'simply reply to this email — your message is attached to the ticket.',
+      statusLine(ticket),
       ticketFooter(ticket),
-    ].join('\r\n'),
+    ].filter((l) => l !== null).join('\r\n'),
     toRecipients: [toRecipient(ticket.requesterEmail)],
   };
 }
@@ -205,6 +213,8 @@ function statusUpdateMail(ticket, context = {}) {
       'reply to this email and the ticket will reopen.'
     );
   }
+  const status = statusLine(ticket);
+  if (status) body.push('', status);
   body.push(ticketFooter(ticket));
   return {
     subject,
@@ -275,6 +285,7 @@ module.exports = {
   requesterDisplay,
   excerpt,
   slaLine,
+  statusLine,
   ticketFooter,
   // message builders
   newTicketBroadcastMail,
