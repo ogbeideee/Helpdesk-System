@@ -266,11 +266,15 @@ Reuse it; do not write a bare `update` for ownership.
   neither is a credential — publishing the ingestion target is publishing the
   map. Two scanner rules (`production-mailbox`, `production-domain`) block both
   forms, and they assemble the domain from fragments so the scanner and its own
-  test suite never contain the value they forbid. Use `example.com` in
-  `.env.example`, docs and fixtures. **`*.docx` is git-ignored**: a deflated-XML
-  binary is skipped by the scanner, `git grep -I` and gitleaks alike, which is
-  how the domain reached two committed guides. Keep generated documents on disk
-  and commit the text they came from.
+  test suite never contain the value they forbid. They are **forward-only**: the
+  current tree and the pre-commit hook apply every rule, the history sweep skips
+  just this pair, because a rule forbidding a value already in published history
+  fires on every such commit forever. The credential rules still sweep history —
+  a credential in history is a live exposure that must be rotated. Use
+  `example.com` in `.env.example`, docs and fixtures. **`*.docx` is
+  git-ignored**: a deflated-XML binary is skipped by the scanner, `git grep -I`
+  and gitleaks alike, which is how the domain reached two committed guides. Keep
+  generated documents on disk and commit the text they came from.
 - Never expose a client secret or access token to the frontend. Never log
   tokens, secrets or full email bodies.
 - No demo data on startup. `seed:demo` requires `--confirm` and refuses under

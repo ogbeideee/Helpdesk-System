@@ -143,6 +143,7 @@ const RULES = [
       `[A-Za-z0-9._%+-]+@${PRODUCTION_DOMAIN.replace(/\./g, '\\.')}`,
       'gi'
     ),
+    forwardOnly: true,
   },
   {
     id: 'production-domain',
@@ -150,6 +151,7 @@ const RULES = [
     // The domain on its own — as a hostname, a DNS name, a Graph tenant id or a
     // Graph/IMAP config value. Covers every form the mailbox rule would miss.
     pattern: new RegExp(PRODUCTION_DOMAIN.replace(/\./g, '\\.'), 'gi'),
+    forwardOnly: true,
   },
   {
     id: 'hardcoded-credential-assignment',
@@ -347,11 +349,35 @@ function isExempt(rule, value, file, line) {
   return false;
 }
 
-function scanText(text, file) {
+function scanText(text, file, options = {}) {
   const findings = [];
   const lines = String(text).split('\n');
   const normFile = String(file).replace(/\\/g, '/');
-  for (const rule of RULES) {
+  /*
+   * `forwardOnly` rules are skipped when a caller asks for history-only rules.
+   *
+   * CI sweeps every commit in history, and a rule that is trying to stop a
+   * value going forward will fire on every commit that already contains it.
+   * That is a real failure mode, not a hypothetical one: the production-domain
+   * rules turned the whole history sweep red the moment they were written,
+   * because the value they forbid is in the history by construction.
+   *
+   * So the two concerns are separated explicitly:
+   *
+   *   - the current tree (--all, and the pre-commit hook's staged content) is
+   *     scanned with EVERY rule. That is what stops the value going forward,
+   *     and it is the only place a new occurrence can appear.
+   *   - the history sweep scans without the forward-only rules, because a
+   *     value in history cannot be unpublished and the forward-only rules exist
+   *     to keep it out of the next commit, not to condemn every commit that
+   *     predates them.
+   *
+   * The credential rules are NOT forward-only. A credential in history is a
+   * live exposure that has to be found and rotated, which is precisely what the
+   * history sweep is for, so those rules still run over every commit.
+   */
+  const rules = options.historyOnly ? RULES.filter((r) => !r.forwardOnly) : RULES;
+  for (const rule of rules) {
     if (rule.id === GENERIC_RULE_ID && GENERIC_RULE_EXEMPT.test(normFile)) continue;
     // A fresh regex per line: these patterns are global and shared, and
     // lastIndex state carried across lines or files is the classic way this
@@ -421,7 +447,7 @@ function main(argv) {
     scope = `range ${from}..${to}`;
     for (const file of rangeFiles(from, to)) {
       if (isIgnoredPath(file)) continue;
-      findings = findings.concat(scanText(committedContent(file, to), file));
+      findings = findings.concat(scanText(committedContent(file, to), file, { historyOnly: true }));
     }
   } else if (wantAll) {
     scope = 'every tracked file';

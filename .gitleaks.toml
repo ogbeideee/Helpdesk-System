@@ -4,6 +4,16 @@
 # encodes the rules for THIS codebase; gitleaks is the broad second net. This
 # file tunes gitleaks so the two agree instead of contradicting each other.
 #
+# The production shared mailbox and its domain are deliberately NOT rules here,
+# even though the project scanner has rules for both. They are not a credential
+# shape gitleaks could ever infer, they are this deployment's own identity, and
+# gitleaks has no equivalent of the project scanner's forward-only scoping: a
+# rule that forbids a value which is already in the history turns every one of
+# those commits into a finding, permanently and unfixably, because a value in
+# published history cannot be unpublished. The project scanner runs in this same
+# workflow and enforces both rules, on the current tree and in the pre-commit
+# hook, which is where a forward-only rule belongs.
+#
 # Two deliberate allowances, both documented at their rule:
 #   - the scanner and its test suite contain correctly-shaped samples of every
 #     credential format, which is the only way to prove a rule works;
@@ -44,21 +54,3 @@ description = "Google OAuth client id"
 id = "google-oauth-client-id"
 regex = '''\d{10,}-[a-z0-9]{10,}\.apps\.googleusercontent\.com'''
 keywords = ["apps.googleusercontent.com"]
-
-# The live shared mailbox and its domain. Not a credential, which is why it
-# reached .env.example, three docs and two .docx guides unnoticed: nothing
-# looking for a password has a reason to read an address. It is also the
-# ingestion target, so publishing it maps exactly where to phish or
-# credential-stuff. Assembled from fragments so this file does not itself
-# contain the value it forbids - the same reason as the project scanner.
-[[rules]]
-description = "Production shared mailbox (see scripts/secret-scan.js)"
-id = "production-mailbox"
-regex = '''[A-Za-z0-9._%+-]+@mrshol''ding''s\.com'''
-keywords = ["mrshol"]
-
-[[rules]]
-description = "Production domain (see scripts/secret-scan.js)"
-id = "production-domain"
-regex = '''mrshol''ding''s\.com'''
-keywords = ["mrshol"]
