@@ -8,8 +8,6 @@ import {
   Avatar, Icon, timeAgo, fmtDateTime,
 } from './ui.jsx';
 
-const EMAIL_SIMULATOR_ENABLED = import.meta.env.VITE_ENABLE_EMAIL_SIMULATOR !== 'false';
-
 const CATEGORY_ICONS = {
   'Password Reset': 'key',
   'Inquiry / Help': 'helpCircle',
@@ -425,12 +423,6 @@ export default function Dashboard({ onOpen, me, handoverCount = 0 }) {
                 <span>View Handovers</span>
                 <Icon name="handovers" size={15} />
               </button>
-              {EMAIL_SIMULATOR_ENABLED && (
-                <button className="rail-action" onClick={() => { window.location.hash = '/simulate-email'; }}>
-                  <span>Simulate Email</span>
-                  <span className="chip-dev">DEV</span>
-                </button>
-              )}
             </div>
           </Panel>
 
@@ -446,7 +438,7 @@ export default function Dashboard({ onOpen, me, handoverCount = 0 }) {
               </div>
               <div className="rail-row">
                 <span>Email intake</span>
-                <strong>{EMAIL_SIMULATOR_ENABLED ? 'Simulator' : 'Microsoft 365'}</strong>
+                <strong>M365 → IMAP</strong>
               </div>
               <div className="rail-row">
                 <span>Assignment groups</span>

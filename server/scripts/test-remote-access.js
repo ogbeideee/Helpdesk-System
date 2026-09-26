@@ -273,6 +273,13 @@ const historyLines = (ticketId) =>
     eq('C21 the row reads expired afterwards', (await rawSession(opened5.session.id)).status, 'expired');
     eq('C22 listForTicket also expires stale requests lazily',
       (await remoteAccessService.listForTicket(t11.id)).find((s) => s.id === opened5.session.id).status, 'expired');
+    const otherStale = await remoteAccessService.createSession({ ticketId: t17.id, actor: ria, at: T(7) });
+    await remoteAccessService.listForTicket(t11.id);
+    eq('C23 listForTicket does not expire another ticket', (await rawSession(otherStale.session.id)).status, 'requested');
+    const otherCancelled = await remoteAccessService.cancelSession({
+      sessionId: otherStale.session.id, actor: ria, at: T(8.2),
+    });
+    eq('C24 the unrelated ticket session can still be cleaned up', otherCancelled.session.status, 'cancelled');
   }
 
   /* ==================================================================== */

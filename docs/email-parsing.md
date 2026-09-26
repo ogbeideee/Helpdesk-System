@@ -14,7 +14,8 @@ Email Parser                  (RawEmailInput -> NormalizedEmail)
 Email Ingestion               (src/services/emailIngestion.js - field mapping)
         v
 Ticket Creation Service       (src/services/ticketIntake.js)
-   dedupe -> thread match -> classify -> number -> route
+   dedupe -> thread match -> screen -> relevance triage
+            -> classify -> number -> route
         v
 Assignment Engine
         v
@@ -32,7 +33,8 @@ Ticket  (or an activity on an existing ticket)
 The parser is a pure function: no clock beyond a `receivedAt` fallback, no
 network, no database, no LLM. It does **not** classify, prioritise, assign,
 create tickets, send notifications, or decide whether an email is a new ticket
-or a reply - all of that stays in ticket ingestion.
+or a reply - all of that stays in ticket ingestion. The optional Groq relevance
+service is called later by `ticketIntake`, never by the parser.
 
 ## Normalized email
 
@@ -88,7 +90,8 @@ Also available: `POST /api/dev/email/parse-batch` and
 normalized email continues into the existing ticket pipeline:
 
 ```text
-parse -> dedupe by messageId -> new ticket OR reply activity
+parse -> dedupe by messageId -> thread/reply
+      -> deterministic screen -> optional relevance triage
       -> classification -> assignment group -> agent -> audit log
 ```
 
@@ -115,6 +118,8 @@ Response `status` is one of:
 | `comment_added` | activity added to an existing ticket |
 | `reopened` | requester replied to a RESOLVED/CLOSED ticket |
 | `duplicate` | this `messageId` was already processed - nothing changed |
+| `skipped_automated` | deterministic screening suppressed the message |
+| `skipped_non_ticket` | the optional, policy-approved relevance gate suppressed the message |
 
 **Reply detection** (performed by intake, not the parser): a ticket number in
 the subject or body wins first; otherwise a matching `conversationId` **from the

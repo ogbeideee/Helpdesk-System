@@ -3,7 +3,7 @@
 Current checkpoint. Update this at the end of every task.
 Architecture and conventions live in `../CLAUDE.md`.
 
-_Last updated: 2026-09-16_
+_Last updated: 2026-09-24_
 
 ## Current Phase
 
@@ -44,6 +44,90 @@ can only receive low/moderate priority tickets from those secondary groups.
 - **Notification poll interval reduced** — 60s → 10s for near-real-time updates
 - **Previous session (2026-09-10):** AI classifier seam + benchmark,
   Prisma guard, Vercel/Fly prep (all committed as `6c045eb` etc.)
+
+## Completed This Session (2026-09-24)
+
+- **Live ticket queue controls.** The simulator is no longer exposed in the
+  client navigation, hash routing, dashboard quick actions, or system status;
+  the real M365-to-Gmail IMAP path remains documented. The queue now supports
+  multi-selection and bulk priority, category, and assignment-group updates via
+  the existing audited PATCH rules. Lifecycle action responses are now compact
+  action projections rather than full conversation/attachment payloads.
+
+- **Ticket lifecycle latency pass.** The ticket detail now consumes the updated
+  ticket returned by Start/Resolve/Close, refreshes handovers and remote-access
+  data in parallel, scopes remote-access lazy expiry to the displayed ticket,
+  and reuses the Resolve SLA policy during finalization. Full server suite
+  37/37 and the client production build pass.
+
+- **Custom domain migration.** The helpdesk now runs on
+  `https://ithelpdesk.mrsholdings.com` (Fly.io certificate issued by
+  Let's Encrypt, `fly certs add` + DNS by the domain holder). Both
+  `PORTAL_BASE_URL` and `WEBHOOK_PUBLIC_URL` were repointed; the fly.dev
+  address stays live for old emailed links. Runbook:
+  `Helpdesk-Domain-Migration-Guide-v3.docx`.
+- **Gmail IMAP ingestion restored.** The poller was failing every cycle with
+  `invalid_grant` — the stored refresh token had been revoked/expired (Google's
+  7-day expiry for OAuth apps left in "Testing"). A new token was generated via
+  `scripts/generate-refresh-token.js` and set on Fly together with the matching
+  client id/secret. Publish the OAuth app to "In production" to stop the weekly
+  expiry.
+- **Self-service account settings.** Every signed-in user can change their own
+  display name and password at `#/settings` (account menu → Settings).
+  New `routes/profile.js` (`PATCH /api/profile`,
+  `POST /api/profile/password` — current password required, 8-char minimum,
+  no-reuse), `SettingsPage.jsx`, and the `test-profile` suite (26 checks).
+  Both writes go through `userService.applyUserUpdate`, so the audit trail
+  matches an admin-made change; role/activation/skill cannot be smuggled in.
+- **Routing quality repair (Fix A + Fix B).** Two layers were misrouting:
+  - *Fix A (production rule table).* Culled generic prose words that were
+    hijacking tickets (`server`, `site`, `field`, `pos`, `branch`, `outlet`,
+    `terminate`, `connection`), gave the Hardware rule a real keyword list
+    (2 → 18), and re-ordered the table so the per-category rules are evaluated
+    first (Account & Access p5, Software p6, Hardware p7, General Enquiries p8)
+    ahead of the category-agnostic rules (Network p10, Printing p20, Field Ops
+    p30). Audited in `RoutingRuleAuditLog`.
+  - *Fix B (engine).* Routing precedence gains **subject evidence** as the
+    first criterion — a keyword the sender wrote in the subject beats a
+    body-only match, whatever the priority — and both classification and
+    routing now read the **sender's own words** (`msg.cleanBody`, quotes and
+    signature stripped) instead of the whole mail thread. The
+    separator-insensitive matcher (which lets `wi fi` match `wifi`) was a raw
+    substring test; it is now a word-bounded window, so `physical` no longer
+    matches `physically` — a latent bug that had been routing laptop-damage
+    tickets to Field Operations and that `test-e2e` had been asserting against.
+  - Verified against the 15 most recent production tickets: 5 route differently
+    and all 5 are corrections (sick-leave notice and laptop screen out of Field
+    Operations; a distribution-list request back to Accounts; SCADA and a price
+    list back to Software). The trade-off is deliberate: a body-only keyword no
+    longer outranks a ticket's own category, so an ambiguous request lands in
+    General IT Support triage instead of a specialist queue.
+- **Routing and membership update.** Added the account-creation/email
+  provisioning rule for Accounts & Access and expanded the General IT Support
+  rule to cover printer/toner, desk-phone and conference/meeting-room requests.
+  Applied both changes to the live routing table. Ibiyemi Aboyewa now has
+  Accounts & Access as the primary group, with General IT Support and Hardware
+  & Devices as supporting memberships; six NEW tickets were released when the
+  primary group changed.
+- **Existing-ticket reroute.** Re-evaluated the 69 existing tickets with
+  sender-clean text and applied the approved new-rule matches to all 14
+  affected tickets. Ten active tickets were reassigned through
+  `workloadService.moveTicket`; four RESOLVED/CLOSED tickets retained their
+  historical assignees. A post-change check found no remaining target/group
+  mismatches.
+- **Field Operations misroute repair.** The live rule was narrowed to specific
+  cabling, installation, POS and CCTV terms, removing broad words such as
+  `site`, `field`, `premises` and `installation` that had captured ordinary
+  tickets. All 17 active stale tickets were re-evaluated and moved out of Field
+  Operations; the Laptop Bad Screen ticket now belongs to Hardware & Devices
+  with Ibiyemi Aboyewa. Six active non-member assignments created by workload
+  rebalancing were also corrected. The rebalancer now requires the recipient to
+  be a primary or supporting member of the ticket's group.
+- **AI email filtering implementation plan.** Generated
+  `AI-Email-Filtering-Implementation-Plan.docx`, covering the hybrid filter
+  architecture, free-model strategy, labeled benchmark, safety policy,
+  rollout gates, operational metrics, and 30/60/90-day execution plan.
+
 
 ## Completed This Session (2026-09-16)
 
@@ -132,6 +216,27 @@ can only receive low/moderate priority tickets from those secondary groups.
   "Intentionally NOT implemented" list now match the code. `dev.db` survives
   only as a vestigial pre-migration artifact referenced by no code.
 
+## Completed This Session (2026-09-25)
+
+- **Email relevance triage foundation.** Added a separate Groq-backed triage
+  service and conservative local policy after deterministic screening and
+  before classification/routing. The default is disabled; all provider,
+  validation, configuration and decision-log failures fail open to ticket
+  creation. Existing-ticket replies bypass the gate.
+- **Auditable decisions and migration.** Added `EmailTriageDecision` with a
+  unique message identity and sanitized provider/model/prompt/policy metadata;
+  no subject, body, attachment, evidence or raw model response is stored.
+  Any attachment vetoes auto-skip. Graph, IMAP, webhook and simulated-email
+  outcomes now distinguish `skipped_non_ticket`.
+- **Admin controls.** Added an administrator-only management API and a
+  Profile → Settings card for mode, confidence threshold, approved senders,
+  reason-code allowlisting, metrics, provider check, refresh and an immediate
+  auto-skip stop. `INTAKE_TRIAGE_KILL_SWITCH=true` is an environment-level
+  stop that the UI cannot override.
+- **Provider tooling.** Added a separate synthetic/labeled relevance benchmark
+  CLI; the existing category/priority benchmark remains unchanged. Groq keys
+  are environment secrets only.
+
 ## In Progress
 
 - **Supporting (multi-group) membership feature** — full implementation across
@@ -156,10 +261,8 @@ can only receive low/moderate priority tickets from those secondary groups.
 | Rebalancer cross-team supporting tier gate | Done |
 
 ### Remaining work items
-1. Run full test suite to validate all 35 suites pass
-2. Run browser checks (jsdom harness)
-3. `fly deploy` current state to production
-4. Remove `Agent.teamId` legacy transition column (requires full reader flip)
+1. Run browser checks (jsdom harness; no checked-in harness currently exists)
+2. Remove `Agent.teamId` legacy transition column (requires full reader flip)
 
 ## Known Issues
 
@@ -178,6 +281,32 @@ can only receive low/moderate priority tickets from those secondary groups.
   assignment engine only gates at time of assignment.
 
 ## Last Verified
+
+**2026-09-24**, after resuming the interrupted supporting-membership work and
+applying the routing/membership update:
+
+- `cd server && npm test`: **37/37 suites passed** on the disposable local
+  PostgreSQL test cluster
+- `cd client && npm run build`: Vite production build passed
+- Live routing matcher verification passed for toner/printer, desk phone,
+  conference-room setup, and email-account creation requests
+- Live membership verification passed: Ibiyemi Aboyewa is primary in Accounts
+  & Access and supporting in General IT Support and Hardware & Devices
+- Existing-ticket reroute verification passed: 14 groups updated, 10 active
+  owners reassigned through the compare-and-set path, 4 historical owners
+  preserved, and no new-rule target/group mismatches remain
+- Field Operations repair verification passed: no active tickets remain in the
+  group, no active ticket is assigned to a non-member, and `INC-001768` is
+  Hardware & Devices with Ibiyemi Aboyewa
+- `cd server && npm test`: **37/37 suites passed** after the routing and
+  rebalancer fixes; `cd client && npm run build`: Vite production build passed
+- Fly deploy completed on 2026-09-24 as image version 25; both machines are
+  started and healthy. Post-deploy verification found `INC-001768` in Hardware
+  & Devices with Ibiyemi Aboyewa, 0 active Field Operations tickets, and 0
+  active non-member assignments.
+- No browser/jsdom harness is currently checked in; the legacy `Agent.teamId`
+  reader surface still spans server policy/routing/reporting and client UI, so
+  its removal remains a separate migration task
 
 **2026-09-16**, documentation and merge-verification pass — no application
 code touched and the full suite deliberately not re-run (see remaining work

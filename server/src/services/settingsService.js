@@ -11,6 +11,11 @@
 // starts), which single-key checks cannot express.
 const prisma = require('../lib/prisma');
 const auditService = require('./auditService');
+const {
+  TRIAGE_MODES,
+  SAFE_SKIP_REASON_CODES,
+  DEFAULT_SKIP_REASON_CODES,
+} = require('./emailTriagePolicy');
 
 // IANA zone check — Intl throws on anything it cannot treat as a time zone.
 function isValidTimeZone(zone) {
@@ -274,6 +279,125 @@ const DEFINITIONS = {
     env: 'REPORT_SEND_HOUR',
     fallback: 9,
     help: 'Wall-clock hour in the SLA timezone; 09:00 by default.',
+  },
+
+  // ---- Intake (see src/services/intakeScreening.js) ----------------------
+  intakeIgnoredSenders: {
+    group: 'intake',
+    label: 'Senders that never open tickets',
+    type: 'string',
+    env: 'INTAKE_IGNORED_SENDERS',
+    // Kept in sync with DEFAULT_IGNORED_SENDERS in intakeScreening.js (no
+    // import either way — the two modules would require each other).
+    fallback:
+      'noreply, no-reply, donotreply, do-not-reply, mailer-daemon, postmaster, quarantine@messaging.microsoft.com',
+    help:
+      'Comma-separated. "noreply" matches a local-part prefix, "a@b.com" one exact address, "@b.com" a whole domain. ' +
+      'Automated-mail headers (Auto-Submitted, Precedence: bulk/list/junk, List-Id) are always screened regardless of this list.',
+    validate(value) {
+      const entries = String(value ?? '')
+        .split(',')
+        .map((e) => e.trim().toLowerCase())
+        .filter(Boolean);
+      if (entries.length > 100) {
+        return { ok: false, error: 'Senders that never open tickets accepts at most 100 entries' };
+      }
+      for (const entry of entries) {
+        if (entry.length > 254 || /\s/.test(entry)) {
+          return { ok: false, error: `Ignored-sender entry "${entry}" must be a single address, @domain or local-part (no spaces)` };
+        }
+      }
+      // Canonical stored form; an empty list is allowed and simply disables
+      // the sender half of screening (header screening still applies).
+      return { ok: true, value: [...new Set(entries)].join(', ') };
+    },
+  },
+
+  // ---- Email relevance triage (Groq; see emailTriageService.js) ---------
+  intakeRelevanceMode: {
+    group: 'intake',
+    label: 'Email relevance mode',
+    type: 'string',
+    env: 'INTAKE_RELEVANCE_MODE',
+    fallback: 'disabled',
+    help:
+      'Disabled makes no model calls. Shadow records recommendations but always creates tickets. Auto-skip may suppress only messages that pass the local safety policy.',
+    validate(value) {
+      const mode = String(value ?? '').trim().toLowerCase();
+      if (!TRIAGE_MODES.includes(mode)) {
+        return { ok: false, error: `Email relevance mode must be one of: ${TRIAGE_MODES.join(', ')}` };
+      }
+      return { ok: true, value: mode };
+    },
+  },
+  intakeRelevanceSkipThreshold: {
+    group: 'intake',
+    label: 'Minimum auto-skip confidence (%)',
+    type: 'int',
+    min: 95,
+    max: 100,
+    env: 'INTAKE_RELEVANCE_SKIP_THRESHOLD',
+    fallback: 95,
+    help:
+      'A model recommendation below this percentage always creates a ticket. Start at 95 or higher; the threshold is only one part of the safety policy.',
+  },
+  intakeRelevanceRequireApprovedSender: {
+    group: 'intake',
+    label: 'Require an approved sender for auto-skip',
+    type: 'int',
+    min: 0,
+    max: 1,
+    env: 'INTAKE_RELEVANCE_REQUIRE_APPROVED_SENDER',
+    fallback: 1,
+    help:
+      'When enabled, only the comma-separated approved senders/domains below may be auto-skipped. Keep this enabled for the first production rollout.',
+  },
+  intakeRelevanceApprovedSenders: {
+    group: 'intake',
+    label: 'Senders eligible for auto-skip',
+    type: 'string',
+    env: 'INTAKE_RELEVANCE_APPROVED_SENDERS',
+    fallback: '',
+    help:
+      'Comma-separated local-part prefixes, exact addresses, or @domains. An empty list means no sender is eligible while the approved-sender requirement is enabled.',
+    validate(value) {
+      const entries = String(value ?? '')
+        .split(',')
+        .map((entry) => entry.trim().toLowerCase())
+        .filter(Boolean);
+      if (entries.length > 100) {
+        return { ok: false, error: 'Auto-skip approved senders accepts at most 100 entries' };
+      }
+      for (const entry of entries) {
+        if (entry.length > 254 || /\s/.test(entry)) {
+          return { ok: false, error: `Approved sender "${entry}" must be a single address, @domain or local-part` };
+        }
+      }
+      return { ok: true, value: [...new Set(entries)].join(', ') };
+    },
+  },
+  intakeRelevanceSkipReasonCodes: {
+    group: 'intake',
+    label: 'Allowed auto-skip reason codes',
+    type: 'string',
+    env: 'INTAKE_RELEVANCE_SKIP_REASON_CODES',
+    fallback: DEFAULT_SKIP_REASON_CODES.join(', '),
+    help:
+      'Administrators may remove reason codes to make suppression narrower; unknown codes cannot be added.',
+    validate(value) {
+      const requested = String(value ?? '')
+        .split(',')
+        .map((entry) => entry.trim().toLowerCase())
+        .filter(Boolean);
+      const invalid = requested.filter((entry) => !SAFE_SKIP_REASON_CODES.includes(entry));
+      if (invalid.length) {
+        return { ok: false, error: `Unknown auto-skip reason code: ${invalid.join(', ')}` };
+      }
+      if (!requested.length) {
+        return { ok: false, error: 'At least one auto-skip reason code is required' };
+      }
+      return { ok: true, value: SAFE_SKIP_REASON_CODES.filter((code) => requested.includes(code)).join(', ') };
+    },
   },
 };
 

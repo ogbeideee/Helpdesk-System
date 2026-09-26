@@ -134,7 +134,7 @@ function createMailService(options = {}) {
    * Process one raw Graph message.
    *
    * Outcomes: created | comment_added | reopened | duplicate | skipped_self
-   *           | rejected | failed
+   *           | skipped_automated | skipped_non_ticket | rejected | failed
    * Anything other than 'failed' is definitive and marks the message read.
    *
    * @param {object} raw          Graph message
@@ -241,6 +241,19 @@ function createMailService(options = {}) {
         await safeMarkRead(messageId, 'self-addressed');
         break;
 
+      case 'skipped_automated':
+        logger.log(`[graph] message ${messageId} screened as automated mail (${result.reason || 'screened'})`);
+        await safeMarkRead(messageId, 'automated message');
+        break;
+
+      case 'skipped_non_ticket':
+        logger.log(
+          `[graph] message ${messageId} skipped by relevance policy ` +
+            `(${result.reason || 'policy'})`,
+        );
+        await safeMarkRead(messageId, 'non-ticket message');
+        break;
+
       default:
         logger.warn(`[graph] unhandled intake status ${result.status} for ${messageId}`);
         await safeMarkRead(messageId, `unhandled status ${result.status}`);
@@ -270,6 +283,8 @@ function createMailService(options = {}) {
       reopened: 0,
       duplicate: 0,
       skipped_self: 0,
+      skipped_automated: 0,
+      skipped_non_ticket: 0,
       rejected: 0,
       failed: 0,
       dry_run: 0,

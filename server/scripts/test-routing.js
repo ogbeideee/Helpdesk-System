@@ -18,6 +18,7 @@ const bcrypt = require('bcryptjs');
 const prisma = require('../src/lib/prisma');
 const { ensureTeams } = require('../src/teams');
 const routingService = require('../src/services/routingService');
+const { DEFAULT_RULES } = require('../src/services/defaultRoutingRules');
 const engine = require('../src/services/assignmentEngine');
 
 const BASE = `http://localhost:${process.env.PORT}`;
@@ -161,6 +162,15 @@ async function main() {
     check('keywords: no partial-word false positives ("van" vs "advance")',
       !routingService.keywordMatches('van', h2, h2c));
 
+    // The separator-insensitive form must stay word-bounded too: it exists so
+    // "wi fi" matches "wifi", not so a keyword can be a prefix of a longer word.
+    const h4 = routingService.normalise('the display is physically damaged');
+    const h4c = routingService.compact('the display is physically damaged');
+    check('keywords: separator-insensitive matching is word-bounded ("physical" does not match "physically")',
+      !routingService.keywordMatches('physical', h4, h4c));
+    check('keywords: and the real separator case still matches ("wifi" matches "wi fi")',
+      routingService.keywordMatches('wifi', routingService.normalise('the wi fi is down'), routingService.compact('the wi fi is down')));
+
     const h3 = routingService.normalise('the docking station is broken');
     const h3c = routingService.compact('the docking station is broken');
     check('keywords: multi-word phrase matches', routingService.keywordMatches('docking station', h3, h3c));
@@ -173,6 +183,16 @@ async function main() {
     eq('skills: MID is 2', routingService.skillValue('MID'), 2);
     eq('skills: SENIOR is 3', routingService.skillValue('SENIOR'), 3);
     eq('skills: name round-trips', routingService.skillName(3), 'SENIOR');
+
+    const defaultFieldOps = DEFAULT_RULES.find((rule) => rule.name === 'Field Operations');
+    const genericFieldOpsTerms = ['field', 'on-site', 'site', 'pos', 'outlet', 'premises', 'branch', 'installation', 'install', 'physical'];
+    check('default field operations rule excludes generic words that misroute ordinary tickets',
+      genericFieldOpsTerms.every((term) => !defaultFieldOps.keywords.includes(term)),
+      defaultFieldOps.keywords.join(','));
+
+    const defaultHardware = DEFAULT_RULES.find((rule) => rule.name === 'Hardware & Devices');
+    check('default hardware rule recognises laptop screen failures',
+      defaultHardware.keywords.includes('laptop') && defaultHardware.keywords.includes('screen'));
   }
 
   /* ================================================================== */
@@ -346,11 +366,41 @@ async function main() {
     eq('precedence: lower priority number wins', d.groupName, network.name);
     eq('precedence: the specific rule is the one reported', d.ruleName, `${MARK}Network Issues`);
 
-    // Flip the priorities: the generic rule should now win.
+    // Flip the priorities. Under the precedence contract a bare catch-all
+    // still loses: the Network rule matched "wifi" in the SUBJECT, and subject
+    // evidence is evaluated before raw priority.
     await prisma.routingRule.update({ where: { id: generic.id }, data: { priority: 5 } });
     const d2 = await route('Cannot connect to WiFi on my laptop', 'Hardware');
-    eq('precedence: priority is what decides, not specificity', d2.groupName, hardware.name);
-    await prisma.routingRule.update({ where: { id: generic.id }, data: { priority: 70 } });
+    eq('precedence: subject keyword evidence beats a bare catch-all whatever the priority',
+      d2.groupName, network.name);
+
+    // Give the catch-all its own subject evidence: now priority decides again.
+    await prisma.routingRule.update({
+      where: { id: generic.id },
+      data: { keywords: routingService.serialiseKeywords(['wifi']) },
+    });
+    const d2b = await route('Cannot connect to WiFi on my laptop', 'Hardware');
+    eq('precedence: with equal evidence, priority decides', d2b.groupName, hardware.name);
+    eq('precedence: and the lower-priority rule is the one reported', d2b.ruleName, `${MARK}Generic Hardware`);
+    await prisma.routingRule.update({
+      where: { id: generic.id },
+      data: { priority: 70, keywords: '' },
+    });
+
+    // A subject match beats a body-only match at equal priority.
+    const subjRule = await mkRule({
+      name: 'Subject Alpha', priority: 40, category: null, keywords: ['alpha'], teamId: network.id,
+    });
+    const bodyRule = await mkRule({
+      name: 'Body Beta', priority: 40, category: null, keywords: ['beta'], teamId: hardware.id,
+    });
+    const dSubj = await route('alpha outage please help\nwe also noticed beta behaviour in passing', 'Inquiry / Help');
+    eq('precedence: a subject match beats a body-only match at equal priority',
+      dSubj.ruleName, `${MARK}Subject Alpha`);
+    check('precedence: the body-only keyword is still recorded as a matched alternative',
+      dSubj.matchedKeywords.includes('alpha') && !dSubj.matchedKeywords.includes('beta'),
+      JSON.stringify(dSubj.matchedKeywords));
+    await prisma.routingRule.deleteMany({ where: { id: { in: [subjRule.id, bodyRule.id] } } });
 
     // At equal priority, a category-specific rule beats a category-agnostic one.
     const anyCat = await mkRule({

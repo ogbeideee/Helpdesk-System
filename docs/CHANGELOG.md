@@ -2,6 +2,14 @@
 
 Major implementation milestones only — not individual code edits.
 
+## 2026-09-25
+
+- Added the cloud-first email relevance triage foundation: Groq provider integration,
+  conservative auto-skip policy, fail-open behavior, sanitized decision persistence,
+  provider retry/circuit monitoring, and administrator controls in Profile → Settings.
+- Added a separate relevance benchmark and kept the existing category/priority AI
+  benchmark unchanged.
+
 ## 2026-08-28
 
 - Added an application-wide light/dark/system theme: one token layer, a

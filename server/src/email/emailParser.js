@@ -544,6 +544,12 @@ function parseEmail(raw) {
     ...separateQuotedContent(boundedBody),
     receivedAt: extractReceivedAt(raw),
     isHtml,
+    // Automated-mail signals (RFC 3834 + bulk markers), sanitized header
+    // values. The parser never acts on them — the intake screening gate does.
+    autoSubmitted: sanitizeHeaderValue(raw.autoSubmitted),
+    precedence: sanitizeHeaderValue(raw.precedence),
+    listId: sanitizeHeaderValue(raw.listId),
+    listUnsubscribe: sanitizeHeaderValue(raw.listUnsubscribe),
     attachments: extractAttachments(raw).slice(0, LIMITS.attachments),
   };
 }

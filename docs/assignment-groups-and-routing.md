@@ -8,12 +8,12 @@ description, active flag and timestamps. Exactly one is the **default**:
 
 | Group | Purpose |
 |---|---|
-| General IT Support | First-line support and triage. **Default.** |
-| Accounts & Access | Accounts, passwords, MFA |
+| General IT Support | First-line support and triage, including printer/toner requests, desk phones, and meeting-room setup. **Default.** |
+| Accounts & Access | Accounts, passwords, MFA, account creation and email provisioning |
 | Software & Applications | Desktop and LOB applications |
-| Hardware & Devices | Laptops, peripherals, printers |
+| Hardware & Devices | Laptops, peripherals, printers and meeting-room equipment |
 | Network Team | WiFi, LAN, VPN, routers |
-| Field Operations | On-site installation: LAN cabling, router/switch setup, premises wiring (priority 30 routing rule) |
+| Field Operations | Specific on-site cabling, router/switch installation, POS, CCTV and premises-wiring requests (priority 30 routing rule; broad words such as `site`, `field`, `premises` and `installation` are not keywords) |
 
 Groups can be created and edited by an admin at **Routing → Assignment Groups**.
 
@@ -37,23 +37,37 @@ Rules are database rows an ADMIN edits at `/routing` (API: `/api/routing/rules`)
 Each has a name, keywords, an optional category, a target group, an optional
 preferred agent, an optional minimum skill, a priority and an active flag.
 
+The current routing table sends account-creation and email-provisioning wording
+to **Accounts & Access** (priority 3), while printer/toner, desk-phone and
+meeting-room wording goes to **General IT Support** (priority 4). Password reset
+requests continue to use the category-specific Accounts & Access rule (priority
+5); the specialist category rules follow at priorities 6–8, network at 10 and
+field operations at 30.
+
 Matching is **deterministic string comparison** - no LLM, no network. Text is
 lower-cased and stripped of punctuation, so `Wi-Fi`, `WiFi`, `WI-FI` and
 `wi fi` all match the keyword `wifi`. Keywords match whole words, so `van` does
-not match `advance`, and multi-word keywords match as phrases.
+not match `advance`, and multi-word keywords match as phrases. The
+separator-insensitive form is word-bounded as well, so `physical` does not
+match `physically`.
 
 **Precedence.** Only active rules on active groups are considered. Among those
 that match, the winner is decided by:
 
-1. **`priority` ascending** - lower number wins. This is the administrator's
-   explicit ordering and always dominates.
-2. **Category-specific beats category-agnostic**, at equal priority.
-3. **More matched keywords** wins - three matches is more specific than one.
-4. **Longer matched keyword** wins - `docking station` beats `dock`.
-5. **Lower id** - a stable tie-break so the result never depends on row order.
+1. **Subject evidence** - a rule whose keyword matched in the subject beats one
+   that only matched in the body. The subject is the sender's own summary while
+   body text is noise-prone, so a subject hit is the stronger signal.
+2. **`priority` ascending** - lower number wins. This is the administrator's
+   explicit ordering and dominates within an evidence class.
+3. **Category-specific beats category-agnostic**, at equal priority.
+4. **More matched keywords** wins - three matches is more specific than one.
+5. **Longer matched keyword** wins - `docking station` beats `dock`.
+6. **Lower id** - a stable tie-break so the result never depends on row order.
 
 A rule with no keywords matches on category alone; one with neither is a
-catch-all.
+catch-all. Classification and routing both read the **sender's own words**:
+quoted history and the signature are stripped before either one runs, so a
+keyword buried in a quoted thread cannot decide where a ticket goes.
 
 ## Routing algorithm
 
@@ -79,7 +93,9 @@ members of the ticket's group.
 Supporting members (agents whose primary team differs from the ticket's group)
 are considered **in-group candidates** for low/moderate priority tickets, not
 cross-team fallbacks — they appear in the assignment pool alongside primary
-members of the same group.
+members of the same group. Automatic workload rebalancing likewise requires the
+recipient to be a primary or supporting member of the ticket's group; it never
+moves a ticket to an unrelated team's member.
 
 Every decision is written to the ticket's audit trail, naming the rule that won
 and the keywords it matched. Rule administration itself is audited separately in

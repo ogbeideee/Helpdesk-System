@@ -8,8 +8,8 @@
 //     -> NormalizedEmail
 //     -> THIS MODULE             (maps the model onto the intake payload)
 //     -> intakeEmailMessage()    (src/services/ticketIntake.js)
-//          dedupe -> thread match -> classify -> number -> route -> assign
-//          -> audit -> notify
+//          dedupe -> thread match -> screen -> relevance triage
+//          -> classify -> number -> route -> assign -> audit -> notify
 //
 // It contains no ticket rules of its own. Classification, priority, ticket
 // numbering, assignment, reopening and audit all stay in ticketIntake.js and
@@ -43,9 +43,14 @@ function toIntakePayload(email) {
     subject: email.subject,
     body: email.body,
     // The sender's own words without quoted history or signature — the
-    // classifier's input, not a stored field. Null when the source could not
-    // compute one.
+    // classifier/triage input, not a stored field. Null when the source could
+    // not compute one.
     cleanBody: email.cleanBody || null,
+    // Automated-mail signals, consumed by the intake screening gate.
+    autoSubmitted: email.autoSubmitted || null,
+    precedence: email.precedence || null,
+    listId: email.listId || null,
+    listUnsubscribe: email.listUnsubscribe || null,
   };
 }
 
@@ -65,7 +70,7 @@ function toIntakePayload(email) {
  * classifier into the ticket pipeline.
  *
  * @param {NormalizedEmail} email
- * @param {{ logger?: Console, channel?: string, attachments?: Array, storage?: object, classifier?: Function }} [options]
+ * @param {{ logger?: Console, channel?: string, attachments?: Array, hasAttachments?: boolean, storage?: object, classifier?: Function, triageService?: object }} [options]
  */
 async function ingestNormalizedEmail(email, options = {}) {
   const logger = options.logger || console;
@@ -74,6 +79,11 @@ async function ingestNormalizedEmail(email, options = {}) {
     allowThreading: true,
     ...(options.channel ? { channel: options.channel } : {}),
     ...(options.classifier ? { classifier: options.classifier } : {}),
+    ...(options.triageService ? { triageService: options.triageService } : {}),
+    hasAttachments:
+      options.hasAttachments === undefined
+        ? Boolean(email.attachments && email.attachments.length)
+        : Boolean(options.hasAttachments),
     ...(Array.isArray(options.attachments) && options.attachments.length
       ? { attachments: options.attachments }
       : {}),

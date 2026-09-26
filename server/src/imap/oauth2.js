@@ -38,8 +38,8 @@ const tokenCache = new Map();
 function readOauth2Env() {
   return {
     clientId: String(process.env.IMAP_OAUTH2_CLIENT_ID || '').trim(),
-    clientSecret: String(process.env.IMAP_OAUTH2_CLIENT_SECRET || ''),
-    refreshToken: String(process.env.IMAP_OAUTH2_REFRESH_TOKEN || ''),
+    clientSecret: String(process.env.IMAP_OAUTH2_CLIENT_SECRET || '').trim(),
+    refreshToken: String(process.env.IMAP_OAUTH2_REFRESH_TOKEN || '').trim(),
     // Where to exchange the refresh token. Defaults to Google's endpoint;
     // tests point it at a local mock instead of the real network.
     tokenUrl: String(process.env.IMAP_OAUTH2_TOKEN_URL || '').trim() || DEFAULT_TOKEN_URL,

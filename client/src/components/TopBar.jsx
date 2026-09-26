@@ -18,7 +18,7 @@ import NotificationBell from './NotificationBell.jsx';
  * Choosing a person or a category does not invent a view — it opens the ticket
  * queue with that filter already applied.
  */
-function GlobalSearch({ people, onFirstUse }) {
+function GlobalSearch({ people, onFirstUse, routeKey }) {
   const [q, setQ] = useState('');
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -40,6 +40,18 @@ function GlobalSearch({ people, onFirstUse }) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [setOpen, onFirstUse]);
+
+  // TopBar stays mounted while hash routes change. The route key is supplied
+  // by App, so the query is reset even if the browser coalesces or delays a
+  // hashchange event.
+  useEffect(() => {
+    setQ('');
+    setTickets([]);
+    setLoading(false);
+    setActive(0);
+    close();
+    inputRef.current?.blur();
+  }, [routeKey, close]);
 
   const term = q.trim();
 
@@ -243,6 +255,10 @@ function AccountMenu({ me, isAdmin, onLogout }) {
             <Icon name="handovers" size={15} className="menu-item-icon" />
             <span>Handovers</span>
           </button>
+          <button type="button" role="menuitem" className="menu-item" onClick={() => go('/settings')}>
+            <Icon name="settings" size={15} className="menu-item-icon" />
+            <span>Settings</span>
+          </button>
           <div className="menu-sep" />
           <button type="button" role="menuitem" className="menu-item is-danger" onClick={() => { close(); onLogout(); }}>
             <Icon name="logout" size={15} className="menu-item-icon" />
@@ -258,7 +274,7 @@ function AccountMenu({ me, isAdmin, onLogout }) {
 /* Header                                                              */
 /* ------------------------------------------------------------------ */
 
-export default function TopBar({ title, subtitle, dev, me, isAdmin, onLogout }) {
+export default function TopBar({ title, subtitle, dev, me, isAdmin, onLogout, routeKey }) {
   const [people, setPeople] = useState([]);
   const peopleAsked = useRef(false);
 
@@ -280,7 +296,7 @@ export default function TopBar({ title, subtitle, dev, me, isAdmin, onLogout }) 
         {subtitle && <p>{subtitle}</p>}
       </div>
 
-      <GlobalSearch people={people} onFirstUse={loadPeople} />
+      <GlobalSearch people={people} onFirstUse={loadPeople} routeKey={routeKey} />
 
       <div className="topbar-actions">
         <ThemeToggle />

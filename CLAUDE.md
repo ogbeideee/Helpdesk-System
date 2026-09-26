@@ -16,8 +16,8 @@ source of truth for architecture and conventions.
 
 Internal IT helpdesk ticketing system for one organisation. Employees raise
 requests by email; the system creates tickets, classifies and routes them,
-assigns an agent, and tracks them to resolution. Runs fully locally with no
-Microsoft 365 credentials — a built-in email simulator stands in for Graph.
+assigns an agent, and tracks them to resolution. The live deployment uses the
+Microsoft 365-to-Gmail forwarding and IMAP path.
 
 ## Stack
 
@@ -65,6 +65,7 @@ write a second implementation of a component for light mode.
 | `workloadService.js` | Workload, unattended claiming, `moveTicket`, rebalancing |
 | `handoverService.js` | Handover offers, queue, expiry, reroute |
 | `settingsService.js` | Admin-configurable values (`Setting` table, env defaults) |
+| `emailTriageService.js` | Optional Groq relevance gate → `skipped_non_ticket`; fail-open and audited |
 | `ticketIntake.js` / `emailIngestion.js` | Email → ticket pipeline |
 
 **Other** — `src/states.js` (lifecycle), `src/teams.js` (assignment groups),
@@ -145,9 +146,22 @@ until the recipient accepts, so a pending request counts toward nobody's
 workload. Default 2 active per recipient, then a FIFO queue. Expiry pauses while
 the recipient is unavailable.
 
-**Routing precedence** — priority asc → category-specific over agnostic → more
-matched keywords → longer keyword → lower id. Matching is deterministic and
+**Routing precedence** — subject-keyword evidence → priority asc →
+category-specific over agnostic → more matched keywords → longer keyword →
+lower id. Classification and routing read only the sender's own words (quoted
+history and the signature are stripped first). Matching is deterministic and
 punctuation/case-insensitive. **No LLM anywhere in routing or parsing.**
+
+**Email relevance triage** — `emailTriageService` runs only after deterministic
+screening and thread resolution, and only for new-ticket candidates. Groq may
+recommend `ticket`, `skip`, or `review`; it never chooses category, priority,
+assignment group, or agent. `skipped_non_ticket` requires a valid high-confidence
+result, an allowlisted reason, the approved-sender policy, no attachment, no
+local action signal, and a successfully persisted `EmailTriageDecision`. Every provider,
+validation, configuration, or persistence failure fails open to ticket
+creation. The admin Profile → Settings surface owns the runtime mode, threshold,
+sender/reason allowlists, metrics, and emergency stop; the Groq key is an
+environment secret only.
 
 **Concurrency** — every ownership change goes through
 `workloadService.moveTicket`, a compare-and-set (`updateMany` with the expected

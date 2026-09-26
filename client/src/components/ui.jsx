@@ -145,6 +145,7 @@ const ICON_PATHS = {
   dots: <><circle cx="8" cy="3.5" r="1" /><circle cx="8" cy="8" r="1" /><circle cx="8" cy="12.5" r="1" /></>,
   logout: <><path d="M6 13.5H3.4c-.6 0-1.1-.5-1.1-1.1V3.6c0-.6.5-1.1 1.1-1.1H6" /><path d="M10.4 11L13.5 8l-3.1-3M13 8H6.2" /></>,
   shieldCheck: <><path d="M8 1.9l4.8 1.7v4c0 3-2 5.2-4.8 6.5C5.2 12.8 3.2 10.6 3.2 7.6v-4z" /><path d="M5.9 7.9l1.6 1.6 2.8-3" /></>,
+  settings: <><path d="M2.2 4.5h11.6M2.2 8h11.6M2.2 11.5h11.6" /><circle cx="6" cy="4.5" r="1.7" /><circle cx="10" cy="8" r="1.7" /><circle cx="5" cy="11.5" r="1.7" /></>,
   activity: <path d="M1.8 8h2.6l1.8-4.8L9 12.4l1.7-4.4h3.5" />,
   reports: <><path d="M3.5 13.5v-4.5M8 13.5v-11M12.5 13.5v-7.5" /><path d="M2 13.5h12" /></>,
   trail: <><path d="M13.2 8A5.2 5.2 0 1 1 11 3.9" /><path d="M13.5 2.2v2.6h-2.6" /><path d="M8 5.3V8l1.9 1.3" /></>,

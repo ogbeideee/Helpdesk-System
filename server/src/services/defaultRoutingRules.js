@@ -9,10 +9,11 @@
 //
 // Priority: lower number = evaluated first = wins. The bands leave room to
 // insert rules without renumbering:
-//   10-29  specific technical domains (network, printing, …)
-//   30-49  reserved for future specific rules
-//   50-89  broad per-category rules
-//   90+    catch-alls
+//   3-9     account provisioning and general support requests
+//   10-29   specific technical domains (network, …)
+//   30-49   reserved for future specific rules
+//   50-89   broad per-category rules
+//   90+     catch-alls
 const routingService = require('./routingService');
 
 const DEFAULT_RULES = [
@@ -21,7 +22,7 @@ const DEFAULT_RULES = [
     priority: 10,
     // Category-agnostic on purpose: connectivity wording can land in any
     // category, and this rule's keywords are specific enough to decide on
-    // their own. Its low priority number makes it win outright.
+    // their own.
     category: null,
     groupKey: 'network',
     minimumSkillLevel: 'MID',
@@ -32,22 +33,90 @@ const DEFAULT_RULES = [
     ],
   },
   {
-    name: 'Printing',
-    priority: 20,
+    name: 'Account Creation & Email Provisioning',
+    priority: 3,
     category: null,
-    groupKey: 'hardware',
-    keywords: ['printer', 'printing', 'print queue', 'toner', 'paper jam', 'scanner'],
+    groupKey: 'accounts',
+    keywords: [
+      'email account creation',
+      'email creation',
+      'email address creation',
+      'create an email',
+      'create an email account',
+      'create email account',
+      'new email account',
+      'new account',
+      'create an account',
+      'create account',
+      'email account',
+      'email address',
+      'mailbox',
+      'mailbox creation',
+      'mailbox setup',
+      'new user',
+      'user account',
+      'user account creation',
+      'user setup',
+      'new staff account',
+      'new employee account',
+      'onboarding account',
+      'account setup',
+      'account request',
+      'request an account',
+      'email setup',
+    ],
+  },
+  {
+    name: 'General IT Support Requests',
+    priority: 4,
+    category: null,
+    groupKey: 'service_desk',
+    keywords: [
+      'printer',
+      'printing',
+      'print queue',
+      'toner',
+      'change of toner',
+      'toner change',
+      'toner replacement',
+      'replace toner',
+      'paper jam',
+      'scanner',
+      'printer issue',
+      'printer problem',
+      'printer error',
+      'desk phone',
+      'deskphone',
+      'telephone',
+      'phone issue',
+      'phone problem',
+      'phone not working',
+      'cannot make calls',
+      'can not make calls',
+      'outbound call',
+      'inbound call',
+      'conference room',
+      'meeting room',
+      'room setup',
+      'conference setup',
+      'meeting setup',
+      'conference room setup',
+      'meeting room setup',
+      'projector',
+      'video conferencing',
+      'presentation setup',
+    ],
   },
   {
     name: 'Account & Access',
-    priority: 50,
+    priority: 5,
     category: 'Password Reset',
     groupKey: 'accounts',
     keywords: [],
   },
   {
     name: 'Software & Applications',
-    priority: 60,
+    priority: 6,
     category: 'Software',
     groupKey: 'software',
     minimumSkillLevel: 'MID',
@@ -55,14 +124,33 @@ const DEFAULT_RULES = [
   },
   {
     name: 'Hardware & Devices',
-    priority: 70,
+    priority: 7,
     category: 'Hardware',
     groupKey: 'hardware',
-    keywords: [],
+    keywords: [
+      'Crash',
+      'Laptop Screen',
+      'laptop',
+      'screen',
+      'monitor',
+      'keyboard',
+      'mouse',
+      'docking station',
+      'headset',
+      'battery',
+      'overheating',
+      'fan',
+      'charger',
+      'hard drive',
+      'not turning on',
+      'will not turn on',
+      'blue screen',
+      'power supply',
+    ],
   },
   {
     name: 'General Enquiries',
-    priority: 90,
+    priority: 8,
     category: 'Inquiry / Help',
     groupKey: 'service_desk',
     keywords: [],
@@ -74,11 +162,10 @@ const DEFAULT_RULES = [
     groupKey: 'field_ops',
     minimumSkillLevel: 'JUNIOR',
     keywords: [
-      'field', 'on-site', 'site', 'cable', 'cabling', 'wiring', 'terminate',
-      'router setup', 'switch installation', 'pos', 'point of sale',
-      'cctv', 'data rack', 'outlet', 'premises', 'branch',
-      'installation', 'install', 'physical',
-      'cable run', 'cable management', 'patch panel', 'faceplate', 'keystone',
+      'cable', 'cabling', 'wiring', 'router setup', 'switch installation',
+      'point of sale', 'cctv', 'data rack', 'premises wiring',
+      'premises installation', 'cable run', 'cable management', 'patch panel',
+      'faceplate', 'keystone', 'cable termination', 'physical installation',
     ],
   },
 ];

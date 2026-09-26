@@ -25,6 +25,8 @@ async function pollOnce() {
       `[poller] ${summary.fetched} unread message(s): ` +
         `created=${summary.created}, activity=${summary.comment_added + summary.reopened}, ` +
         `duplicate=${summary.duplicate}, skipped=${summary.skipped_self}, ` +
+        `automated=${summary.skipped_automated || 0}, ` +
+        `non_ticket=${summary.skipped_non_ticket || 0}, ` +
         `rejected=${summary.rejected}, failed=${summary.failed}`
     );
   }

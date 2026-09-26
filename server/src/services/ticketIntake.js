@@ -2,7 +2,8 @@
 //
 // Used by POST /api/tickets/from-email today and designed to back the future
 // Microsoft Graph ingestion without changing business logic:
-//   validate -> dedupe -> classify -> number -> route -> assign -> audit
+//   validate -> dedupe -> thread -> screen -> relevance triage
+//            -> classify -> number -> route -> assign -> audit
 //
 // No real email is sent from here; notifications go through the isolated
 // notification service which logs them in development mode.
@@ -12,6 +13,8 @@ const { nextTicketNumber } = require("../ticketNumbers");
 const { computeDueAt } = require("../sla");
 const slaService = require("../slaService");
 const assignmentEngine = require("./assignmentEngine");
+const intakeScreening = require("./intakeScreening");
+const emailTriageService = require("./emailTriageService");
 const notificationService = require("../mailer");
 const auditService = require("./auditService");
 const {
@@ -71,10 +74,20 @@ function normalizeMessage(payload = {}) {
     body: String(payload.body || ""),
     // The quote/signature-stripped view of the body, when the source could
     // compute one (the email parser does; the portal and dev endpoints do
-    // not). Only the classifier consumes it — never stored.
+    // not). Only the classifier and relevance gate consume it — never stored.
     cleanBody: String(payload.cleanBody || ""),
+    hasAttachments: Boolean(
+      payload.hasAttachments ||
+      (Array.isArray(payload.attachments) && payload.attachments.length > 0),
+    ),
     requesterEmail: String(payload.from || "").trim(),
     requesterName: payload.name ? String(payload.name).trim() : null,
+    // Automated-mail signals (RFC 3834 + bulk markers) for the screening
+    // gate. Bounded — they are diagnostic header values, never stored.
+    autoSubmitted: truncate(payload.autoSubmitted, 100) || null,
+    precedence: truncate(payload.precedence, 100) || null,
+    listId: truncate(payload.listId, 200) || null,
+    listUnsubscribe: truncate(payload.listUnsubscribe, 200) || null,
   };
 }
 
@@ -169,10 +182,13 @@ function truncate(value, max) {
  * (reply handling arrives in a later phase).
  *
  * Returns one of:
- *   { status: 'created',        ticket, assignment }
- *   { status: 'duplicate',      ticket }
- *   { status: 'comment_added',  ticket, comment }
- *   { status: 'reopened',       ticket, comment, assignment: null }
+ *   { status: 'created',           ticket, assignment }
+ *   { status: 'duplicate',         ticket }
+ *   { status: 'comment_added',     ticket, comment }
+ *   { status: 'reopened',          ticket, comment, assignment: null }
+ *   { status: 'skipped_self',      ticket: null }
+ *   { status: 'skipped_automated', ticket: null, reason }
+ *   { status: 'skipped_non_ticket', ticket: null, reason }
  *
  * options.mailer (default: the shared notification mailer) is injectable so
  * tests can capture exactly which emails a message produces.
@@ -184,6 +200,12 @@ function truncate(value, max) {
  * options.classifier (default: the keyword classifier in
  * graph/categoryRules.js) decides the category when no parsing rule does. It
  * receives {subject, body, cleanBody, text} and returns {category}.
+ *
+ * options.triageService (default: emailTriageService) runs only after thread
+ * resolution and deterministic screening. Its only authoritative output is
+ * skipped_non_ticket; every other result continues to normal ticket intake.
+ * options.hasAttachments is a safety signal from the normalized email parser;
+ * any attachment vetoes auto-skip.
  */
 /**
  * The default rule evaluator: the admin-configurable email parsing rules,
@@ -205,8 +227,11 @@ async function defaultRuleEvaluator({ subject, body }) {
  * and the pre-joined text; returns { category } (priority and group stay with
  * the parsing rules, routing rules and intake defaults).
  */
-async function defaultClassifier({ subject, body }) {
-  return classify(`${subject}\n${body}`);
+async function defaultClassifier({ subject, body, cleanBody }) {
+  // Classify the sender's own words. The full body is kept for storage and
+  // threading, but quoted history and signatures are noise for classification:
+  // they are exactly what used to pull tickets into the wrong category.
+  return classify(`${subject}\n${cleanBody || body}`);
 }
 
 async function intakeEmailMessage(
@@ -218,6 +243,8 @@ async function intakeEmailMessage(
     channel = null,
     ruleEvaluator = defaultRuleEvaluator,
     classifier = defaultClassifier,
+    triageService = emailTriageService,
+    hasAttachments = false,
     attachments = [],
     storage = null,
   } = {},
@@ -412,6 +439,58 @@ async function intakeEmailMessage(
   }
   // when allowThreading is false, fall through to brand-new ticket creation
 
+  // Automated-mail screening. Deliberately AFTER thread resolution: an
+  // automated reply that references an existing ticket still attaches as a
+  // comment — only NEW-ticket creation is blocked. This is what keeps Google
+  // security alerts, quarantine digests, bounces and noreply notifications
+  // out of the queue (and stops the ack-to-noreply bounce loop at the root).
+  // Definitive outcome, handled exactly like skipped_self by both channels.
+  const screening = await intakeScreening.screenMessage(msg);
+  if (screening) {
+    // Attachment binaries were uploaded before thread resolution; remove
+    // them best-effort so a screened message never orphans objects.
+    await deleteUploaded(plan.accepted, storageClient);
+    logger.log(
+      `[intake] skipped automated message ${msg.messageId} (${screening.reason})`,
+    );
+    return { status: "skipped_automated", ticket: null, reason: screening.reason };
+  }
+
+  // Groq relevance triage is deliberately after deterministic screening and
+  // thread resolution. It can only choose whether a NEW-ticket candidate is
+  // safe to suppress; category, priority, routing and assignment remain the
+  // existing deterministic pipeline below.
+  let triageResult;
+  try {
+    triageResult = await triageService.screenMessage(msg, {
+      client: prisma,
+      logger,
+      channel,
+      hasAttachments:
+        msg.hasAttachments ||
+        hasAttachments ||
+        (Array.isArray(attachments) && attachments.length > 0),
+    });
+  } catch {
+    // The service is designed to fail open, but intake keeps its own guard so
+    // an unexpected programming/database failure can never drop a message.
+    triageResult = { action: "ticket_candidate", errorCode: "triage_exception" };
+  }
+  if (triageResult && triageResult.action === "skipped_non_ticket") {
+    // Attachments are uploaded before the current screening seam; remove them
+    // best-effort so a triage skip never leaves orphaned binaries.
+    await deleteUploaded(plan.accepted, storageClient);
+    logger.log(
+      `[intake] skipped non-ticket message ${msg.messageId} ` +
+        `(reason=${triageResult.reasonCode || "policy"})`,
+    );
+    return {
+      status: "skipped_non_ticket",
+      ticket: null,
+      reason: triageResult.reasonCode || "policy",
+    };
+  }
+
   // Admin-configurable parsing rules run first. They influence ONLY the
   // fields their rules explicitly set — everything else falls back to the
   // existing keyword classifier and the default priority. Fail-open: a broken
@@ -468,12 +547,18 @@ async function intakeEmailMessage(
   }
 
   // 2) assignment engine decides group + skill + best agent.
-  // The routing rules match on the ticket text, so the engine needs it.
+  // The routing rules match on the ticket text, so the engine needs it — the
+  // sender's own words rather than an entire mail thread, so a keyword in
+  // quoted history or a signature cannot decide routing. The subject is passed
+  // explicitly: a keyword the sender wrote in the subject outranks body-only
+  // matches (see routingService's precedence).
+  const routingText = `${msg.subject}\n${msg.cleanBody || msg.body}`;
   const assignment = await assignmentEngine.assign(
     {
       category,
       priority,
-      text: `${msg.subject}\n${msg.body}`,
+      subject: msg.subject,
+      text: routingText,
       ...(forceTeamId ? { forceTeamId } : {}),
     },
     prisma,

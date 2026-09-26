@@ -367,14 +367,14 @@ async function recordFirstResponse(
  */
 async function finalizeOpenCycle(
   ticket,
-  { at, actor = 'system', client = prisma, include = null } = {}
+  { at, actor = 'system', client = prisma, include = null, policy = null } = {}
 ) {
   const cycle = await openCycleFor(ticket.id, client);
   if (!cycle) return null;
   const at2 = at ? new Date(at) : new Date();
-  const policy = await loadSlaPolicy(client);
+  const activePolicy = policy || (await loadSlaPolicy(client));
 
-  const holidays = await loadHolidaysBetween(cycle.startedAt, at2, client, policy);
+  const holidays = await loadHolidaysBetween(cycle.startedAt, at2, client, activePolicy);
   const resolutionBreached = cycle.resolutionDueAt ? at2 > cycle.resolutionDueAt : false;
   const responseLatched =
     !cycle.firstResponseAt && cycle.responseDueAt ? at2 > cycle.responseDueAt : false;
@@ -384,7 +384,7 @@ async function finalizeOpenCycle(
     data: {
       endedAt: at2,
       resolvedAt: at2,
-      resolutionDurationMs: clampIntMs(policy.calendar.workingMsBetween(cycle.startedAt, at2, holidays)),
+      resolutionDurationMs: clampIntMs(activePolicy.calendar.workingMsBetween(cycle.startedAt, at2, holidays)),
       resolutionBreached,
       // Attribution: the owner and group the cycle ended with (approved
       // policy 11).
@@ -436,7 +436,7 @@ async function finalizeOpenCycle(
  */
 async function restartCycle(
   ticket,
-  { at, actor = 'system', reason = null, client = prisma, include = null } = {}
+  { at, actor = 'system', reason = null, client = prisma, include = null, policy = null } = {}
 ) {
   const at2 = at ? new Date(at) : new Date();
   const previous = await latestCycleFor(ticket.id, client);
@@ -454,6 +454,7 @@ async function restartCycle(
     startedAt: at2,
     client,
     actor,
+    policy,
   });
 
   await recordEvent(client, {

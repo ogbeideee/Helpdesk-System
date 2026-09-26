@@ -99,7 +99,7 @@ function createImapMailService(options = {}) {
    * Process one fetched message.
    *
    * Outcomes: created | comment_added | reopened | duplicate | skipped_self
-   *           | rejected | failed
+   *           | skipped_automated | skipped_non_ticket | rejected | failed
    * Anything other than 'failed' is definitive and marks the message seen.
    *
    * @param {{ uid: number, source: Buffer|string, internalDate?: Date }} message
@@ -188,6 +188,15 @@ function createImapMailService(options = {}) {
       case 'duplicate':
         logger.log(`[imap] message ${identity} already processed (${ticket.ticketNumber})`);
         break;
+      case 'skipped_automated':
+        logger.log(`[imap] message ${identity} screened as automated mail (${result.reason || 'screened'})`);
+        break;
+      case 'skipped_non_ticket':
+        logger.log(
+          `[imap] message ${identity} skipped by relevance policy ` +
+            `(${result.reason || 'policy'})`,
+        );
+        break;
       default:
         logger.warn(`[imap] unhandled intake status ${result.status} for ${identity}`);
         break;
@@ -215,6 +224,8 @@ function createImapMailService(options = {}) {
       reopened: 0,
       duplicate: 0,
       skipped_self: 0,
+      skipped_automated: 0,
+      skipped_non_ticket: 0,
       rejected: 0,
       failed: 0,
     };

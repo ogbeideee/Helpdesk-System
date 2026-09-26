@@ -97,7 +97,7 @@ function byWorkloadThenRoundRobin(a, b) {
  * Resolve the group and minimum skill for a ticket, without picking an agent.
  * Kept for callers that only need the routing decision.
  */
-async function decide({ category, priority, text, forceTeamId }, client = prisma) {
+async function decide({ category, priority, text, subject, forceTeamId }, client = prisma) {
   const config = loadConfig();
   const boost = (config.prioritySkillBoost || {})[priority] || 0;
 
@@ -118,7 +118,7 @@ async function decide({ category, priority, text, forceTeamId }, client = prisma
   }
 
   const { rule, matchedKeywords } = await routingService.matchRule(
-    { category, text: text || category },
+    { category, text: text || category, subject },
     client
   );
 
@@ -153,7 +153,7 @@ async function decide({ category, priority, text, forceTeamId }, client = prisma
  *     candidatesConsidered, crossTeam, reason, awaitingAssignment }
  */
 async function assign(
-  { category, priority, text, forceTeamId, excludeAgentIds = [] },
+  { category, priority, text, subject, forceTeamId, excludeAgentIds = [] },
   client = prisma,
   logger = console
 ) {
@@ -161,7 +161,7 @@ async function assign(
   const cap = config.maxActiveTicketsPerAgent || FALLBACK_CONFIG.maxActiveTicketsPerAgent;
   const { STAFF_ROLES } = require('./userService');
 
-  const decision = await decide({ category, priority, text, forceTeamId }, client);
+  const decision = await decide({ category, priority, text, subject, forceTeamId }, client);
   const { team, minSkillLevel, rule } = decision;
   const groupKey = decision.groupKey;
   const groupName = decision.groupName;

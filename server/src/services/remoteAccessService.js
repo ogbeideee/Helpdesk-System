@@ -422,9 +422,13 @@ async function expireSession(session, client = prisma) {
  * the read paths so the visible status never lies, and safe to call
  * repeatedly — a replay finds nothing left to expire.
  */
-async function expireStaleSessions({ at = new Date(), client = prisma } = {}) {
+async function expireStaleSessions({ at = new Date(), client = prisma, ticketId = null } = {}) {
   const stale = await client.remoteAccessSession.findMany({
-    where: { status: 'requested', expiresAt: { lt: at } },
+    where: {
+      status: 'requested',
+      expiresAt: { lt: at },
+      ...(ticketId ? { ticketId } : {}),
+    },
     include: SESSION_INCLUDE,
     orderBy: { id: 'asc' },
   });
@@ -443,7 +447,7 @@ async function expireStaleSessions({ at = new Date(), client = prisma } = {}) {
  */
 async function listForTicket(ticketId, { client = prisma } = {}) {
   if (!Number.isInteger(ticketId)) return [];
-  await expireStaleSessions({ client });
+  await expireStaleSessions({ client, ticketId });
   const rows = await client.remoteAccessSession.findMany({
     where: { ticketId },
     include: SESSION_INCLUDE,

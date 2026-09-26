@@ -24,13 +24,27 @@ const { getAttachmentStorage } = require('../src/services/attachmentStorage');
 
 const router = express.Router();
 
+const SAFE_AGENT_SELECT = {
+  id: true,
+  name: true,
+  email: true,
+  skillLevel: true,
+  isActive: true,
+  isAvailable: true,
+};
 const LIST_INCLUDE = {
-  assignedAgent: { select: { id: true, name: true, email: true, skillLevel: true } },
+  assignedAgent: { select: SAFE_AGENT_SELECT },
   team: true,
   slaCycles: { orderBy: { cycleNumber: 'asc' } },
 };
+const ACTION_INCLUDE = {
+  assignedAgent: { select: SAFE_AGENT_SELECT },
+  team: true,
+  auditLogs: { orderBy: { createdAt: 'desc' }, take: 10 },
+  slaCycles: { orderBy: { cycleNumber: 'asc' } },
+};
 const DETAIL_INCLUDE = {
-  assignedAgent: true,
+  assignedAgent: { select: SAFE_AGENT_SELECT },
   team: true,
   auditLogs: { orderBy: { createdAt: 'desc' } },
   comments: { orderBy: { createdAt: 'asc' } },
@@ -122,16 +136,16 @@ function serializeTicket(t, slaContext = {}) {
 // Holiday calendar + working calendar for SLA serialization, so
 // remaining-time math that crosses a public holiday stays exact and follows
 // the configured working calendar. Two indexed queries on small tables.
-async function slaCtx(now = new Date()) {
-  const policy = await slaService.loadSlaPolicy();
+async function slaCtx(now = new Date(), policy = null) {
+  const effectivePolicy = policy || await slaService.loadSlaPolicy();
   return {
     now,
-    calendar: policy.calendar,
+    calendar: effectivePolicy.calendar,
     holidays: await slaService.loadHolidaysBetween(
       now,
       new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000),
       prisma,
-      policy
+      effectivePolicy
     ),
   };
 }
@@ -152,8 +166,16 @@ async function loadTicketOr404(idParam, res, include = DETAIL_INCLUDE) {
 router.post('/from-email', async (req, res) => {
   try {
     const result = await intakeEmailMessage(req.body || {});
-    if (result.status === 'skipped_self') {
-      return res.status(200).json({ status: result.status, ticket: null });
+    if (
+      result.status === 'skipped_self' ||
+      result.status === 'skipped_automated' ||
+      result.status === 'skipped_non_ticket'
+    ) {
+      return res.status(200).json({
+        status: result.status,
+        ticket: null,
+        ...(result.reason ? { reason: result.reason } : {}),
+      });
     }
     const code =
       result.status === 'created'
@@ -323,7 +345,7 @@ ${body || ''}`,
             ],
           },
         },
-        include: { assignedAgent: true, team: true },
+        include: { assignedAgent: { select: SAFE_AGENT_SELECT }, team: true },
       });
       await auditService.record(tx, {
         action: 'ticket.created',
@@ -421,7 +443,7 @@ async function applyStateChange(existing, toState, { actor, agent, note, resolut
   const updated = await prisma.ticket.update({
     where: { id: existing.id },
     data,
-    include: DETAIL_INCLUDE,
+    include: ACTION_INCLUDE,
   });
 
   // Unified trail: the state transition (TicketAuditLog keeps its own row
@@ -454,35 +476,47 @@ async function applyStateChange(existing, toState, { actor, agent, note, resolut
 
   // A ticket that is finished has nothing to hand over: any outstanding offer
   // is cancelled and kept in the history. The ticket itself is untouched.
+  let handoverResult = { cancelled: 0 };
   if (['RESOLVED', 'CLOSED'].includes(toState)) {
-    await handoverService.cancelForTicket(updated.id, actor, `Ticket was ${toState.toLowerCase()}`);
+    handoverResult = await handoverService.cancelForTicket(updated.id, actor, `Ticket was ${toState.toLowerCase()}`);
   }
 
   // SLA bookkeeping for the lifecycle transitions that matter: RESOLVED
   // closes out the current cycle with its outcome; a reopen from RESOLVED or
   // CLOSED preserves that cycle and starts the next one.
   let slaTicket = null;
+  let slaPolicy = null;
   if (toState === 'RESOLVED') {
+    slaPolicy = await slaService.loadSlaPolicy();
     slaTicket = await slaService.finalizeOpenCycle(updated, {
       at: data.resolvedAt,
       actor,
-      include: DETAIL_INCLUDE,
+      include: ACTION_INCLUDE,
+      policy: slaPolicy,
     });
   } else if (toState === 'IN_PROGRESS' && ['RESOLVED', 'CLOSED'].includes(existing.state)) {
+    slaPolicy = await slaService.loadSlaPolicy();
     slaTicket = await slaService.restartCycle(updated, {
       actor,
       reason: `Reopened from ${existing.state}`,
-      include: DETAIL_INCLUDE,
+      include: ACTION_INCLUDE,
+      policy: slaPolicy,
     });
   }
 
-  return { status: 200, body: serializeTicket(slaTicket || updated, await slaCtx()) };
+  const actionTicket = handoverResult.cancelled
+    ? await prisma.ticket.findUnique({ where: { id: updated.id }, include: ACTION_INCLUDE })
+    : slaTicket || updated;
+  return { status: 200, body: serializeTicket(actionTicket, await slaCtx(new Date(), slaPolicy)) };
 }
 
 // POST /api/tickets/:id/status — explicit workflow transitions
 router.post('/:id/status', async (req, res) => {
   try {
-    const ticket = await loadTicketOr404(req.params.id, res);
+    const ticket = await loadTicketOr404(req.params.id, res, {
+      assignedAgent: { select: SAFE_AGENT_SELECT },
+      team: true,
+    });
     if (!ticket) return;
     if (req.body.state === undefined) {
       return res.status(400).json({ errors: ['state is required'] });
@@ -502,7 +536,10 @@ router.post('/:id/status', async (req, res) => {
 // POST /api/tickets/:id/resolve — shortcut requiring a resolution note
 router.post('/:id/resolve', async (req, res) => {
   try {
-    const ticket = await loadTicketOr404(req.params.id, res);
+    const ticket = await loadTicketOr404(req.params.id, res, {
+      assignedAgent: { select: SAFE_AGENT_SELECT },
+      team: true,
+    });
     if (!ticket) return;
     const allowed = canActOnTicket(ticket, req.agent);
     if (!allowed.ok) return res.status(allowed.status).json({ error: allowed.error });
@@ -524,7 +561,10 @@ router.post('/:id/resolve', async (req, res) => {
 // POST /api/tickets/:id/close — only from RESOLVED
 router.post('/:id/close', async (req, res) => {
   try {
-    const ticket = await loadTicketOr404(req.params.id, res);
+    const ticket = await loadTicketOr404(req.params.id, res, {
+      assignedAgent: { select: SAFE_AGENT_SELECT },
+      team: true,
+    });
     if (!ticket) return;
     const allowed = canActOnTicket(ticket, req.agent);
     if (!allowed.ok) return res.status(allowed.status).json({ error: allowed.error });
@@ -543,7 +583,7 @@ router.post('/:id/close', async (req, res) => {
 router.post('/:id/assign', async (req, res) => {
   try {
     const ticket = await loadTicketOr404(req.params.id, res, {
-      assignedAgent: true,
+      assignedAgent: { select: SAFE_AGENT_SELECT },
       team: true,
     });
     if (!ticket) return;
@@ -633,7 +673,7 @@ router.post('/:id/assign', async (req, res) => {
 router.post('/:id/reassign', async (req, res) => {
   try {
     const ticket = await loadTicketOr404(req.params.id, res, {
-      assignedAgent: true,
+      assignedAgent: { select: SAFE_AGENT_SELECT },
       team: true,
     });
     if (!ticket) return;
@@ -709,7 +749,7 @@ router.post('/:id/reassign', async (req, res) => {
 router.get('/:id/assignment-candidates', async (req, res) => {
   try {
     const ticket = await loadTicketOr404(req.params.id, res, {
-      assignedAgent: true,
+      assignedAgent: { select: SAFE_AGENT_SELECT },
       team: true,
     });
     if (!ticket) return;
@@ -747,7 +787,7 @@ router.get('/:id/assignment-candidates', async (req, res) => {
 router.post('/:id/start', async (req, res) => {
   try {
     const ticket = await loadTicketOr404(req.params.id, res, {
-      assignedAgent: true,
+      assignedAgent: { select: SAFE_AGENT_SELECT },
       team: true,
     });
     if (!ticket) return;
@@ -793,7 +833,7 @@ router.post('/:id/start', async (req, res) => {
 async function takeTicket(req, res) {
   try {
     const ticket = await loadTicketOr404(req.params.id, res, {
-      assignedAgent: true,
+      assignedAgent: { select: SAFE_AGENT_SELECT },
       team: true,
     });
     if (!ticket) return;
@@ -848,7 +888,7 @@ router.post('/:id/take', takeTicket);
 // The ticket does NOT change owner here; see routes/handovers.js for the reply.
 router.post('/:id/handover', async (req, res) => {
   try {
-    const ticket = await loadTicketOr404(req.params.id, res, { assignedAgent: true, team: true });
+    const ticket = await loadTicketOr404(req.params.id, res, { assignedAgent: { select: SAFE_AGENT_SELECT }, team: true });
     if (!ticket) return;
     if (!Number.isInteger(req.body && req.body.agentId)) {
       return res.status(400).json({ error: 'agentId is required' });
@@ -931,7 +971,7 @@ router.get('/:id/handovers', async (req, res) => {
 async function addNote(req, res) {
   try {
     const ticket = await loadTicketOr404(req.params.id, res, {
-      assignedAgent: true,
+      assignedAgent: { select: SAFE_AGENT_SELECT },
       team: true,
     });
     if (!ticket) return;
@@ -1018,7 +1058,7 @@ function validatePatchBody(body) {
 
 async function patchTicket(req, res) {
   try {
-    const existing = await loadTicketOr404(req.params.id, res, { team: true, assignedAgent: true });
+    const existing = await loadTicketOr404(req.params.id, res, { team: true, assignedAgent: { select: SAFE_AGENT_SELECT } });
     if (!existing) return;
 
     const errors = validatePatchBody(req.body || {});

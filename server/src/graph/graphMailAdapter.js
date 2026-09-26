@@ -39,6 +39,23 @@ function toRawAttachment(att) {
 }
 
 /**
+ * Read one named header off Graph's internetMessageHeaders (only present when
+ * the fetch selected it — graphClient's MESSAGE_FIELDS does). Case-insensitive
+ * per RFC 5322. Null when the header or the whole collection is absent.
+ */
+function graphHeader(message, name) {
+  const list = Array.isArray(message && message.internetMessageHeaders)
+    ? message.internetMessageHeaders
+    : [];
+  const wanted = name.toLowerCase();
+  const hit = list.find(
+    (h) => h && typeof h.name === 'string' && h.name.toLowerCase() === wanted
+  );
+  const value = hit && typeof hit.value === 'string' ? hit.value.trim() : '';
+  return value || null;
+}
+
+/**
  * Graph message -> RawEmailInput.
  *
  * @param {object} message  a Graph message resource
@@ -70,6 +87,12 @@ function toRawEmail(message, attachments = []) {
     body: msg.body || null,
     bodyPreview: msg.bodyPreview || null,
     receivedAt: msg.receivedDateTime || null,
+    // Automated-mail signals for the intake screening gate, read off
+    // internetMessageHeaders (RFC 3834 + bulk markers).
+    autoSubmitted: graphHeader(msg, 'Auto-Submitted'),
+    precedence: graphHeader(msg, 'Precedence'),
+    listId: graphHeader(msg, 'List-Id'),
+    listUnsubscribe: graphHeader(msg, 'List-Unsubscribe'),
     attachments: (Array.isArray(attachments) ? attachments : [])
       .map(toRawAttachment)
       .filter(Boolean),
@@ -97,4 +120,5 @@ module.exports = {
   toNormalizedEmail,
   toRawAttachment,
   hasAttachments,
+  graphHeader,
 };

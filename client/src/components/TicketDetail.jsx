@@ -41,17 +41,32 @@ export default function TicketDetail({ id, me, onChanged }) {
   const [handoverNote, setHandoverNote] = useState('');
   const [showToast, toastNode] = useToast();
 
-  const load = useCallback(() => {
+  const load = useCallback(async () => {
     setError('');
-    return api
-      .getTicket(id)
-      .then((t) => {
-        setTicket(t);
-        setGroupPick(t.team?.key || '');
-        return api.ticketHandovers(id).then((h) => setHandovers(h.handovers || [])).catch(() => {});
-      })
-      .then(() => api.remoteAccessSessions(id).then((r) => setRaSessions(r.sessions || [])).catch(() => setRaSessions([])))
-      .catch((e) => setError(e.message));
+    try {
+      const [t, h, r] = await Promise.all([
+        api.getTicket(id),
+        api.ticketHandovers(id).then((data) => data.handovers || []).catch(() => []),
+        api.remoteAccessSessions(id).then((data) => data.sessions || []).catch(() => []),
+      ]);
+      setTicket(t);
+      setGroupPick(t.team?.key || '');
+      setHandovers(h);
+      setRaSessions(r);
+    } catch (e) {
+      setError(e.message);
+    }
+  }, [id]);
+
+  const refreshSecondaryData = useCallback(() => {
+    api
+      .ticketHandovers(id)
+      .then((data) => setHandovers(data.handovers || []))
+      .catch(() => {});
+    api
+      .remoteAccessSessions(id)
+      .then((data) => setRaSessions(data.sessions || []))
+      .catch(() => setRaSessions([]));
   }, [id]);
 
   useEffect(() => {
@@ -89,8 +104,23 @@ export default function TicketDetail({ id, me, onChanged }) {
     setBusy(true);
     setError('');
     try {
-      await fn();
-      await load();
+      const updated = await fn();
+      if (updated && typeof updated === 'object' && updated.ticketNumber) {
+        setTicket((current) => ({
+          ...current,
+          ...updated,
+          auditLogs: updated.auditLogs
+            ? [...new Map([...(current?.auditLogs || []), ...updated.auditLogs].map((log) => [log.id, log])).values()]
+            : current?.auditLogs,
+          comments: updated.comments ?? current?.comments,
+          attachments: updated.attachments ?? current?.attachments,
+          slaEvents: updated.slaEvents ?? current?.slaEvents,
+        }));
+        setGroupPick(updated.team?.key || '');
+        refreshSecondaryData();
+      } else {
+        await load();
+      }
       onChanged?.();
       if (successMessage) showToast(successMessage);
       return true;

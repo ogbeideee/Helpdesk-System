@@ -498,6 +498,31 @@ model Setting {
   updatedAt DateTime @default(now()) @updatedAt
 }
 
+// One auditable relevance-gate decision for a normalized inbound message.
+// The unique message identity prevents a mailbox redelivery from making a
+// second provider call. Deliberately no subject, body, attachment, evidence,
+// or raw model response is stored here.
+model EmailTriageDecision {
+  id            Int      @id @default(autoincrement())
+  messageKey    String   @unique
+  channel       String?
+  provider      String
+  model         String
+  promptVersion String
+  disposition   String
+  action        String
+  confidence    Float?
+  reasonCode    String?
+  policyCode    String?
+  latencyMs     Int?
+  errorCode     String?
+  createdAt     DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([action, createdAt])
+  @@index([disposition, createdAt])
+}
+
 // ---------------------------------------------------------------------------
 // Unified audit trail — one append-only record of every important action.
 //

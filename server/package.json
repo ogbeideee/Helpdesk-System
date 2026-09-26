@@ -14,6 +14,10 @@
     "db:migrate-assignment-groups": "node scripts/migrate-assignment-groups.js",
     "seed:demo": "node scripts/seed-demo.js",
     "db:purge-demo": "node scripts/purge-demo-data.js",
+    "db:purge-automated": "node scripts/purge-automated-tickets.js",
+    "test:intake-screening": "node scripts/test-intake-screening.js",
+    "test:email-triage": "node scripts/test-email-triage.js",
+    "test:email-triage-intake": "node scripts/test-email-triage-intake.js",
     "test:graph": "node scripts/test-graph.js",
     "test:api": "node scripts/test-api.js",
     "test:e2e": "node scripts/test-e2e.js",
@@ -57,6 +61,7 @@
     "test:remote-access": "node scripts/test-remote-access.js",
     "test:classifier-seam": "node scripts/test-classifier-seam.js",
     "bench:ai": "node scripts/ai-benchmark.js",
+    "bench:ai:triage": "node scripts/ai-triage-benchmark.js",
     "test:ai-benchmark": "node scripts/test-ai-benchmark.js",
     "bench:ai:viz": "node scripts/visualize-ai-benchmark.js"
   },

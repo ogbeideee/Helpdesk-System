@@ -2,6 +2,10 @@
    Usage: npm run test:api  (from server/) */
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
 process.env.PORT = '4177';
+// Keep this integration suite deterministic and offline: the admin management
+// surface is tested, but no real Groq credential or provider call is used.
+process.env.GROQ_API_KEY = '';
+process.env.INTAKE_TRIAGE_KILL_SWITCH = 'true';
 // Isolated database: this suite never touches the application's dev.db.
 // Must come before anything that loads the Prisma client.
 const testdb = require('./lib/testdb').use('api');
@@ -116,6 +120,32 @@ async function main() {
     });
     const agentToken = agentLogin.data.token;
     check('agent login succeeds', Boolean(agentToken));
+
+    // --- email triage management ---------------------------------------------
+    const triageManagement = await req('/api/email-triage/management', { token: adminToken });
+    check('admin can read triage management', triageManagement.status === 200 && triageManagement.data.settings && triageManagement.data.runtime);
+    check('triage management never exposes the key', !JSON.stringify(triageManagement.data).includes('GROQ_API_KEY'));
+    check('triage management reports the environment stop', triageManagement.data.runtime.hardKillSwitch === true);
+    const agentTriage = await req('/api/email-triage/management', { token: agentToken });
+    check('agent cannot read triage management', agentTriage.status === 403);
+    const triageUpdate = await req('/api/email-triage/settings', {
+      method: 'PATCH',
+      token: adminToken,
+      body: { intakeRelevanceMode: 'shadow', intakeRelevanceSkipThreshold: 98 },
+    });
+    check('admin can save conservative triage settings', triageUpdate.status === 200 && triageUpdate.data.settings.mode === 'shadow' && triageUpdate.data.settings.threshold === 98);
+    const triageStop = await req('/api/email-triage/kill-switch', {
+      method: 'POST',
+      token: adminToken,
+      body: {},
+    });
+    check('kill switch disables the database mode', triageStop.status === 200 && triageStop.data.settings.mode === 'disabled');
+    const triageTest = await req('/api/email-triage/test', {
+      method: 'POST',
+      token: adminToken,
+      body: {},
+    });
+    check('provider check is blocked by the environment stop', triageTest.status === 200 && triageTest.data.errorCode === 'hard_kill_switch');
 
     // --- dashboard & assignment groups ---------------------------------------
     const dash = await req('/api/dashboard', { token: agentToken });
@@ -314,8 +344,8 @@ async function main() {
     const wifiEmail = {
       from: 'john.doe@company.com',
       name: 'John Doe',
-      subject: 'My laptop is not connecting to WiFi',
-      body: 'I have been unable to connect since this morning.',
+      subject: 'Cannot connect to WiFi',
+      body: 'My laptop has been unable to connect since this morning.',
       messageId: 'test-message-001',
       conversationId: 'test-conversation-001',
     };
@@ -364,7 +394,7 @@ async function main() {
     });
     check(
       'empty group -> assignment group kept',
-      crossTeam.status === 201 && crossTeam.data.ticket.team?.key === 'hardware',
+      crossTeam.status === 201 && crossTeam.data.ticket.team?.key === 'service_desk',
       JSON.stringify(crossTeam.data.assignment)
     );
     check(

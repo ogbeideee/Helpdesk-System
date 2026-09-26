@@ -83,8 +83,10 @@ function mailboxPath(suffix = '') {
   return `/users/${encodeURIComponent(graphConfig.sharedMailbox)}${suffix}`;
 }
 
+// internetMessageHeaders is how the intake screening gate sees the
+// automated-mail signals (Auto-Submitted, Precedence, List-Id, …).
 const MESSAGE_FIELDS =
-  'id,subject,bodyPreview,body,from,conversationId,receivedDateTime,isRead,webLink,hasAttachments';
+  'id,subject,bodyPreview,body,from,conversationId,receivedDateTime,isRead,webLink,hasAttachments,internetMessageHeaders';
 
 async function getMessage(messageId) {
   return withResilience(() =>

@@ -1,12 +1,12 @@
 # TicketDesk — IT Helpdesk Ticketing System
 
-Production-ready internal helpdesk for the IT department. Runs **fully locally
-without any Microsoft 365 credentials** — a built-in email simulator stands in
-for the Graph ingestion layer, which adds inbox polling and Microsoft Graph
-change notifications (webhooks) when configured.
+Production-ready internal helpdesk for the IT department. Employees raise requests
+by email; the configured Microsoft 365 or IMAP ingestion path turns each message
+into a ticket, classifies it, routes it, assigns an agent and tracks it to
+resolution.
 
 ```text
-Employee sends email          (today: Simulate Email page → POST /api/tickets/from-email)
+Employee sends email          (Microsoft 365 forwarding → Gmail → IMAP poller)
         ↓
 System detects new message    (dedupe by message ID)
         ↓
@@ -146,7 +146,8 @@ deliberately not documented here, in the UI, or in any configuration file.
   recently created tickets.
 - **Tickets** — searchable table (ticket #, subject, requester, email,
   category, priority, status, group, agent, SLA, created, updated) with
-  status/priority/category/group/agent filters and pagination.
+  status/priority/category/group/agent filters, multi-select, bulk priority /
+  category / group changes, and pagination.
 - **Ticket detail** — properties panel, workflow actions (start, resolve with
   mandatory note, close, reopen), assign/reassign, group & priority changes,
   internal notes vs requester-facing updates, and a unified activity timeline
@@ -156,9 +157,6 @@ deliberately not documented here, in the UI, or in any configuration file.
   groups shown with distinct badges); deactivation releases their open tickets.
 - **Assignment Groups** — per-group capacity: active agents, open tickets,
   unassigned queue; create, edit and deactivate groups through the UI.
-- **Simulate Email** (development only, hide with
-  `VITE_ENABLE_EMAIL_SIMULATOR=false` before building for production) — submits
-  to `POST /api/tickets/from-email` and shows classification/routing results.
 
 The frontend contains **no business logic**: validation, transitions,
 assignment, workload, permissions and audit logging all happen in the API and
@@ -205,7 +203,8 @@ then exits with code 0 (all pass) or 1 (any fail).
 | [`docs/workload-and-rebalancing.md`](docs/workload-and-rebalancing.md) | workload, unattended claiming, availability, rebalancing |
 | [`docs/handovers.md`](docs/handovers.md) | handover offers, the pending queue, expiry, cancellation |
 | [`docs/email-parsing.md`](docs/email-parsing.md) | the deterministic email-to-ticket pipeline |
-| [`docs/microsoft-graph.md`](docs/microsoft-graph.md) | Graph ingestion, polling, webhooks, the local simulator |
+| [`docs/email-relevance-triage.md`](docs/email-relevance-triage.md) | Groq relevance filtering, safety policy, monitoring and admin controls |
+| [`docs/microsoft-graph.md`](docs/microsoft-graph.md) | Graph ingestion, polling, webhooks and the optional direct mailbox source |
 | [`AGENTS.md`](AGENTS.md) | architecture and conventions, for contributors |
 | [`docs/PROJECT_STATE.md`](docs/PROJECT_STATE.md) | the live checkpoint — current phase, known issues |
 | [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | major implementation milestones |
@@ -220,10 +219,12 @@ self-service sign-up.
   only; the seam for it (`provisionUserFromIdentity`, `Agent.externalId`) exists
   but nothing calls it yet.
 - **Microsoft Graph has never run against live credentials.** Polling, webhooks
-  and subscription renewal are written and tested against mocks; the built-in
-  email simulator stands in for it locally.
+  and subscription renewal are written and tested against mocks; the live
+  deployment currently uses the Microsoft 365-to-Gmail forwarding and IMAP path.
 - **Attachments are metadata only** — no file is stored anywhere.
-- **Classification and routing are deterministic keyword rules.** No LLM is
-  involved at any point.
+- **Classification and routing remain deterministic.** The optional Groq
+  relevance filter only decides whether a new message is safe to suppress from
+  ticket creation; it never chooses category, priority, assignment group, or
+  agent, and it is disabled by default.
 - **Background jobs run in every server process.** Safe, but wasteful if you
   ever run more than one instance.

@@ -611,6 +611,17 @@ async function main() {
 
       await prisma.agent.update({ where: { id: carol.id }, data: { isAvailable: true } });
 
+      await prisma.ticket.deleteMany({ where: { shortDescription: { startsWith: MARK } } });
+      await prisma.agent.update({ where: { id: bob.id }, data: { isAvailable: false } });
+      for (let i = 0; i < 4; i++) {
+        await mkTicket({ agentId: alice.id, teamId: general.id, label: `nonmember-${i}` });
+      }
+      const nonmemberMove = await workload.rebalanceOnce({});
+      eq('rebalance: a non-member cannot receive a ticket', nonmemberMove.moved, false);
+      check('rebalance: the refusal is explained', /no movable ticket/.test(nonmemberMove.reason), nonmemberMove.reason);
+      await prisma.agent.update({ where: { id: bob.id }, data: { isAvailable: true } });
+      await prisma.ticket.deleteMany({ where: { shortDescription: { startsWith: MARK } } });
+
       // Admin-only endpoint.
       eq('rebalance: agents cannot trigger it',
         (await req('/api/workload/rebalance', { method: 'POST', token: bobT })).status, 403);

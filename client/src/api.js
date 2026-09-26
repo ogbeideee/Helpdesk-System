@@ -44,6 +44,8 @@ export const api = {
     setToken(null);
   },
   me: () => request('/auth/me'),
+  updateProfile: (payload) => request('/profile', patch(payload)),
+  changePassword: (payload) => request('/profile/password', body(payload)),
 
   // ---- reference / analytics ----
   teams: () => request('/teams'),
@@ -73,7 +75,6 @@ export const api = {
   closeTicket: (id, payload = {}) => request(`/tickets/${id}/close`, body(payload)),
   addNote: (id, text, isInternal = false) =>
     request(`/tickets/${id}/notes`, body({ body: text, isInternal })),
-  simulateEmail: (payload) => request('/tickets/from-email', body(payload)),
 
   // ---- workload, availability, notifications ----
   workload: () => request('/workload'),
@@ -134,6 +135,12 @@ export const api = {
   createEmailRule: (payload) => request('/email-rules', body(payload)),
   updateEmailRule: (id, payload) => request(`/email-rules/${id}`, patch(payload)),
   deleteEmailRule: (id) => request(`/email-rules/${id}`, { method: 'DELETE' }),
+
+  // ---- email relevance triage (admin; settings + monitoring) ----
+  emailTriageManagement: () => request('/email-triage/management'),
+  updateEmailTriageSettings: (payload) => request('/email-triage/settings', patch(payload)),
+  disableEmailTriageAutoSkip: () => request('/email-triage/kill-switch', body({})),
+  testEmailTriageProvider: () => request('/email-triage/test', body({})),
 
   // ---- Microsoft 365 integration (admin; status + explicit credential check) ----
   m365: () => request('/microsoft-365'),

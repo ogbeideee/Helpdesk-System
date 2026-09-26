@@ -16,6 +16,7 @@ const path = require('path');
 const bcrypt = require('bcryptjs');
 const prisma = require('../src/lib/prisma');
 const { ensureTeams } = require('../src/teams');
+const { ensureDefaultRoutingRules } = require('../src/services/defaultRoutingRules');
 const userService = require('../src/services/userService');
 
 const BASE = `http://localhost:${process.env.PORT}`;
@@ -135,6 +136,7 @@ async function restoreRealAdmins() {
 
 async function main() {
   await ensureTeams(prisma);
+  await ensureDefaultRoutingRules({ client: prisma, logger: { log() {}, warn() {}, error() {} } });
   await cleanup();
   // The baseline administrator the park/restore checks measure against.
   await ensureBaselineAdmin();
@@ -484,7 +486,7 @@ async function main() {
       });
       const candidate = await mkUser('Eligible Tech', 'eligible', ROLES.AGENT, { teamId: hardware.id, skillLevel: 3 });
 
-      const ok = await engine.assign({ category: 'Hardware', priority: 'moderate' }, prisma, quiet);
+      const ok = await engine.assign({ category: 'Hardware', priority: 'moderate', text: 'laptop' }, prisma, quiet);
       eq('eligibility: an active, available agent is selected', ok.agent && ok.agent.id, candidate.id);
 
       // Inactive users cannot receive tickets.

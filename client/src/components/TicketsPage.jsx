@@ -5,7 +5,7 @@ import { usePageHeader } from '../pageHeader.js';
 import { slaOverview } from '../slaView.js';
 import {
   ErrorState, EmptyState, StateBadge, PriorityBadge,
-  Avatar, Icon, timeAgo, fmtDateTime,
+  Avatar, Icon, timeAgo, fmtDateTime, useToast,
 } from './ui.jsx';
 
 /* One compact SLA chip per clock: "R" response, "Res" resolution. Every value
@@ -89,6 +89,7 @@ function SkeletonRows({ rows = 6 }) {
     <tbody className="is-loading" aria-hidden="true">
       {Array.from({ length: rows }).map((_, i) => (
         <tr key={i} className="skeleton-row">
+          <td className="select-cell" />
           <td><span className="sk" style={{ width: 74 }} /></td>
           <td>
             <span className="sk" style={{ width: `${55 + ((i * 13) % 30)}%` }} />
@@ -103,6 +104,7 @@ function SkeletonRows({ rows = 6 }) {
           <td />
         </tr>
       ))}
+
     </tbody>
   );
 }
@@ -118,6 +120,12 @@ export default function TicketsPage({ onOpen, initialFilters }) {
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState({ key: 'updated', dir: SORTS.updated.dir });
   const [moreOpen, setMoreOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkPriority, setBulkPriority] = useState('');
+  const [bulkCategory, setBulkCategory] = useState('');
+  const [bulkGroup, setBulkGroup] = useState('');
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [showToast, toastNode] = useToast();
   const searchRef = useRef(null);
 
   useEffect(() => {
@@ -170,6 +178,9 @@ export default function TicketsPage({ onOpen, initialFilters }) {
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
+    setSelectedIds(new Set());
+  }, [debouncedQ, filters.status, filters.priority, filters.category, filters.group, filters.agentId]);
+  useEffect(() => {
     const onChange = () => load();
     window.addEventListener('td:changed', onChange);
     return () => window.removeEventListener('td:changed', onChange);
@@ -177,6 +188,59 @@ export default function TicketsPage({ onOpen, initialFilters }) {
 
   function setFilter(key, value) {
     setFilters((f) => ({ ...f, [key]: value }));
+  }
+
+  function toggleSelected(id) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function togglePageSelection() {
+    const ids = rows.map((ticket) => ticket.id);
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      const allSelected = ids.length > 0 && ids.every((id) => next.has(id));
+      for (const id of ids) {
+        if (allSelected) next.delete(id);
+        else next.add(id);
+      }
+      return next;
+    });
+  }
+
+  async function applyBulkChanges() {
+    const updates = {};
+    if (bulkPriority) updates.priority = bulkPriority;
+    if (bulkCategory) updates.category = bulkCategory;
+    if (bulkGroup) updates.assignmentGroup = bulkGroup;
+    const ids = [...selectedIds];
+    if (!ids.length || !Object.keys(updates).length) {
+      showToast('Select at least one ticket and one change.', 'error');
+      return;
+    }
+
+    setBulkBusy(true);
+    try {
+      const results = await Promise.allSettled(ids.map((id) => api.updateTicket(id, updates)));
+      const failedIds = results.flatMap((result, index) => result.status === 'rejected' ? [ids[index]] : []);
+      const updatedCount = results.length - failedIds.length;
+      setSelectedIds(new Set(failedIds));
+      if (failedIds.length) {
+        showToast(`${updatedCount} updated; ${failedIds.length} could not be updated.`, 'error');
+      } else {
+        showToast(`${updatedCount} ticket${updatedCount === 1 ? '' : 's'} updated.`);
+      }
+      setBulkPriority('');
+      setBulkCategory('');
+      setBulkGroup('');
+      load();
+    } finally {
+      setBulkBusy(false);
+    }
   }
 
   const sorted = useMemo(() => {
@@ -194,6 +258,8 @@ export default function TicketsPage({ onOpen, initialFilters }) {
   const pageCount = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount);
   const rows = sorted.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+  const pageIds = rows.map((ticket) => ticket.id);
+  const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.has(id));
 
   const secondaryFilters = ['priority', 'category', 'group', 'agentId'];
   const secondaryCount = secondaryFilters.filter((k) => filters[k]).length;
@@ -325,6 +391,43 @@ export default function TicketsPage({ onOpen, initialFilters }) {
         </div>
       )}
 
+      {selectedIds.size > 0 && (
+        <div className="bulk-bar">
+          <strong>{selectedIds.size} selected</strong>
+          <div className="bulk-fields">
+            <label className="mini-field">
+              <span>Priority</span>
+              <select value={bulkPriority} onChange={(e) => setBulkPriority(e.target.value)} disabled={bulkBusy}>
+                <option value="">No change</option>
+                {PRIORITIES.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+              </select>
+            </label>
+            <label className="mini-field">
+              <span>Category</span>
+              <select value={bulkCategory} onChange={(e) => setBulkCategory(e.target.value)} disabled={bulkBusy}>
+                <option value="">No change</option>
+                {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </label>
+            <label className="mini-field">
+              <span>Group</span>
+              <select value={bulkGroup} onChange={(e) => setBulkGroup(e.target.value)} disabled={bulkBusy}>
+                <option value="">No change</option>
+                {groups.map((g) => <option key={g.key} value={g.key}>{g.name}</option>)}
+              </select>
+            </label>
+          </div>
+          <div className="bulk-actions">
+            <button type="button" className="btn btn-primary btn-sm" onClick={applyBulkChanges} disabled={bulkBusy}>
+              {bulkBusy ? 'Updating…' : 'Apply changes'}
+            </button>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setSelectedIds(new Set())} disabled={bulkBusy}>
+              Clear
+            </button>
+          </div>
+        </div>
+      )}
+
       {error && <ErrorState message={error} onRetry={load} />}
 
       {!error && (
@@ -332,6 +435,15 @@ export default function TicketsPage({ onOpen, initialFilters }) {
           <table className="queue-table">
             <thead>
               <tr>
+                <th className="select-cell" aria-label="Select tickets">
+                  <input
+                    type="checkbox"
+                    checked={allPageSelected}
+                    onChange={togglePageSelection}
+                    disabled={!pageIds.length || bulkBusy}
+                    aria-label="Select all tickets on this page"
+                  />
+                </th>
                 <Th id="ticket" sort={sort} setSort={setSort} width={112}>Ticket</Th>
                 <Th id={null}>Subject &amp; requester</Th>
                 <Th id="status" sort={sort} setSort={setSort} width={112}>Status</Th>
@@ -355,8 +467,21 @@ export default function TicketsPage({ onOpen, initialFilters }) {
                     role="link"
                     aria-label={`${t.ticketNumber} — ${t.shortDescription}`}
                     onClick={() => onOpen(t.id)}
-                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(t.id); } }}
+                    onKeyDown={(e) => {
+                      if (e.target !== e.currentTarget) return;
+                      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(t.id); }
+                    }}
                   >
+                    <td className="select-cell" data-label="Select" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(t.id)}
+                        onChange={() => toggleSelected(t.id)}
+                        onClick={(e) => e.stopPropagation()}
+                        disabled={bulkBusy}
+                        aria-label={`Select ${t.ticketNumber}`}
+                      />
+                    </td>
                     <td data-label="Ticket">
                       <span className="cell-id">{t.ticketNumber}</span>
                     </td>
@@ -434,6 +559,7 @@ export default function TicketsPage({ onOpen, initialFilters }) {
           </div>
         </div>
       )}
+      {toastNode}
     </div>
   );
 }

@@ -356,8 +356,8 @@ function eq(name, actual, expected) {
   });
 
   const expectedKeys = [
-    'attachments', 'body', 'cleanBody', 'conversationId', 'inReplyTo', 'internetMessageId',
-    'isHtml', 'messageId', 'quotedText', 'receivedAt', 'recipients', 'references',
+    'attachments', 'autoSubmitted', 'body', 'cleanBody', 'conversationId', 'inReplyTo', 'internetMessageId',
+    'isHtml', 'listId', 'listUnsubscribe', 'messageId', 'precedence', 'quotedText', 'receivedAt', 'recipients', 'references',
     'senderEmail', 'senderName', 'signature', 'subject',
   ];
   eq('contract: exactly the documented keys', Object.keys(parsed).sort().join(','), expectedKeys.join(','));

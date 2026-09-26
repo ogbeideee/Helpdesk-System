@@ -15,14 +15,13 @@ import SlaReportsPage from './components/SlaReportsPage.jsx';
 import ReportsPage from './components/ReportsPage.jsx';
 import AuditTrailPage from './components/AuditTrailPage.jsx';
 import GroupsPage from './components/GroupsPage.jsx';
-import SimulateEmailPage from './components/SimulateEmailPage.jsx';
 import AvailabilityControl from './components/AvailabilityControl.jsx';
 import HandoversPage from './components/HandoversPage.jsx';
+import SettingsPage from './components/SettingsPage.jsx';
 import EmailRulesPage from './components/EmailRulesPage.jsx';
 import Microsoft365Page from './components/Microsoft365Page.jsx';
 import TopBar from './components/TopBar.jsx';
 
-const EMAIL_SIMULATOR_ENABLED = import.meta.env.VITE_ENABLE_EMAIL_SIMULATOR !== 'false';
 const SIDEBAR_KEY = 'td_sidebar';
 
 /**
@@ -36,6 +35,7 @@ const ROUTE_META = {
   new: { title: 'New Ticket', subtitle: 'Log a walk-up or phone request — the assignment engine routes it automatically.' },
   edit: { title: 'Edit Ticket', subtitle: 'Subject and description can be corrected here.' },
   handovers: { title: 'Handovers', subtitle: 'A handover is an offer — the ticket only changes owner when you accept it.' },
+  settings: { title: 'Settings', subtitle: 'Your account and, for administrators, system controls.' },
   agents: { title: 'Agents', subtitle: 'Availability, skill and workload for the assignment engine.' },
   routing: { title: 'Routing Rules', subtitle: 'Evaluated in order — the lowest priority number that matches wins.' },
   'sla-settings': { title: 'SLA Settings', subtitle: 'Targets, working calendar and public holidays. Applies to SLA cycles started after saving.' },
@@ -45,11 +45,6 @@ const ROUTE_META = {
   'email-rules': { title: 'Email Parsing Rules', subtitle: 'Keyword rules the parser evaluates on inbound email — a rule only sets the ticket fields it names.' },
   m365: { title: 'Microsoft 365', subtitle: 'Graph email integration status and configuration — a real tenant is connected later through environment values, never through this console.' },
   groups: { title: 'Assignment Groups', subtitle: 'Routing targets for the assignment engine.' },
-  'simulate-email': {
-    title: 'Simulate Incoming Email',
-    subtitle: 'Stands in for the Microsoft 365 mailbox. Submission runs the production intake pipeline.',
-    dev: true,
-  },
 };
 
 export default function App() {
@@ -112,14 +107,10 @@ export default function App() {
         ]
       : [];
     const workspace = [{ path: '/groups', label: 'Assignment Groups', icon: 'groups' }];
-    const dev = EMAIL_SIMULATOR_ENABLED
-      ? [{ path: '/simulate-email', label: 'Simulate Email', icon: 'mail', dev: true }]
-      : [];
     return [
       { label: 'Operations', items: operations },
       ...(admin.length ? [{ label: 'Administration', items: admin }] : []),
       { label: 'Workspace', items: workspace },
-      ...(dev.length ? [{ label: 'Development', items: dev, dev: true }] : []),
     ];
   }, [isAdmin, handoverCount]);
 
@@ -176,6 +167,9 @@ export default function App() {
     case 'handovers':
       content = <HandoversPage me={me} onCountChange={setHandoverCount} />;
       break;
+    case 'settings':
+      content = <SettingsPage me={me} onUpdated={setMe} />;
+      break;
     case 'agents':
       content = isAdmin ? <AgentsPage me={me} /> : <Denied />;
       break;
@@ -202,13 +196,6 @@ export default function App() {
       break;
     case 'groups':
       content = <GroupsPage />;
-      break;
-    case 'simulate-email':
-      content = EMAIL_SIMULATOR_ENABLED ? (
-        <SimulateEmailPage onOpen={(id) => navigate(`/tickets/${id}`)} />
-      ) : (
-        <Denied />
-      );
       break;
     default:
       content = <Dashboard me={me} handoverCount={handoverCount} onOpen={(id) => navigate(`/tickets/${id}`)} />;
@@ -291,6 +278,7 @@ export default function App() {
           me={me}
           isAdmin={isAdmin}
           onLogout={handleLogout}
+          routeKey={`${route.name}:${route.path}:${route.search}`}
         />
         <main className="content">
           <PageHeaderContext.Provider value={setPageMeta}>
@@ -337,6 +325,7 @@ function parseHash() {
     case '/tickets': return { ...base, name: 'list', path: '/tickets' };
     case '/tickets/new': return { ...base, name: 'new', path: '/tickets' };
     case '/handovers': return { ...base, name: 'handovers', path: '/handovers' };
+    case '/settings': return { ...base, name: 'settings', path: '/settings' };
     case '/agents': return { ...base, name: 'agents', path: '/agents' };
     case '/routing': return { ...base, name: 'routing', path: '/routing' };
     case '/sla-settings': return { ...base, name: 'sla-settings', path: '/sla-settings' };
@@ -346,7 +335,6 @@ function parseHash() {
     case '/email-rules': return { ...base, name: 'email-rules', path: '/email-rules' };
     case '/m365': return { ...base, name: 'm365', path: '/m365' };
     case '/groups': return { ...base, name: 'groups', path: '/groups' };
-    case '/simulate-email': return { ...base, name: 'simulate-email', path: '/simulate-email' };
     default: return { ...base, name: 'dashboard', path: '/' };
   }
 }

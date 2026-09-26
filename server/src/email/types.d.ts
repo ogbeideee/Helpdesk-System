@@ -70,6 +70,15 @@ export interface NormalizedEmail {
   receivedAt: string;
   /** True when the source body was HTML and therefore converted. */
   isHtml: boolean;
+  /**
+   * Automated-mail signals (RFC 3834 + de-facto bulk markers), sanitized
+   * header values or null when absent. Transported verbatim — only the intake
+   * screening gate (src/services/intakeScreening.js) interprets them.
+   */
+  autoSubmitted: string | null;
+  precedence: string | null;
+  listId: string | null;
+  listUnsubscribe: string | null;
   /** Attachment metadata; empty array when there are none. */
   attachments: EmailAttachment[];
 }
@@ -127,6 +136,15 @@ export interface RawEmailInput {
 
   receivedAt?: string | Date | null;
   receivedDateTime?: string | Date | null;
+
+  /**
+   * Automated-mail headers, when the adapter read them. Raw header values;
+   * the parser sanitizes them onto the normalized model.
+   */
+  autoSubmitted?: string | null;
+  precedence?: string | null;
+  listId?: string | null;
+  listUnsubscribe?: string | null;
 
   attachments?: RawEmailAttachment[] | null;
   hasAttachments?: boolean | null;

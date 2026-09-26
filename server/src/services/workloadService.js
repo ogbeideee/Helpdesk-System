@@ -504,7 +504,10 @@ async function rebalanceOnce({ actor = 'system (workload balancer)', client = pr
       role: { in: STAFF_ROLES },
       teamId: { not: null },
     },
-    include: { team: true },
+    include: {
+      team: true,
+      memberships: { select: { teamId: true } },
+    },
   });
   if (agents.length < 2) return { moved: false, reason: 'fewer than two available agents in a group' };
 
@@ -558,6 +561,13 @@ async function rebalanceOnce({ actor = 'system (workload balancer)', client = pr
       client
     );
     if (quietest.agent.skillLevel < decision.minSkillLevel) return false;
+    if (
+      t.teamId &&
+      quietest.agent.teamId !== t.teamId &&
+      !quietest.agent.memberships.some((membership) => membership.teamId === t.teamId)
+    ) {
+      return false;
+    }
     // Cross-team (supporting member) eligibility: only low/moderate tickets.
     if (t.teamId && quietest.agent.teamId !== t.teamId && !['low', 'moderate'].includes(t.priority)) return false;
     return true;

@@ -212,6 +212,8 @@ function createWebhookProcessor(options = {}) {
       reopened: 0,
       duplicate: 0,
       skipped_self: 0,
+      skipped_automated: 0,
+      skipped_non_ticket: 0,
       rejected: 0,
       failed: 0,
       invalid: 0,

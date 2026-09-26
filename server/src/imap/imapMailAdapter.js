@@ -48,6 +48,51 @@ function firstFrom(list) {
 }
 
 /**
+ * Read one header off mailparser's header store as plain text. Structured
+ * values (List-Unsubscribe parses to objects) collapse to their readable
+ * form — downstream only needs the value or the fact the header was present.
+ */
+function headerText(headers, name) {
+  if (!headers || typeof headers.get !== 'function') return null;
+  const value = headers.get(name);
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'string') return value.trim() || null;
+  if (Array.isArray(value)) {
+    const text = value
+      .map((item) =>
+        typeof item === 'string' ? item : (item && (item.url || item.address || item.value)) || ''
+      )
+      .join(' ')
+      .trim();
+    return text || 'present';
+  }
+  if (typeof value === 'object') {
+    const text = String(value.value || value.url || value.address || '').trim();
+    return text || 'present'; // presence alone is the screening signal
+  }
+  return String(value).trim() || null;
+}
+
+/**
+ * mailparser folds every List-* header into one structured "list" object
+ * ({ id: { name, id }, unsubscribe: { mail, url }, ... }), so List-Id and
+ * List-Unsubscribe are read off its sub-keys. Presence is the signal.
+ */
+function listHeader(headers, key) {
+  if (!headers || typeof headers.get !== 'function') return null;
+  const list = headers.get('list');
+  if (!list || typeof list !== 'object') return null;
+  const entry = list[key];
+  if (entry === undefined || entry === null) return null;
+  if (typeof entry === 'string') return entry.trim() || 'present';
+  if (typeof entry === 'object') {
+    const text = String(entry.mail || entry.url || entry.id || entry.value || '').trim();
+    return text || 'present';
+  }
+  return 'present';
+}
+
+/**
  * One fetched IMAP message -> RawEmailInput (the parser's input shape).
  * Decodes the source exactly once.
  *
@@ -128,6 +173,13 @@ async function extractMessage({ uid, source, internalDate }) {
     // The server's INTERNALDATE is authoritative for polling; the Date header
     // is a reasonable fallback when a server omits it.
     receivedAt: internalDate || parsed.date || null,
+    // Automated-mail signals for the intake screening gate (RFC 3834 + bulk
+    // markers). mailparser has already decoded the full header set; these are
+    // the only non-threading headers the pipeline carries.
+    autoSubmitted: headerText(parsed.headers, 'auto-submitted'),
+    precedence: headerText(parsed.headers, 'precedence'),
+    listId: listHeader(parsed.headers, 'id'),
+    listUnsubscribe: listHeader(parsed.headers, 'unsubscribe'),
     // Parser metadata (no content field) — the whitelist the parser expects.
     attachments: (Array.isArray(parsed.attachments) ? parsed.attachments : []).map((a) => ({
       filename: a.filename || null,
@@ -143,4 +195,4 @@ async function extractMessage({ uid, source, internalDate }) {
   return { rawEmail, attachments, truncated };
 }
 
-module.exports = { toRawEmail, extractMessage, stripAngleBrackets };
+module.exports = { toRawEmail, extractMessage, stripAngleBrackets, headerText };

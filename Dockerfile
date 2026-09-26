@@ -12,6 +12,7 @@ FROM node:20-alpine
 WORKDIR /app
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 COPY --from=build /app .
+RUN mkdir -p /app/server/data/attachments && chown -R appuser:appgroup /app/server/data && chmod -R u+rwx /app/server/data
 USER appuser
 EXPOSE 4000
 CMD ["node", "server/server.js"]

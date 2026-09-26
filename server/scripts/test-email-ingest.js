@@ -385,6 +385,22 @@ async function main() {
     }
   }
 
+  {
+    const serviceDesk = await prisma.team.findUnique({ where: { key: 'service_desk' } });
+    const cases = [
+      ['general-printer', 'Please change the printer toner', 'The printer needs a toner change.', serviceDesk.id],
+      ['general-deskphone', 'My desk phone is not working', 'I cannot make calls from my desk phone.', serviceDesk.id],
+      ['general-room', 'Conference room setup for a meeting', 'Please prepare the conference room before the meeting.', serviceDesk.id],
+      ['account-creation', 'Please create an email account', 'I need a new email account for onboarding.', accounts.id],
+    ];
+    for (const [id, subject, body, expectedTeamId] of cases) {
+      const { result } = await ingest(
+        rawEmail({ id, from: `${id}@${DOMAIN}`, name: 'Routing Tester', subject, body })
+      );
+      eq(`routing: "${subject}" -> expected group`, result.ticket.teamId, expectedTeamId);
+    }
+  }
+
   /* ================================================================ */
   /* 8. Separation of concerns + mapping contract                     */
   /* ================================================================ */
@@ -393,7 +409,7 @@ async function main() {
       rawEmail({ id: 'contract', from: `c@${DOMAIN}`, name: 'C Tester', subject: 'Contract check', body: 'Body text.' })
     );
     const payload = toIntakePayload(normalized);
-    eq('contract: payload keys', Object.keys(payload).sort().join(','), 'body,cleanBody,conversationId,from,inReplyTo,internetMessageId,messageId,name,references,subject');
+    eq('contract: payload keys', Object.keys(payload).sort().join(','), 'autoSubmitted,body,cleanBody,conversationId,from,inReplyTo,internetMessageId,listId,listUnsubscribe,messageId,name,precedence,references,subject');
     check('contract: mapper adds no ticket fields', !('category' in payload) && !('priority' in payload) && !('state' in payload));
 
     // Ingesting an already-normalized email works without re-parsing.

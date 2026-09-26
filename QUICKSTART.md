@@ -1,10 +1,9 @@
 # TicketDesk — Quick Start
 
-Internal IT helpdesk for one organisation: employees email a shared mailbox,
-the system turns each message into a ticket, classifies it, routes it to an
-assignment group, assigns an agent and tracks it to resolution. Without any
-Microsoft 365 credentials, a built-in email simulator stands in for inbox
-ingestion.
+Internal IT helpdesk for one organisation: employees email the Microsoft 365
+helpdesk mailbox, the forwarding rule delivers it to the configured Gmail
+mailbox, and the IMAP poller turns each message into a ticket, classifies it,
+routes it to an assignment group, assigns an agent and tracks it to resolution.
 
 > This is the short version. `README.md` is the full manual — architecture,
 > business rules, Graph/IMAP setup, troubleshooting — and `server/.env.example`
@@ -65,13 +64,31 @@ A full run never touches the application database.
 
 ## Email ingestion
 
-- **Development:** the **Simulate Email** screen posts to
-  `POST /api/tickets/from-email` — the exact pipeline real mail travels.
-- **Production (optional):** Microsoft Graph (shared mailbox, client
-  credentials) and/or IMAP. Both are off until their environment block is
-  complete, and missing credentials are never fatal — the rest of the system
-  keeps working. Full checklists: the "Microsoft 365" and IMAP sections of
-  `README.md`; test a Graph connection safely with `npm run graph:check`.
+- **Live setup:** email is forwarded from the Microsoft 365 helpdesk mailbox to
+  the configured Gmail mailbox, where the IMAP poller processes it through the
+  real intake pipeline.
+- **Microsoft Graph (optional):** a direct Graph mailbox source can be enabled
+  when its environment block is complete. Full checklists are in the
+  "Microsoft 365" and IMAP sections of `README.md`.
+
+## Email relevance triage (optional Groq filter)
+
+1. Create a Groq API key and enable Zero Data Retention in Groq's Data
+   Controls. Keep the key in the server/Fly secret store as `GROQ_API_KEY`.
+2. Run the offline smoke benchmark:
+   `cd server && npm run bench:ai:triage -- --mock`.
+3. Deploy with `INTAKE_RELEVANCE_MODE=disabled` and
+   `INTAKE_TRIAGE_KILL_SWITCH=true` while the key and policy are being checked.
+4. After the administrator labeled benchmark, sign in as an admin and open
+   **Profile → Settings**. Configure approved senders and reason codes, test the
+   provider, then choose **Auto-skip**. The page shows metrics and an immediate
+   **Disable auto-skip now** control.
+5. Clear the environment kill switch only when ready. Provider failures,
+   low-confidence results, ambiguous messages and decision-log failures always
+   create a ticket.
+
+See `docs/email-relevance-triage.md` for the safety contract and data
+handling.
 
 ## Where to go next
 

@@ -14,6 +14,7 @@ app.use(express.json());
 // callback, which Microsoft calls unauthenticated and authenticates via
 // clientState inside the route).
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api/profile', require('./routes/profile'));
 app.use('/api/webhooks', require('./routes/webhooks'));
 
 // Development-only tooling (email parser harness). The router itself returns
@@ -40,6 +41,9 @@ app.use('/api/reports', require('./src/authMiddleware').requireAdmin, require('.
 // Email parsing rules — administrator-only configuration of the keyword rules
 // the parser evaluates on inbound mail.
 app.use('/api/email-rules', require('./src/authMiddleware').requireAdmin, require('./routes/emailRules'));
+// Email relevance triage — administrator-only policy, monitoring and the
+// emergency auto-skip stop. The Groq key remains an environment secret.
+app.use('/api/email-triage', require('./routes/emailTriage'));
 // Microsoft 365 integration — administrator-only configuration status and
 // credential verification. Never returns secrets or tokens.
 app.use('/api/microsoft-365', require('./src/authMiddleware').requireAdmin, require('./routes/microsoft365'));
