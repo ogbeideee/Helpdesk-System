@@ -443,6 +443,76 @@ async function main() {
     eq('invalid: still no ticket created', await prisma.ticket.count(), ticketsBefore);
   }
 
+  /* ================================================================ */
+  /* 10. Concurrent ingestion of one message (two pollers racing)      */
+  /* ================================================================ */
+  // Production shape: two Fly machines both ran the IMAP poller, both listed
+  // the same unseen message, both passed intake's dedupe pre-check, and one
+  // lost the insert race on the unique graphMessageId. The loser used to throw
+  // P2002, which was recorded as an ingestion error and left the message
+  // unseen for a retry. Exactly one of the concurrent calls must now win the
+  // ticket and every other must report a duplicate.
+  {
+    const before = await prisma.ticket.count();
+    const raceEmail = () =>
+      rawEmail({
+        id: 'race-1',
+        from: `race@${DOMAIN}`,
+        name: 'Race Tester',
+        subject: 'Two pollers saw this message at once',
+        body: 'Please do not create two tickets for this.',
+      });
+
+    const settled = await Promise.allSettled([ingest(raceEmail()), ingest(raceEmail())]);
+    const results = settled.map((s) => (s.status === 'fulfilled' ? s.value.result : s.reason));
+
+    eq('race: exactly one ticket was created', await prisma.ticket.count(), before + 1);
+    eq('race: still exactly one ticket for that messageId', await prisma.ticket.count({ where: { graphMessageId: `${MARK}race-1` } }), 1);
+
+    const statuses = results.map((r) => r.status).sort();
+    check('race: one call created the ticket and the other reported a duplicate',
+      statuses[0] === 'created' && statuses[1] === 'duplicate', JSON.stringify(statuses));
+    check('race: no call rejected or threw a constraint error',
+      settled.every((s) => s.status === 'fulfilled'), JSON.stringify(settled.map((s) => s.reason && s.reason.message)));
+
+    // The losing call must resolve to the WINNER's ticket, not a phantom.
+    const winner = results.find((r) => r.status === 'created').ticket;
+    const loser = results.find((r) => r.status === 'duplicate');
+    check('race: the duplicate resolves to the winning ticket', loser.ticket && loser.ticket.id === winner.id,
+      loser.ticket ? `got ${loser.ticket.id}, expected ${winner.id}` : 'no ticket on the duplicate result');
+    check('race: the duplicate reports the real routing, not an empty ticket',
+      Boolean(loser.ticket.team) && Boolean(loser.ticket.assignedAgent), JSON.stringify(loser.ticket.team));
+
+    // The same guarantee for the reply path, which has its own create.
+    const { result: raceBase } = await ingest(
+      rawEmail({
+        id: 'race-base',
+        from: `race2@${DOMAIN}`,
+        name: 'Race Tester',
+        subject: 'Base ticket for the reply race',
+        body: 'Original request.',
+      })
+    );
+    const raceReply = () =>
+      rawEmail({
+        id: 'race-reply',
+        from: `race2@${DOMAIN}`,
+        name: 'Race Tester',
+        subject: `RE: [${raceBase.ticket.ticketNumber}] Base ticket for the reply race`,
+        body: 'Following up on this one.',
+      });
+
+    const replySettled = await Promise.allSettled([ingest(raceReply()), ingest(raceReply())]);
+    const replyResults = replySettled.map((s) => (s.status === 'fulfilled' ? s.value.result : s.reason));
+    eq('race: exactly one activity for the raced reply', await prisma.comment.count({ where: { graphMessageId: `${MARK}race-reply` } }), 1);
+    check('race: no reply call rejected', replySettled.every((s) => s.status === 'fulfilled'),
+      JSON.stringify(replySettled.map((s) => s.reason && s.reason.message)));
+    const replyStatuses = replyResults.map((r) => r.status).sort();
+    check('race: one reply added the activity, the other reported a duplicate',
+      replyStatuses.includes('comment_added') && replyStatuses.includes('duplicate'), JSON.stringify(replyStatuses));
+  }
+
+
   await cleanup();
   console.log(failures ? `\n${failures} check(s) FAILED` : '\nAll checks passed');
 }

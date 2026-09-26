@@ -130,12 +130,19 @@ app.get('/api/health', async (req, res) => {
   const status = graphStatus.snapshot();
   const imap = imapStatus.snapshot();
 
+  // Subscription state is reported, but its notificationUrl is stripped: it is
+  // built from WEBHOOK_PUBLIC_URL, so echoing it on this unauthenticated route
+  // republishes the deployment's own domain. The path is already public in
+  // /api/webhooks, so nothing operational is lost. An administrator reads the
+  // real URL from GET /api/microsoft-365 (behind requireAdmin).
   let subscription = { configured: false, active: false, status: 'disabled' };
   if (graphConfig.enabled) {
     try {
-      subscription = await require('./src/graph/subscriptionService')
+      const inspected = await require('./src/graph/subscriptionService')
         .getSubscriptionService()
         .inspect();
+      const { notificationUrl, ...publicShape } = inspected || {};
+      subscription = publicShape;
     } catch (err) {
       subscription = { configured: graphConfig.webhookEnabled, active: false, status: 'unknown', error: err.message };
     }
@@ -158,8 +165,13 @@ app.get('/api/health', async (req, res) => {
             : !graphConfig.webhookIsHttps
               ? 'WEBHOOK_PUBLIC_URL must be https'
               : null,
-      notificationUrl: graphConfig.notificationUrl || null,
-      mailbox: graphConfig.sharedMailbox || null,
+      // The shared mailbox and the notification URL are deliberately NOT
+      // reported here. This endpoint is unauthenticated, so publishing them
+      // handed the live ingestion target to anyone who asked — the one value
+      // this deployment treats as a secret. Administrators read both from
+      // GET /api/microsoft-365, which is behind requireAdmin.
+      notificationUrlConfigured: Boolean(graphConfig.notificationUrl),
+      mailboxConfigured: Boolean(graphConfig.sharedMailbox),
       polling: {
         running: status.pollingRunning,
         intervalSeconds: Math.round(graphConfig.pollIntervalMs / 1000),
@@ -238,8 +250,12 @@ app.get('*', (req, res, next) => {
 // ONLY in standalone mode (see below). Single-instance by design: polling,
 // rebalancing and the sweepers guard against overlapping runs within a
 // process but there is no cross-process leader election, so run exactly one
-// machine (fly.toml: min_machines_running = 1). Ticket-creation idempotency
-// makes a second instance merely wasteful, not incorrect.
+// machine (fly.toml: min_machines_running = 1). A second poller is NOT merely
+// wasteful: two of them can list the same unseen message, both pass intake's
+// dedupe pre-check, and one loses the insert race on the unique message
+// identity. That loser is now reported as a duplicate rather than an error
+// (ticketIntake.isMessageIdentityConflict), so it stays correct — but it still
+// doubles the IMAP and Graph API traffic, and it is not the design.
 //   - workload rebalancer      (server/src/services/workloadService)
 //   - handover expiry sweeper  (server/src/services/handoverService)
 //   - SLA sweeper             (server/src/slaSweeper)

@@ -174,6 +174,44 @@ function truncate(value, max) {
 }
 
 /**
+ * True when a Prisma error is a unique-constraint violation on one of the two
+ * message-identity columns.
+ *
+ * The dedupe pre-checks below are a check-then-act pair, so two ingestion
+ * channels (or two processes polling the same mailbox) can both pass the check
+ * and then race to the insert. The database is the authority: the loser of that
+ * race gets P2002 here, which proves a winner already recorded this message.
+ * Any other P2002 — a ticket-number collision, say — is a real fault and keeps
+ * propagating.
+ */
+function isMessageIdentityConflict(err) {
+  if (!err || err.code !== "P2002") return false;
+  const target = err.meta && err.meta.target;
+  const fields = Array.isArray(target) ? target : [target];
+  return fields.some(
+    (f) => f === "graphMessageId" || f === "internetMessageId",
+  );
+}
+
+/**
+ * The row a lost race lost to: the ticket that now owns this message identity,
+ * whether it was recorded as a ticket or as a comment. Null when the insert
+ * failed for some other reason and no winner exists.
+ */
+async function resolveRaceWinner(identityFilter) {
+  const ticket = await prisma.ticket.findFirst({
+    where: { OR: identityFilter },
+  });
+  if (ticket) return ticket;
+  const comment = await prisma.comment.findFirst({
+    where: { OR: identityFilter },
+    include: { ticket: true },
+  });
+  return comment ? comment.ticket : null;
+}
+
+
+/**
  * Process one inbound message end-to-end.
  *
  * options.allowThreading (default true): when false, reply/thread matching is
@@ -326,53 +364,76 @@ async function intakeEmailMessage(
       // the already-uploaded binaries are cleaned up and the error propagates
       // (the message stays unseen, so the retry is a clean replay).
       let comment;
-      if (plan.accepted.length) {
-        try {
-          comment = await prisma.$transaction(async (tx) => {
-            const created = await tx.comment.create({
-              data: {
-                ticketId: thread.id,
-                authorName: truncate(msg.requesterName || "", 120),
-                authorEmail: msg.requesterEmail,
-                isRequester: true,
-                viaEmail: true,
-                graphMessageId: msg.messageId,
-                internetMessageId: msg.internetMessageId,
-                body: truncate(
-                  msg.body.trim() || "(empty message)",
-                  COMMENT_MAX,
-                ),
-              },
+      // The reply lost the insert race to a concurrent poller that saw the same
+      // unseen message. The winner's activity is authoritative, so this call
+      // reports the replay as a duplicate instead of failing the message and
+      // leaving it unseen for a retry that would only race again. The guard sits
+      // OUTSIDE the branch so it covers the transactional and the plain insert
+      // alike — the unique message identity is the only arbiter of both.
+      let raced = null;
+      try {
+        if (plan.accepted.length) {
+          try {
+            comment = await prisma.$transaction(async (tx) => {
+              const created = await tx.comment.create({
+                data: {
+                  ticketId: thread.id,
+                  authorName: truncate(msg.requesterName || "", 120),
+                  authorEmail: msg.requesterEmail,
+                  isRequester: true,
+                  viaEmail: true,
+                  graphMessageId: msg.messageId,
+                  internetMessageId: msg.internetMessageId,
+                  body: truncate(
+                    msg.body.trim() || "(empty message)",
+                    COMMENT_MAX,
+                  ),
+                },
+              });
+              await createRows(
+                plan.accepted,
+                {
+                  ticketId: thread.id,
+                  commentId: created.id,
+                  messageId: msg.messageId,
+                  source: channel,
+                },
+                tx,
+              );
+              return created;
             });
-            await createRows(
-              plan.accepted,
-              {
-                ticketId: thread.id,
-                commentId: created.id,
-                messageId: msg.messageId,
-                source: channel,
-              },
-              tx,
-            );
-            return created;
+          } catch (err) {
+            await deleteUploaded(plan.accepted, storageClient);
+            throw err;
+          }
+        } else {
+          comment = await prisma.comment.create({
+            data: {
+              ticketId: thread.id,
+              authorName: truncate(msg.requesterName || "", 120),
+              authorEmail: msg.requesterEmail,
+              isRequester: true,
+              viaEmail: true,
+              graphMessageId: msg.messageId,
+              internetMessageId: msg.internetMessageId,
+              body: truncate(msg.body.trim() || "(empty message)", COMMENT_MAX),
+            },
           });
-        } catch (err) {
-          await deleteUploaded(plan.accepted, storageClient);
-          throw err;
         }
-      } else {
-        comment = await prisma.comment.create({
-          data: {
-            ticketId: thread.id,
-            authorName: truncate(msg.requesterName || "", 120),
-            authorEmail: msg.requesterEmail,
-            isRequester: true,
-            viaEmail: true,
-            graphMessageId: msg.messageId,
-            internetMessageId: msg.internetMessageId,
-            body: truncate(msg.body.trim() || "(empty message)", COMMENT_MAX),
-          },
-        });
+      } catch (err) {
+        // Only a lost race is recoverable here; anything else is a real fault.
+        if (isMessageIdentityConflict(err)) raced = err;
+        else throw err;
+      }
+      if (raced) {
+        const winner = await resolveRaceWinner(identityFilter);
+        if (winner) {
+          logger.log(
+            `[intake] reply ${msg.messageId} lost an insert race and already exists (${winner.ticketNumber}) — treating as duplicate`,
+          );
+          return { status: "duplicate", ticket: winner };
+        }
+        throw raced;
       }
 
       let current = thread;
@@ -672,6 +733,20 @@ async function intakeEmailMessage(
     });
   } catch (err) {
     await deleteUploaded(plan.accepted, storageClient);
+    // Lost the insert race to a concurrent poller that listed the same unseen
+    // message. Both passed the dedupe pre-check, and the unique message
+    // identity decided: the winner's ticket is the real one. Returning
+    // 'duplicate' makes the loser a no-op and stops the message being left
+    // unseen for a retry that would only race again.
+    if (isMessageIdentityConflict(err)) {
+      const winner = await resolveRaceWinner(identityFilter);
+      if (winner) {
+        logger.log(
+          `[intake] message ${msg.messageId} lost an insert race and already exists (${winner.ticketNumber}) — treating as duplicate`,
+        );
+        return { status: "duplicate", ticket: winner };
+      }
+    }
     throw err;
   }
 

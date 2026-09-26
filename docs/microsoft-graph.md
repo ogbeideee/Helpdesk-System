@@ -147,3 +147,11 @@ are handled on the same endpoint.
 
 `GET /api/health` reports Graph/webhook/polling state, subscription status and
 expiry, last successful processing and last error — and never exposes secrets.
+
+It is **unauthenticated** (it is the liveness probe), so it also never publishes
+the deployment's own ingestion target: the shared mailbox address and the public
+base URL are reported as the booleans `mailboxConfigured` /
+`notificationUrlConfigured`, and `notificationUrl` is stripped from the
+subscription object. An administrator reads the real values from
+`GET /api/microsoft-365`, which is behind `requireAdmin`. `test-email-sources`
+part F pins this.

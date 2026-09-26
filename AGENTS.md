@@ -273,6 +273,21 @@ Reuse it; do not write a bare `update` for ownership.
   and commit the text they came from.
 - Never expose a client secret or access token to the frontend. Never log
   tokens, secrets or full email bodies.
+- **An unauthenticated endpoint publishes no operational target.**
+  `GET /api/health` is the liveness probe, so it must not name the shared
+  mailbox, the public base URL, or anything derived from them — report
+  set/unset booleans and leave the values to an admin-gated route. Scrubbing
+  the repo is undone by one careless response field.
+- **A check-then-act dedupe is not idempotency.** The unique message identity
+  (`Ticket`/`Comment` `graphMessageId` / `internetMessageId`) is the real
+  arbiter. A P2002 on either column means a concurrent poller won — report
+  `duplicate` and resolve to the winner's row, never throw and never leave the
+  message unseen for a retry that races again. Guard **every** write of a
+  raced-on identity, including the plain and the transactional variant of the
+  same insert.
+- The background jobs are **single-instance by design**. One machine polls the
+  mailbox; a second one is not "merely wasteful" — it duplicates every poll.
+  Keep `min_machines_running = 1`.
 - No demo data on startup. `seed:demo` requires `--confirm` and refuses under
   `NODE_ENV=production`.
 - Notifications go through `src/mailer.js` and the `Notification` table. Do not

@@ -132,6 +132,49 @@ Picked up the interrupted session and finished it. The suite count went 37 → 4
   `ws-err.txt` (Fly shell/websocket scratch output) and `server/vd.txt`,
   `server/engine-test3.txt` (a `dbcheck` dump and an empty file).
 
+- **Concurrent intake is a duplicate, not an error.** The production IMAP
+  poller logged `Unique constraint failed on the fields: (graphMessageId)` at
+  `ticketIntake.js`, then a `created` outcome 1.4 s later — the two Fly
+  machines both ran the poller, both listed the same unseen message, both
+  passed the dedupe pre-check, and one lost the insert race. That pre-check is
+  a check-then-act pair, so the unique index — not the check — is the real
+  idempotency mechanism, and the loser used to throw P2002, be recorded as an
+  ingestion error, and leave the message unseen for a retry that would race
+  again. `isMessageIdentityConflict` + `resolveRaceWinner` now treat a lost race
+  on either message-identity column as `duplicate`, resolving to the WINNER's
+  ticket. Any other P2002 (a ticket-number collision) still propagates. Guarded
+  in BOTH create paths — the ticket insert and the requester-reply insert, which
+  has a transactional and a plain variant. The reply guard sits outside that
+  branch precisely so one guard covers both. Pinned by a new concurrency section
+  in `test-email-ingest` that ingests the same message twice concurrently and
+  asserts one `created`, one `duplicate`, one row, and no rejection — for the
+  ticket path AND the reply path. The comment in `server.js` claiming a second
+  instance is "merely wasteful, not incorrect" was wrong and is corrected.
+
+- **The unauthenticated health endpoint no longer publishes the ingestion
+  target.** `GET /api/health` returned the live shared mailbox address, the
+  notification URL, and (via the subscription object's own `notificationUrl`)
+  the deployment's own domain — to anyone, which partly defeated the scrubbing
+  in `2614977`. It is deliberately unauthenticated (it is the liveness probe),
+  so the values are now reported as `mailboxConfigured` /
+  `notificationUrlConfigured` booleans and stripped from the subscription shape.
+  Administrators read the real values from `GET /api/microsoft-365`, which is
+  behind `requireAdmin`. Pinned by F10–F17 in `test-email-sources`, which now
+  configures a complete Graph block so the assertions cannot pass trivially.
+  F17 exists because the *first* fix missed the subscription path and F11 caught
+  it.
+
+- **Known issue — the app still runs on TWO Fly machines.** The background jobs
+  are documented as single-instance by design (`min_machines_running = 1` in
+  `fly.toml`), but the deployment has two `ams` machines started, so both poll
+  the mailbox every 30 s. Fix 1 above makes that safe, but it still doubles the
+  IMAP/Graph traffic and is not the design. Scaling to one machine
+  (`fly scale count app=1`) was deliberately left out of this pass. Also note
+  `.github/workflows/fly-deploy.yml` only triggers on push to `main`/`master`,
+  so work on `post-deployment-v1` never auto-deploys — a manual `fly deploy` is
+  required. Releases v20 and v21 have been stuck in `running` state since
+  2026-09-24 (harmless, superseded by v35).
+
 - **Docs corrected against the code.** `AGENTS.md` claimed "Attachment storage
   — attachments are parsed as metadata only; no file is stored anywhere", which
   has been false since `attachmentStorage.js` landed; it now states the real
@@ -417,6 +460,20 @@ Picked up the interrupted session and finished it. The suite count went 37 → 4
   assignment engine only gates at time of assignment.
 
 ## Last Verified
+
+**2026-09-27**, after the pending-deployment audit and the two fixes it found:
+
+- `cd server && npm test`: **41/41 suites passed** on the disposable local
+  PostgreSQL test cluster
+- `cd client && npm test`: all check scripts pass, including `mobile-check.mjs`
+  (0 failures)
+- `cd client && npx vite build`: Vite production build passed
+- `npm run scan:secrets`: clean
+- The local test cluster on 127.0.0.1:5433 had drifted from `server/.env.test`
+  (password authentication failed). Fixed by resetting the cluster's `postgres`
+  password to match `.env.test`; `test:pg:status` then reported
+  "identity verified". `pg_hba.conf` was briefly set to `trust` to make that
+  reset possible and has been restored byte-for-byte from a backup.
 
 **2026-09-26**, after finishing the interrupted session:
 

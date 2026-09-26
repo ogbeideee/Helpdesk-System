@@ -14,7 +14,8 @@
      D. the audit trail names the ingestion channel
      E. webhook notification idempotency (dedupe cache)
      F. /api/health reports IMAP enabled without ever exposing credentials,
-        and survives a failing IMAP connection
+        survives a failing IMAP connection, and never publishes the live
+        shared mailbox or the deployment's own domain (it is unauthenticated)
 
    Usage: npm run test:email-sources  (from server/) */
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
@@ -326,6 +327,13 @@ async function main() {
     IMAP_USER: 'imap-health@sources.test',
     IMAP_PASSWORD: 'imap-health-secret-pass',
     IMAP_SECURE: 'false',
+    // A complete Graph set, so the redaction assertions below run against a
+    // configured integration rather than passing trivially on a blank one.
+    GRAPH_TENANT_ID: '11111111-2222-3333-4444-555555555555',
+    GRAPH_CLIENT_ID: '66666666-7777-8888-9999-aaaaaaaaaaaa',
+    GRAPH_CLIENT_SECRET: 'graph-health-secret-value',
+    GRAPH_SHARED_MAILBOX: 'shared-mailbox@sources.test',
+    WEBHOOK_PUBLIC_URL: 'https://helpdesk.sources.test',
   });
   const server = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
     stdio: ['ignore', 'ignore', 'inherit'],
@@ -365,6 +373,32 @@ async function main() {
       Boolean(afterFailure.integration.imap.lastError) && /fetch|connect|ECONNREFUSED|timeout/i.test(afterFailure.integration.imap.lastError.message));
     check('F9 no credential ever leaks through the error path',
       !JSON.stringify(afterFailure).includes('imap-health-secret-pass'));
+
+    // /api/health is UNAUTHENTICATED. It must therefore never publish the live
+    // ingestion target: the shared mailbox address, or any URL carrying the
+    // deployment's own domain. Both are reported as set/unset booleans, and an
+    // administrator still reads the real values from GET /api/microsoft-365
+    // (behind requireAdmin).
+    const configured = await (await fetch(`${BASE}/api/health`)).json();
+    check('F10 the public health response omits the shared mailbox address',
+      !JSON.stringify(configured).includes('shared-mailbox@sources.test'));
+    check('F11 the public health response omits the public base URL and its domain',
+      !JSON.stringify(configured).includes('helpdesk.sources.test'));
+    check('F12 the Graph client secret never appears', !JSON.stringify(configured).includes('graph-health-secret-value'));
+    eq('F13 mailbox configuration is still reported as set/unset',
+      configured.integration.mailboxConfigured, true);
+    eq('F14 the notification URL is still reported as set/unset',
+      configured.integration.notificationUrlConfigured, true);
+    check('F15 the raw mailbox field is gone from the payload',
+      !('mailbox' in configured.integration), JSON.stringify(Object.keys(configured.integration)));
+    check('F16 the raw notificationUrl field is gone from the payload',
+      !('notificationUrl' in configured.integration), JSON.stringify(Object.keys(configured.integration)));
+    // The subscription object carries its own notificationUrl, built from
+    // WEBHOOK_PUBLIC_URL — a second path to the same leak, and the one that
+    // actually leaked before this assertion existed.
+    check('F17 the subscription object does not carry the public base URL',
+      !JSON.stringify(configured.integration.subscription || {}).includes('helpdesk.sources.test'),
+      JSON.stringify(configured.integration.subscription));
   } finally {
     server.kill();
   }
