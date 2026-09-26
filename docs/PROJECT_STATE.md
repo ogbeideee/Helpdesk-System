@@ -164,16 +164,43 @@ Picked up the interrupted session and finished it. The suite count went 37 → 4
   F17 exists because the *first* fix missed the subscription path and F11 caught
   it.
 
-- **Known issue — the app still runs on TWO Fly machines.** The background jobs
-  are documented as single-instance by design (`min_machines_running = 1` in
-  `fly.toml`), but the deployment has two `ams` machines started, so both poll
-  the mailbox every 30 s. Fix 1 above makes that safe, but it still doubles the
-  IMAP/Graph traffic and is not the design. Scaling to one machine
-  (`fly scale count app=1`) was deliberately left out of this pass. Also note
-  `.github/workflows/fly-deploy.yml` only triggers on push to `main`/`master`,
-  so work on `post-deployment-v1` never auto-deploys — a manual `fly deploy` is
-  required. Releases v20 and v21 have been stuck in `running` state since
-  2026-09-24 (harmless, superseded by v35).
+- **Scaled to ONE Fly machine (`fly scale count app=1 --yes`, 2026-09-27).**
+  Machine `802031f61dde38` was destroyed, leaving a single `7813572fd93dd8`
+  (release v36). The second machine was an accident of the
+  first deploy on 2026-09-10 (created 27 s apart, never reconciled because
+  `min_machines_running` is a floor, not a ceiling) and it was silently breaking
+  roughly half of all attachment downloads, because attachments live on each
+  machine's own local disk with no shared volume. Post-scale verification:
+  both fly.dev and the custom domain answer 200; `ok: true`; IMAP polling live
+  and advancing (confirmed the `lastPollAt` timestamp moves on its own, so it is
+  a real poller, not a stale snapshot); `lastError` empty; `/api/teams` still
+  401 unauthenticated and a forged public-status token still 404s; the health
+  payload still contains no `@`, no mailbox and no deployment domain.
+  Cost is now halved and the background jobs are genuinely single-instance.
+
+  **Scaling BACK UP is not a one-liner.** `fly scale count app=2` is easy, but
+  three things assume one process and are not safe at two:
+  1. **Attachments** — local filesystem, no volume, no object storage. This is
+     the blocker. Needs S3/Azure via the existing `attachmentStorage.js`
+     provider seam (only `local` is implemented; AGENTS.md lists this as
+     deliberately not done). It also fixes losing attachments on machine
+     replacement, which is a pre-existing risk at one machine too.
+  2. **`rateLimit.js`** — in-memory `Map`, so each machine keeps its own
+     buckets and login throttling on `/api/auth/login` silently HALVES. A
+     security regression. Needs a shared store (Redis or DB-backed).
+  3. **Background jobs** — the rebalancer, handover sweeper, SLA sweeper and
+     report scheduler have no leader election, so all of them would run twice
+     and could fight. Email ingestion alone is already safe thanks to the
+     P2002/`duplicate` handling above.
+
+  Scaling down is not a one-way door: all three fixes are additive and leave the
+  single-machine case unchanged.
+
+- **Note — CI never auto-deploys this branch.**
+  `.github/workflows/fly-deploy.yml` triggers only on push to `main`/`master`,
+  so work on `post-deployment-v1` is deployed by hand with
+  `fly deploy --remote-only`. Releases v20 and v21 have been stuck in `running`
+  state since 2026-09-24 (harmless, superseded).
 
 - **Docs corrected against the code.** `AGENTS.md` claimed "Attachment storage
   — attachments are parsed as metadata only; no file is stored anywhere", which
