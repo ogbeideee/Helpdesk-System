@@ -29,7 +29,7 @@ function eq(name, actual, expected) {
 
 const MARK = 'mbx-test-';
 const DOMAIN = 'mailbox.example';
-const MAILBOX = 'ithelpdesk@mrsholdings.com';
+const MAILBOX = 'ithelpdesk@example.com';
 const quiet = { log() {}, warn() {}, error() {} };
 
 /* ------------------------------------------------------------------ */

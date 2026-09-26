@@ -15,7 +15,7 @@
 const path = require('node:path');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
-const { RULES, scanText, isAllowedValue, isIgnoredPath } = require(
+const { RULES, scanText, isAllowedValue, isIgnoredPath, PRODUCTION_DOMAIN, PRODUCTION_MAILBOX } = require(
   path.join(REPO_ROOT, 'scripts', 'secret-scan.js')
 );
 
@@ -78,6 +78,8 @@ const CANONICAL = {
   'bearer-token-literal': `authorization = 'Bearer ${filler(40)}';`,
   'jwt-literal': `const t = 'eyJhbGciOiJIUzI1NiJ9.${filler(30)}.${filler(30)}';`,
   'db-url-with-password': `DATABASE_URL = '${join('postgresql://user:', filler(18))}${join('@db.acme-corp', '.internal/app')}'`,
+  'production-mailbox': `GRAPH_SHARED_MAILBOX=${PRODUCTION_MAILBOX}`,
+  'production-domain': `curl -s https://helpdesk.${PRODUCTION_DOMAIN}/api/health`,
   'hardcoded-credential-assignment': `const DB_PASSWORD = '${filler(20)}';`,
 };
 
@@ -177,6 +179,72 @@ check('H.3 rule ids are unique', new Set(RULES.map((r) => r.id)).size === RULES.
 check('H.4 the generic backstop is present', RULES.some((r) => r.id === 'hardcoded-credential-assignment'));
 check('H.5 the Google OAuth secret rule is CRITICAL',
   RULES.find((r) => r.id === 'google-oauth-client-secret')?.severity === 'critical');
+
+/* ---- I. the deployment's own identity is never publishable ---------- */
+console.log('\n--- I. the production mailbox and domain ---');
+
+/*
+ * The live shared mailbox shipped in `.env.example`, three docs and two .docx
+ * guides. It is not a credential, which is exactly why every rule above missed
+ * it: a scanner looking for a password has no reason to read an address. These
+ * checks pin the two rules that close that gap, in both directions.
+ *
+ * The values are imported from the scanner rather than written here, for the
+ * same reason `join(a, b)` exists above: a literal in this file would be a
+ * literal GitHub push protection can see. H.6 then proves neither file contains
+ * the value as source text.
+ */
+check('I.1 the mailbox rule is CRITICAL',
+  RULES.find((r) => r.id === 'production-mailbox')?.severity === 'critical');
+check('I.2 the domain rule is HIGH',
+  RULES.find((r) => r.id === 'production-domain')?.severity === 'high');
+
+check('I.3 the shared mailbox in a config value is caught',
+  firesRule(`GRAPH_SHARED_MAILBOX=${PRODUCTION_MAILBOX}`, 'production-mailbox', 'server/.env.example'));
+check('I.4 it is caught in a doc, in prose',
+  firesRule(`The monitored mailbox is \`${PRODUCTION_MAILBOX}\`.`, 'production-mailbox', 'docs/microsoft-graph.md'));
+check('I.5 any other local part at the domain is caught too',
+  firesRule(`IT support: someone@${PRODUCTION_DOMAIN}`, 'production-mailbox', 'docs/notes.md'));
+check('I.6 a bare domain with no local part is caught',
+  firesRule(PRODUCTION_DOMAIN, 'production-domain', 'docs/notes.md'));
+
+check('I.7 the hostname form is caught',
+  firesRule(`PORTAL_BASE_URL=https://helpdesk.${PRODUCTION_DOMAIN}`, 'production-domain', 'server/.env.example'));
+check('I.8 a bare subdomain form is caught',
+  firesRule(`fly certs add helpdesk.${PRODUCTION_DOMAIN}`, 'production-domain', 'docs/runbook.md'));
+check('I.9 it is caught in a Graph tenant id, the subtlest form',
+  firesRule(`GRAPH_TENANT_ID: '${PRODUCTION_DOMAIN}'`, 'production-domain', 'server/scripts/test-m365.js'));
+check('I.10 case does not hide it',
+  firesRule(PRODUCTION_DOMAIN.toUpperCase(), 'production-domain', 'docs/notes.md'));
+check('I.11 the dot is not treated as a wildcard',
+  firesRule(`helpdesk.${PRODUCTION_DOMAIN.replace('.', 'X')}`, 'production-domain', 'docs/notes.md') === false);
+
+check('I.12 no finding echoes the address it found',
+  scanText(`GRAPH_SHARED_MAILBOX=${PRODUCTION_MAILBOX}`, 'server/.env.example')
+    .every((f) => !JSON.stringify(f).includes(PRODUCTION_MAILBOX)));
+check('I.12b no finding echoes the domain either',
+  scanText(`GRAPH_SHARED_MAILBOX=${PRODUCTION_MAILBOX}`, 'server/.env.example')
+    .every((f) => !JSON.stringify(f).includes(PRODUCTION_DOMAIN)));
+check('I.12c partial redaction cannot reassemble it: every rule blanks every match',
+  // Two rules, each covering half the value, must not leave readable halves in
+  // two excerpts printed one under the other.
+  scanText(`shared inbox ${PRODUCTION_MAILBOX} on the portal`, 'docs/notes.md')
+    .every((f) => !/ithelpdesk/.test(f.excerpt) && !new RegExp(PRODUCTION_DOMAIN.replace('.', '\\.')).test(f.excerpt)));
+check('I.13 the finding still names the variable, so it can be fixed',
+  scanText(`GRAPH_SHARED_MAILBOX=${PRODUCTION_MAILBOX}`, 'server/.env.example')[0]?.file === 'server/.env.example');
+
+check('I.14 the placeholder that replaced it is clean',
+  fires('GRAPH_SHARED_MAILBOX=ithelpdesk@example.com', 'server/.env.example').length === 0);
+check('I.15 a reserved example domain is never flagged',
+  fires('helpdesk.example.com and admin@example.com', 'docs/notes.md').length === 0);
+check('I.16 another real-looking customer domain is NOT flagged (no over-reach)',
+  fires('someone@acme-corp.example.org', 'docs/notes.md').length === 0);
+
+check('I.17 the .docx escape hatch is closed by gitignore, not just by convention',
+  require('node:fs').readFileSync(path.join(REPO_ROOT, '.gitignore'), 'utf8').includes('*.docx'));
+check('I.18 no .docx is still tracked',
+  require('node:child_process')
+    .execFileSync('git', ['ls-files', '*.docx'], { cwd: REPO_ROOT, encoding: 'utf8' }).trim() === '');
 
 /*
  * The check that keeps this suite committable. GitHub push protection blocked

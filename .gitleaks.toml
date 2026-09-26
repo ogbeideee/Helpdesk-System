@@ -44,3 +44,21 @@ description = "Google OAuth client id"
 id = "google-oauth-client-id"
 regex = '''\d{10,}-[a-z0-9]{10,}\.apps\.googleusercontent\.com'''
 keywords = ["apps.googleusercontent.com"]
+
+# The live shared mailbox and its domain. Not a credential, which is why it
+# reached .env.example, three docs and two .docx guides unnoticed: nothing
+# looking for a password has a reason to read an address. It is also the
+# ingestion target, so publishing it maps exactly where to phish or
+# credential-stuff. Assembled from fragments so this file does not itself
+# contain the value it forbids - the same reason as the project scanner.
+[[rules]]
+description = "Production shared mailbox (see scripts/secret-scan.js)"
+id = "production-mailbox"
+regex = '''[A-Za-z0-9._%+-]+@mrshol''ding''s\.com'''
+keywords = ["mrshol"]
+
+[[rules]]
+description = "Production domain (see scripts/secret-scan.js)"
+id = "production-domain"
+regex = '''mrshol''ding''s\.com'''
+keywords = ["mrshol"]

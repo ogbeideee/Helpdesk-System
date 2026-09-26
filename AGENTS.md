@@ -100,15 +100,35 @@ for small screens. The mobile rules live in one section at the end of
 
 **Other** — `src/states.js` (lifecycle), `src/teams.js` (assignment groups),
 `src/mailer.js` (the *only* notification sender), `src/email/` (deterministic
-parser), `src/graph/` (M365), `src/authMiddleware.js`.
+parser), `src/graph/` (M365), `src/authMiddleware.js`, `src/rateLimit.js`
+(dependency-free in-memory fixed-window limiter).
 
-**Routes** (`server/routes/`) — `auth, tickets, agents, routing, workload,
-handovers, dashboard, stats, webhooks, dev`.
+**Routes** (`server/routes/`) — `auth, profile, tickets, agents, routing,
+workload, handovers, dashboard, stats, public, webhooks, dev`. `public.js` is the
+only unauthenticated surface besides auth/health: the requester status lookup,
+rate-limited and answering 404 for a bad token.
 
 **Client** (`client/src/components/`) — one component per screen plus
 `ui.jsx` (shared primitives: `Modal`, `Spinner`, `EmptyState`, `Icon`,
 `usePopover`, `useToast`, …). Import from `ui.jsx` rather than rebuilding;
 `Icon` is the only icon set, so no screen inlines its own SVG.
+
+**Client view modules** (`client/src/*View.js`, `*View.jsx` sibling files) —
+every derivation, formatter and vocabulary lives in a pure module next to the
+components that render it, never inside the component: `slaView.js`,
+`remoteAccessView.js`, `auditView.js`, `reportsView.js`, `slaReportView.js`,
+`slaKpis.js`, `poolView.js`, `emailRulesView.js`, `m365View.js`,
+`availabilityHistoryView.js`, `ticketTimelineView.js`, `attachmentView.js`. A
+screen owns layout, local state and the API call; a view module owns the rule.
+Each is pinned by a plain-node check script in `client/` wired into
+`cd client && npm test` — the same contract the server suites keep.
+
+A screen that outgrows one file splits **by region**, not by rule:
+`TicketDetail.jsx` is the page shell (load, mutate, fold the result back in)
+and delegates to `TicketConversation.jsx` (the activity rail),
+`TicketInspector.jsx` (the right-hand column) and `TicketModals.jsx`. The
+component files are never allowed to grow a private copy of a rule that
+already has a view module.
 
 **Client shell** — `App.jsx` renders a navigation rail plus `TopBar.jsx`
 (the application header) around the routed screen. Anything that acts on the
@@ -206,6 +226,29 @@ creation. The admin Profile → Settings surface owns the runtime mode, threshol
 sender/reason allowlists, metrics, and emergency stop; the Groq key is an
 environment secret only.
 
+**Session lifetime** — JWTs are stateless 12h bearer tokens, so there is no
+revocation list. `Agent.passwordChangedAt` stands in for one: `userService`
+stamps it on every password write (self-service or admin reset) and
+`requireAuth` rejects any token whose `iat` predates it. `express` runs with
+`trust proxy: 1` so rate-limit keys see the real client address behind Fly.
+
+**Requester self-service status** — `email/statusLink.js` mints a stateless
+HMAC token over `ticketId.requesterEmail`; the acknowledgement and
+status-update mails link to `#/status/<token>`, rendered by `StatusPage.jsx`
+without a session. Possession of the link is proof of mailbox access — the same
+trust level as "reply to this email". The public endpoint returns only the
+ticket's public face (number, subject, state, category, priority, dates) and
+404s for a forged, tampered or cross-requester token, so probing learns
+nothing. It requires `PORTAL_BASE_URL` and a secret (`STATUS_LINK_SECRET`, or
+`JWT_SECRET` as fallback); it refuses to load in production without one.
+
+**Throttling** — `src/rateLimit.js` is a fixed-window in-memory limiter,
+applied only where guessing is cheap: `POST /api/auth/login` (IP + target
+email), `POST /api/profile/password` (account) and the public status lookup
+(IP). A 429 never reaches the handler, so it also caps the bcrypt cost an
+attacker can impose. Single-instance by design — a second machine would get
+its own buckets.
+
 **Concurrency** — every ownership change goes through
 `workloadService.moveTicket`, a compare-and-set (`updateMany` with the expected
 current owner in the `WHERE`). Handover status changes use the same pattern.
@@ -219,6 +262,15 @@ Reuse it; do not write a bare `update` for ownership.
   the Fly secret store. `docs/credential-rotation.md` is the runbook. A
   pre-commit hook (`npm run hooks:install`) and the `Secret scan` CI workflow
   both block a commit that contains one; run the hook installer once per clone.
+- **The live shared mailbox and its domain are forbidden too**, even though
+  neither is a credential — publishing the ingestion target is publishing the
+  map. Two scanner rules (`production-mailbox`, `production-domain`) block both
+  forms, and they assemble the domain from fragments so the scanner and its own
+  test suite never contain the value they forbid. Use `example.com` in
+  `.env.example`, docs and fixtures. **`*.docx` is git-ignored**: a deflated-XML
+  binary is skipped by the scanner, `git grep -I` and gitleaks alike, which is
+  how the domain reached two committed guides. Keep generated documents on disk
+  and commit the text they came from.
 - Never expose a client secret or access token to the frontend. Never log
   tokens, secrets or full email bodies.
 - No demo data on startup. `seed:demo` requires `--confirm` and refuses under
@@ -233,7 +285,7 @@ Reuse it; do not write a bare `update` for ownership.
 
 ```bash
 npm run dev                  # root: API :4000 + UI :5173 via concurrently
-cd server && npm test        # all 35 suites (scripts/run-all-tests.js)
+cd server && npm test        # all 41 suites (scripts/run-all-tests.js)
 cd server && node scripts/run-all-tests.js imap   # a few suites, by substring
 cd server && npm run test:pg:up      # one-time: disposable local test PostgreSQL
 cd client && npx vite build  # production build
@@ -273,8 +325,10 @@ exist.
 - **Live Microsoft Graph verification.** Polling, webhooks and subscription
   renewal are written and tested against mocks; they have never run against real
   Microsoft credentials.
-- **Attachment storage.** Attachments are parsed as metadata only — no file is
-  stored anywhere.
+- **Object storage beyond the local filesystem.** Attachment bytes are stored
+  and served (`src/services/attachmentStorage.js`, local private directory by
+  default), but only behind the injectable `put`/`get` provider seam — no S3 or
+  Azure Blob provider is implemented.
 - **Firebase.** Not used anywhere. (Supabase, by contrast, **is** the
   production PostgreSQL host.)
 

@@ -52,6 +52,35 @@ write a second implementation of a component for light mode.
 - Any new colour must come from a token. Seeded avatars set `--avatar-h` only;
   saturation and lightness are theme tokens.
 
+## Responsive layout
+
+One implementation, a documented breakpoint ladder, and no second stylesheet
+for small screens. The mobile rules live in one section at the end of
+`client/src/index.css`; nothing above them changes.
+
+- Ladder, largest first: **1240 / 1180 / 1100 / 1080 / 900 / 860 / 768 / 640 /
+  620 / 560**. A new width means editing the ladder and
+  `client/mobile-check.mjs` together.
+- **Wider than 768px** the rail is a standing column — labelled, or icons below
+  900px. **At 768px and below** it is a drawer: `App.jsx` owns `navOpen`,
+  `TopBar` renders `.nav-toggle`, `.sidebar` is fixed and slides in, a
+  `.nav-scrim` closes it and the page behind it stops scrolling. That width is
+  stated twice on purpose — `MOBILE_NAV_QUERY` in `App.jsx` and the
+  `max-width: 768px` block — so **change both together**.
+- The drawer always shows full labels: it re-points the `--rail-*` tokens for
+  `.shell` *and* `.shell.is-collapsed`, because collapsing is a desktop
+  preference with no meaning on a phone.
+- A table either folds into cards or scrolls inside its own frame — never
+  widens the page. Folding is opt-in (`.table-stack` on the wrapper) and every
+  cell carries the `data-label` it prints; the ticket queue folds from 860px
+  because it is the screen people live in.
+- Fields are 16px on phones: below that iOS zooms the page when one takes
+  focus and leaves it zoomed.
+- `cd client && npm test` includes `mobile-check.mjs`, which pins this contract
+  (ladder, drawer wiring, stacked-table labels, input size, safe-area opt-in).
+  It is static analysis of the CSS and shell markup, not a browser — it cannot
+  see a layout, only the rules that produce it.
+
 ## Major modules
 
 **Services** (`server/src/services/`)
@@ -65,20 +94,41 @@ write a second implementation of a component for light mode.
 | `workloadService.js` | Workload, unattended claiming, `moveTicket`, rebalancing |
 | `handoverService.js` | Handover offers, queue, expiry, reroute |
 | `settingsService.js` | Admin-configurable values (`Setting` table, env defaults) |
-| `emailTriageService.js` | Optional Groq relevance gate → `skipped_non_ticket`; fail-open and audited |
+| `intakeScreening.js` | Automated-mail gate — RFC 3834 headers + ignored senders → `skipped_automated` |
+| `emailTriageService.js` | Optional Groq relevance gate → `skipped_non_ticket`; fail-open, policy-gated, audited |
 | `ticketIntake.js` / `emailIngestion.js` | Email → ticket pipeline |
 
 **Other** — `src/states.js` (lifecycle), `src/teams.js` (assignment groups),
 `src/mailer.js` (the *only* notification sender), `src/email/` (deterministic
-parser), `src/graph/` (M365), `src/authMiddleware.js`.
+parser), `src/graph/` (M365), `src/authMiddleware.js`, `src/rateLimit.js`
+(dependency-free in-memory fixed-window limiter).
 
-**Routes** (`server/routes/`) — `auth, tickets, agents, routing, workload,
-handovers, dashboard, stats, webhooks, dev`.
+**Routes** (`server/routes/`) — `auth, profile, tickets, agents, routing,
+workload, handovers, dashboard, stats, public, webhooks, dev`. `public.js` is the
+only unauthenticated surface besides auth/health: the requester status lookup,
+rate-limited and answering 404 for a bad token.
 
 **Client** (`client/src/components/`) — one component per screen plus
 `ui.jsx` (shared primitives: `Modal`, `Spinner`, `EmptyState`, `Icon`,
 `usePopover`, `useToast`, …). Import from `ui.jsx` rather than rebuilding;
 `Icon` is the only icon set, so no screen inlines its own SVG.
+
+**Client view modules** (`client/src/*View.js`, `*View.jsx` sibling files) —
+every derivation, formatter and vocabulary lives in a pure module next to the
+components that render it, never inside the component: `slaView.js`,
+`remoteAccessView.js`, `auditView.js`, `reportsView.js`, `slaReportView.js`,
+`slaKpis.js`, `poolView.js`, `emailRulesView.js`, `m365View.js`,
+`availabilityHistoryView.js`, `ticketTimelineView.js`, `attachmentView.js`. A
+screen owns layout, local state and the API call; a view module owns the rule.
+Each is pinned by a plain-node check script in `client/` wired into
+`cd client && npm test` — the same contract the server suites keep.
+
+A screen that outgrows one file splits **by region**, not by rule:
+`TicketDetail.jsx` is the page shell (load, mutate, fold the result back in)
+and delegates to `TicketConversation.jsx` (the activity rail),
+`TicketInspector.jsx` (the right-hand column) and `TicketModals.jsx`. The
+component files are never allowed to grow a private copy of a rule that
+already has a view module.
 
 **Client shell** — `App.jsx` renders a navigation rail plus `TopBar.jsx`
 (the application header) around the routed screen. Anything that acts on the
@@ -176,6 +226,29 @@ creation. The admin Profile → Settings surface owns the runtime mode, threshol
 sender/reason allowlists, metrics, and emergency stop; the Groq key is an
 environment secret only.
 
+**Session lifetime** — JWTs are stateless 12h bearer tokens, so there is no
+revocation list. `Agent.passwordChangedAt` stands in for one: `userService`
+stamps it on every password write (self-service or admin reset) and
+`requireAuth` rejects any token whose `iat` predates it. `express` runs with
+`trust proxy: 1` so rate-limit keys see the real client address behind Fly.
+
+**Requester self-service status** — `email/statusLink.js` mints a stateless
+HMAC token over `ticketId.requesterEmail`; the acknowledgement and
+status-update mails link to `#/status/<token>`, rendered by `StatusPage.jsx`
+without a session. Possession of the link is proof of mailbox access — the same
+trust level as "reply to this email". The public endpoint returns only the
+ticket's public face (number, subject, state, category, priority, dates) and
+404s for a forged, tampered or cross-requester token, so probing learns
+nothing. It requires `PORTAL_BASE_URL` and a secret (`STATUS_LINK_SECRET`, or
+`JWT_SECRET` as fallback); it refuses to load in production without one.
+
+**Throttling** — `src/rateLimit.js` is a fixed-window in-memory limiter,
+applied only where guessing is cheap: `POST /api/auth/login` (IP + target
+email), `POST /api/profile/password` (account) and the public status lookup
+(IP). A 429 never reaches the handler, so it also caps the bcrypt cost an
+attacker can impose. Single-instance by design — a second machine would get
+its own buckets.
+
 **Concurrency** — every ownership change goes through
 `workloadService.moveTicket`, a compare-and-set (`updateMany` with the expected
 current owner in the `WHERE`). Handover status changes use the same pattern.
@@ -189,6 +262,15 @@ Reuse it; do not write a bare `update` for ownership.
   the Fly secret store. `docs/credential-rotation.md` is the runbook. A
   pre-commit hook (`npm run hooks:install`) and the `Secret scan` CI workflow
   both block a commit that contains one; run the hook installer once per clone.
+- **The live shared mailbox and its domain are forbidden too**, even though
+  neither is a credential — publishing the ingestion target is publishing the
+  map. Two scanner rules (`production-mailbox`, `production-domain`) block both
+  forms, and they assemble the domain from fragments so the scanner and its own
+  test suite never contain the value they forbid. Use `example.com` in
+  `.env.example`, docs and fixtures. **`*.docx` is git-ignored**: a deflated-XML
+  binary is skipped by the scanner, `git grep -I` and gitleaks alike, which is
+  how the domain reached two committed guides. Keep generated documents on disk
+  and commit the text they came from.
 - Never expose a client secret or access token to the frontend. Never log
   tokens, secrets or full email bodies.
 - No demo data on startup. `seed:demo` requires `--confirm` and refuses under
@@ -203,10 +285,11 @@ Reuse it; do not write a bare `update` for ownership.
 
 ```bash
 npm run dev                  # root: API :4000 + UI :5173 via concurrently
-cd server && npm test        # all 35 suites (scripts/run-all-tests.js)
+cd server && npm test        # all 41 suites (scripts/run-all-tests.js)
 cd server && node scripts/run-all-tests.js imap   # a few suites, by substring
 cd server && npm run test:pg:up      # one-time: disposable local test PostgreSQL
 cd client && npx vite build  # production build
+cd client && npm test        # client check scripts, incl. mobile-check.mjs (responsive contract)
 cd server && npm run db:deploy       # apply the committed Prisma migrations
 cd server && npm run db:init # groups + routing rules + admin bootstrap
 cd server && npm run db:purge-demo   # dry run; --apply to remove demo data
@@ -242,8 +325,10 @@ exist.
 - **Live Microsoft Graph verification.** Polling, webhooks and subscription
   renewal are written and tested against mocks; they have never run against real
   Microsoft credentials.
-- **Attachment storage.** Attachments are parsed as metadata only — no file is
-  stored anywhere.
+- **Object storage beyond the local filesystem.** Attachment bytes are stored
+  and served (`src/services/attachmentStorage.js`, local private directory by
+  default), but only behind the injectable `put`/`get` provider seam — no S3 or
+  Azure Blob provider is implemented.
 - **Firebase.** Not used anywhere. (Supabase, by contrast, **is** the
   production PostgreSQL host.)
 

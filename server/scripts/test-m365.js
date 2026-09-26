@@ -169,7 +169,7 @@ function rawGraphMessage({ id, from, subject, bodyText, conversationId, html }) 
     const v = validateGraphConfig(readGraphEnv());
     eq('A22 an unusable tenant value is invalid', v.invalid[0] && v.invalid[0].variable, 'GRAPH_TENANT_ID');
   });
-  await withEnv({ ...BASE_CREDS, GRAPH_TENANT_ID: 'mrsholdings.com' }, async () => {
+  await withEnv({ ...BASE_CREDS, GRAPH_TENANT_ID: 'example.com' }, async () => {
     eq('A23 a verified-domain tenant is valid', validateGraphConfig(readGraphEnv()).valid, true);
   });
 

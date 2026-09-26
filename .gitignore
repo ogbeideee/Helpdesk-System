@@ -44,6 +44,19 @@ yarn-error.log*
 Thumbs.db
 *.swp
 
+# --- binary documents: never committed ---
+# A .docx is a zip of deflated XML. The secret scanner skips it (it cannot read
+# it), `git grep -I` skips it, and gitleaks has no useful rule for it — so a
+# production hostname or address inside one is invisible to every control this
+# repository relies on. That is exactly how the live mailbox reached two
+# committed domain-migration guides. Keep the documents you generate on disk and
+# distribute them out of band; commit the text they came from instead.
+*.docx
+# The one-shot generator scripts went the same way: they hard-coded the
+# production domain, the Fly app, the server IP and an absolute home-directory
+# path, and nothing regenerates them, so nothing can tell they have gone stale.
+scripts-make-doc/
+
 # --- misc ---
 coverage/
 *.bak

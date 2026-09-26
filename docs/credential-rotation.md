@@ -13,7 +13,7 @@ of a skipped one is a mailbox someone else can read.
 ## Google OAuth client (Gmail IMAP)
 
 The one used by the live ingestion path: IMAP over XOAUTH2 against
-`ithelpdesk@mrsholdings.com`.
+`ithelpdesk@example.com`.
 
 | Where | Name |
 |---|---|
@@ -45,7 +45,7 @@ The one used by the live ingestion path: IMAP over XOAUTH2 against
 The poller must keep polling. Within a minute of the redeploy:
 
 ```bash
-curl -s https://ithelpdesk.mrsholdings.com/api/health | python -c "import json,sys; d=json.load(sys.stdin)['integration']['imap']; print(d['polling']['running'], d['lastError'])"
+curl -s https://ithelpdesk.example.com/api/health | python -c "import json,sys; d=json.load(sys.stdin)['integration']['imap']; print(d['polling']['running'], d['lastError'])"
 ```
 
 `True` and a blank `lastError` means ingestion is healthy. A bad token shows
@@ -103,6 +103,26 @@ npm run scan:secrets          # every tracked file
 npm run scan:secrets -- <a>..<b>   # a commit range
 cd server && npm run test:secret-scan   # the scanner's own suite
 ```
+
+### The deployment's own address is also forbidden
+
+The shared mailbox and its domain are not credentials, and that is precisely why
+they need a rule of their own: a scanner looking for a password has no reason to
+read an email address. They reached `.env.example`, three docs and two committed
+`.docx` guides before anyone noticed — and a `.docx` is deflated XML inside a
+zip, so the scanner, `git grep -I` and gitleaks all skip it silently. Two rules
+(`production-mailbox`, `production-domain`) now block both the address and the
+bare domain, and `*.docx` is git-ignored outright: a binary no control can read
+has no place in a public repository.
+
+The rules assemble the domain from fragments rather than spelling it out, so
+neither the scanner nor its test suite contains the value it forbids. That is
+also why `IGNORED_PATHS` does not need a new exemption — an exemption is a hole
+that quietly rots.
+
+If you need the real values: `server/.env` (git-ignored) and the Fly secret
+store. `GRAPH_SHARED_MAILBOX` and `PORTAL_BASE_URL` are the two names that carry
+it.
 
 ### If the scanner is wrong
 

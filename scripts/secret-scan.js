@@ -25,6 +25,26 @@ const path = require('node:path');
 const REPO_ROOT = path.resolve(__dirname, '..');
 
 /* ------------------------------------------------------------------ */
+/* The deployment's own identity                                       */
+/* ------------------------------------------------------------------ */
+/*
+ * The live shared mailbox's domain is not a credential, but publishing it
+ * names the exact inbox an attacker would phish, credential-stuff or
+ * password-guess, and hands them the hostname the helpdesk answers on. It
+ * shipped in `.env.example`, three docs and two committed .docx guides before
+ * anything noticed, because none of those shapes look like a secret to a
+ * scanner looking for one.
+ *
+ * So it is a rule in its own right, and it is assembled from fragments: a
+ * denylist that spells its own entry out is a denylist that immediately has to
+ * exempt its own source file, and an exemption is a hole that quietly rots.
+ * The scanner and its test suite are already in IGNORED_PATHS for the same
+ * reason — but they should not need to be.
+ */
+const PRODUCTION_DOMAIN = ['mrshol', 'dings.com'].join('');
+const PRODUCTION_MAILBOX = `ithelpdesk@${PRODUCTION_DOMAIN}`;
+
+/* ------------------------------------------------------------------ */
 /* Rules                                                               */
 /* ------------------------------------------------------------------ */
 /*
@@ -112,6 +132,24 @@ const RULES = [
     severity: 'critical',
     // postgresql://user:PASSWORD@host — the password must not be inline.
     pattern: /\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?):\/\/[^\s:/@'"]{1,64}:[^\s:/@'"]{3,}@/g,
+  },
+  {
+    id: 'production-mailbox',
+    severity: 'critical',
+    // The shared inbox itself, in a config file, a doc, a log line or anywhere
+    // else. CRITICAL, not high: this address is the ingestion target, so it is
+    // simultaneously the thing to protect and the map of where to attack.
+    pattern: new RegExp(
+      `[A-Za-z0-9._%+-]+@${PRODUCTION_DOMAIN.replace(/\./g, '\\.')}`,
+      'gi'
+    ),
+  },
+  {
+    id: 'production-domain',
+    severity: 'high',
+    // The domain on its own — as a hostname, a DNS name, a Graph tenant id or a
+    // Graph/IMAP config value. Covers every form the mailbox rule would miss.
+    pattern: new RegExp(PRODUCTION_DOMAIN.replace(/\./g, '\\.'), 'gi'),
   },
   {
     id: 'hardcoded-credential-assignment',
@@ -239,20 +277,31 @@ function isIgnoredPath(file) {
  * undoes the entire mechanism. The excerpt is the line with every rule match
  * blanked out, so it is enough to locate the problem and useless to an
  * attacker reading over your shoulder.
+ *
+ * EVERY rule's pattern is applied, not just the one that fired. That is not
+ * tidiness: two rules can each cover half of one value (an address rule
+ * blanking the local part and a domain rule blanking the host leaves a
+ * readable local part beside a readable host), and two excerpts of the same
+ * line in the same output reassemble the whole thing. Partial redaction is
+ * not redaction once the findings are listed one under another.
  */
 function makeFinding(rule, file, lineNumber, lineText) {
   let redacted = lineText;
-  const blanker = new RegExp(rule.pattern.source, rule.pattern.flags.includes('g') ? rule.pattern.flags : `${rule.pattern.flags}g`);
-  redacted = redacted.replace(blanker, (match, ...rest) => {
-    /*
-     * For a rule with a capture group (the generic assignment rule) keep the
-     * NAME so the reader knows which variable; for a rule with none, the first
-     * rest element is the match offset, not a name, and must be ignored.
-     */
-    const first = rest[0];
-    const named = typeof first === 'string' ? first : null;
-    return named ? `${named} = <redacted>` : '<redacted>';
-  });
+  for (const other of RULES) {
+    const flags = other.pattern.flags.includes('g') ? other.pattern.flags : `${other.pattern.flags}g`;
+    const re = new RegExp(other.pattern.source, flags);
+    re.lastIndex = 0;
+    redacted = redacted.replace(re, (match, ...rest) => {
+      /*
+       * For a rule with a capture group (the generic assignment rule) keep the
+       * NAME so the reader knows which variable; for a rule with none, the first
+       * rest element is the match offset, not a name, and must be ignored.
+       */
+      const first = rest[0];
+      const named = typeof first === 'string' ? first : null;
+      return named ? `${named} = <redacted>` : '<redacted>';
+    });
+  }
   const excerpt = redacted.replace(/\s+/g, ' ').trim().slice(0, 70);
   return { rule: rule.id, severity: rule.severity, file, line: lineNumber, excerpt };
 }
@@ -436,4 +485,13 @@ if (require.main === module) {
   }
 }
 
-module.exports = { RULES, scanText, isAllowedValue, isIgnoredPath };
+module.exports = {
+  RULES,
+  scanText,
+  isAllowedValue,
+  isIgnoredPath,
+  // Exported so the test suite can build a sample of the real shape without
+  // either file containing the value literally.
+  PRODUCTION_DOMAIN,
+  PRODUCTION_MAILBOX,
+};

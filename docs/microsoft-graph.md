@@ -1,7 +1,7 @@
 # Microsoft 365 / Microsoft Graph
 
 The monitored mailbox is the Microsoft 365 **shared mailbox**
-`ithelpdesk@mrsholdings.com`. The application only ever reads that mailbox -
+`ithelpdesk@example.com`. The application only ever reads that mailbox -
 never individual employee mailboxes.
 
 Register an Entra ID app with **application** permissions `Mail.ReadWrite` +
@@ -86,7 +86,7 @@ Typical cycle:
 ```text
 [graph] Found 2 unread message(s)
 [graph] Processing message AAMkAGI1...
-[email] Parsed message from john.doe@mrsholdings.com (html, 1 attachment(s))
+[email] Parsed message from john.doe@example.com (html, 1 attachment(s))
 [ticket] Created INC-000459
 [assignment] Assigned INC-000459 to Lena Fischer
 [graph] Marked message as read (ticket created)

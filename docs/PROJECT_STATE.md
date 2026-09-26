@@ -78,6 +78,109 @@ can only receive low/moderate priority tickets from those secondary groups.
   email-rules, email-integration, imap, ingest, triage ×2, screening,
   graph-mailbox, m365.
 
+## Completed This Session (2026-09-26, resumed)
+
+Picked up the interrupted session and finished it. The suite count went 37 → 41.
+
+- **Requester self-service status (signed link).** `email/statusLink.js` mints a
+  stateless HMAC token over `ticketId.requesterEmail`; the acknowledgement and
+  status-update mails carry a "check progress" link to `#/status/<token>`,
+  rendered by the new `StatusPage.jsx` without a session. The only other
+  unauthenticated surface is `routes/public.js` — one endpoint, rate-limited,
+  returning just the ticket's public face and 404 for a forged, tampered or
+  cross-requester token. New `test-status-link` suite (26 checks) pins the
+  signing, the exposure surface, the two mails and the throttle.
+
+- **Rate limiting on the guessing surfaces.** New dependency-free fixed-window
+  limiter `src/rateLimit.js`, applied to `POST /api/auth/login` (IP + target
+  email, 20/5 min), `POST /api/profile/password` (per account, 10/5 min) and
+  the public status lookup (IP, 30/5 min). A 429 never reaches the handler, so
+  it also caps the bcrypt cost an attacker can impose. `trust proxy: 1` so keys
+  see the real address behind the Fly proxy. All env-tunable and documented in
+  `.env.example`.
+
+- **Password changes now invalidate every session.** `Agent.passwordChangedAt`
+  (migration `20260926000000_agent_password_changed_at`) is stamped by
+  `userService.applyUserUpdate` on every password write — self-service and admin
+  reset alike — and `requireAuth` rejects any token whose `iat` predates it, at
+  second granularity so a sign-in in the same second is never locked out. Four
+  new checks in `test-profile` (F1–F4).
+
+- **TicketDetail split by region.** `TicketDetail.jsx` went from 1348 to ~400
+  lines and is now the page shell only (load, mutate, fold the result back in),
+  delegating to `TicketConversation.jsx` (activity rail), `TicketInspector.jsx`
+  (right-hand column) and `TicketModals.jsx`. The comment/attachment logic it
+  used to carry inline is now two pure view modules — `ticketTimelineView.js`
+  (event merge, audit classification, SLA and handover vocabulary) and
+  `attachmentView.js` (grouping, labels, the inert download) — each pinned by a
+  new check script in `cd client && npm test`. Two real fixes fell out of the
+  extraction: the reassign/handover radio list is one component instead of two
+  copies, and a negative byte count can no longer reach the DOM as `-5 B`.
+  `ActionsCard` lost three destructured props it never used.
+
+- **Queue composite indexes.** `schema.prisma` now declares the two
+  `@@index([assignedAgentId, state])` / `@@index([teamId, state])` indexes that
+  migration `20260914000000_ticket_queue_indexes` had been creating all along —
+  the schema and the database were out of step.
+
+- **Vercel retired.** `vercel.json` and `api/index.js` deleted, the serverless
+  notes in `server.js` replaced with the single-instance Fly reality, and
+  `statusLink.js` refuses to load in production without a signing secret. No
+  Vercel reference is left outside the historical record in this file.
+
+- **Repo hygiene.** Untracked and deleted `wi.txt`, `ws.txt`, `wi-err.txt`,
+  `ws-err.txt` (Fly shell/websocket scratch output) and `server/vd.txt`,
+  `server/engine-test3.txt` (a `dbcheck` dump and an empty file).
+
+- **Docs corrected against the code.** `AGENTS.md` claimed "Attachment storage
+  — attachments are parsed as metadata only; no file is stored anywhere", which
+  has been false since `attachmentStorage.js` landed; it now states the real
+  position (bytes stored and served locally, provider seam only, no S3/Azure).
+  Added the session-lifetime, requester-status and throttling rules, the new
+  route, the view-module and split-screen conventions, and `STATUS_LINK_SECRET`
+  plus the six limiter variables to `.env.example`. `CLAUDE.md` had drifted 48
+  lines behind `AGENTS.md` (missing the whole responsive-layout section, the
+  `intakeScreening` row, the client test command) and was re-mirrored. Suite
+  counts corrected 35 → 41 in `AGENTS.md`, `README.md`, `QUICKSTART.md`.
+
+- **Fixed a duplicate line** left in `userService.applyUserUpdate`: the
+  `passwordChangedAt` assignment, and its comment, appeared twice.
+
+- **The live shared mailbox is out of the public repository, and cannot come
+  back.** It shipped in `.env.example`, three docs, two test fixtures and two
+  committed `.docx` domain-migration guides (42 and 45 occurrences). None of
+  those shapes looks like a secret, which is exactly why nothing caught it — a
+  scanner looking for a password has no reason to read an address, and the
+  address *is* the ingestion target, so publishing it maps precisely where to
+  phish or credential-stuff. The mailbox and the bare production domain are
+  gone from every tracked text file, replaced with `example.com`.
+
+  Two new scanner rules now block both forms (`production-mailbox` CRITICAL,
+  `production-domain` HIGH), mirrored into `.gitleaks.toml` for CI. They
+  **assemble the domain from fragments**, so the scanner and its own test suite
+  never contain the value they forbid and `IGNORED_PATHS` needs no new
+  exemption — an exemption is a hole that quietly rots. 21 new checks in
+  `test-secret-scan`, including two that pin the rules do *not* over-reach onto
+  a different customer's domain.
+
+  The `.docx` route is closed structurally, not by convention: `*.docx` and
+  `scripts-make-doc/` are git-ignored, and the four documents plus their
+  generator scripts are untracked (left on disk). A `.docx` is deflated XML in a
+  zip, so the scanner, `git grep -I` and gitleaks all skip it in silence — a
+  binary no control can read has no place in a public repository. `I.18` asserts
+  no `.docx` is tracked, so the policy cannot rot either.
+
+  **One real bug found and fixed while proving the guard:** redaction was
+  per-rule, so the mailbox rule blanked the local part and the domain rule
+  blanked the host — and two excerpts of the same line printed one under the
+  other reassembled the whole address. `makeFinding` now applies *every* rule's
+  pattern to the line, and `I.12c` pins it. Partial redaction is not redaction
+  once findings are listed.
+
+  History was **not** rewritten: the domain was never a credential, it is
+  already a public hostname, and anyone who cloned earlier keeps their copy
+  regardless. This is a forward-only change.
+
 ## Completed This Session (2026-09-24)
 
 - **Live ticket queue controls.** The simulator is no longer exposed in the
@@ -94,7 +197,7 @@ can only receive low/moderate priority tickets from those secondary groups.
   37/37 and the client production build pass.
 
 - **Custom domain migration.** The helpdesk now runs on
-  `https://ithelpdesk.mrsholdings.com` (Fly.io certificate issued by
+  `https://ithelpdesk.example.com` (Fly.io certificate issued by
   Let's Encrypt, `fly certs add` + DNS by the domain holder). Both
   `PORTAL_BASE_URL` and `WEBHOOK_PUBLIC_URL` were repointed; the fly.dev
   address stays live for old emailed links. Runbook:
@@ -314,6 +417,19 @@ can only receive low/moderate priority tickets from those secondary groups.
   assignment engine only gates at time of assignment.
 
 ## Last Verified
+
+**2026-09-26**, after finishing the interrupted session:
+
+- `cd server && npm test`: **41/41 suites passed** on the disposable local
+  PostgreSQL test cluster
+- `cd client && npm test`: all 13 check scripts pass, including the two new ones
+  (`ticket-timeline-check` 47 checks, `attachments-check` 30 checks) and
+  `mobile-check.mjs` (0 failures)
+- `cd client && npx vite build`: Vite production build passed (76 modules)
+- `npm run scan:secrets`: clean — and verified in the other direction too, by
+  re-injecting the address into a tracked file and confirming the scanner
+  blocks it with both values redacted
+- `cd server && npm run test:secret-scan`: 81 passed, 0 failed
 
 **2026-09-24**, after resuming the interrupted supporting-membership work and
 applying the routing/membership update:
