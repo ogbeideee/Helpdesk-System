@@ -436,6 +436,16 @@ Picked up the interrupted session and finished it. The suite count went 37 → 4
   removed from as a supporting member, the ticket stays with them. The
   assignment engine only gates at time of assignment.
 
+- **Live production bug, pre-existing and unrelated to this work.** `/api/health`
+  reports IMAP ingestion failing with `Unique constraint failed on the fields:
+  (graphMessageId)` at `services/ticketIntake.js:599`, timestamped 11:12Z. The
+  idempotency pre-check is not catching every duplicate, so a second delivery of
+  the same message reaches the insert and throws instead of returning the
+  existing ticket. Inbound email is not reliably becoming tickets while this
+  stands. It reproduces on the image that is currently deployed, so it is not
+  caused by anything in this session. **Not fixed — it needs its own
+  investigation and a regression test.**
+
 ## Last Verified
 
 **2026-09-26**, after finishing the interrupted session:
