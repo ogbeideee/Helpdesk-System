@@ -311,15 +311,22 @@ async function main() {
     const s = require('net').createServer();
     s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); });
   });
-  const env = {
-    ...process.env,
+  // The spawned server re-loads server/.env through Prisma's dotenv, which
+  // would re-add a real IMAP_OAUTH2_* set — and a complete OAuth2 trio takes
+  // precedence over the password this scenario sets (src/imap/config.js).
+  // dotenv never overrides variables that already exist, even when empty, so
+  // pre-setting one member to '' makes the OAuth2 block permanently
+  // incomplete and forces the password path this test intends to exercise.
+  const env = { ...process.env };
+  Object.assign(env, {
     PORT: process.env.PORT,
+    IMAP_OAUTH2_CLIENT_ID: '',
     IMAP_HOST: '127.0.0.1',
     IMAP_PORT: String(closedPort),
     IMAP_USER: 'imap-health@sources.test',
     IMAP_PASSWORD: 'imap-health-secret-pass',
     IMAP_SECURE: 'false',
-  };
+  });
   const server = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
     stdio: ['ignore', 'ignore', 'inherit'],
     env,

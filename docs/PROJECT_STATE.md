@@ -47,6 +47,21 @@ can only receive low/moderate priority tickets from those secondary groups.
 
 ## Completed This Session (2026-09-26)
 
+- **Merged `origin/feature/tests-and-docs` (Farook, 2026-09-25) into
+  `post-deployment-v1`.** Two commits: `feat(client): make the UI usable on
+  phones, drop the duplicate queue search` and `perf(server): compress
+  responses and harden ticket queue performance`. Four files conflicted
+  (`App.jsx`, `AgentsPage.jsx`, `TicketsPage.jsx`, `TopBar.jsx`) and were
+  resolved by keeping both sides: his `lazy()` route chunks, `data-label`
+  cells and the mobile nav toggle, alongside our supporting-membership chips,
+  bulk queue actions and `routeKey`. `package-lock.json` was regenerated rather
+  than hand-merged. His `index.css` mobile pass, `server.js` response
+  compression and the new Prisma migration merged cleanly and are kept. The
+  email simulator stays out of the client: he reintroduced the route on his
+  branch, ours removed it in favour of the live IMAP path.
+- `backup-before-merge` points at `d7a47ef` (the pre-merge state) if this
+  resolution ever needs to be undone.
+
 - **Signatures and inline images no longer pollute tickets or storage.** New
   `email/signature.js` (pure, deterministic) strips free-form corporate
   signature blocks and legal footers from `cleanBody` via a footer marker or a

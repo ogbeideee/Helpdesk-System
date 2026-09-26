@@ -258,7 +258,7 @@ export default function AuditTrailPage() {
             ) : undefined}
           />
         ) : (
-          <div className="table-wrap">
+          <div className="table-wrap table-stack">
             <table className="table audit-table">
               <thead>
                 <tr>
@@ -326,16 +326,16 @@ function FragmentRow({ row, open, onToggle }) {
         onClick={onToggle}
         aria-expanded={open}
       >
-        <td className="audit-when tnum" title={row.createdAt}>
+        <td className="audit-when tnum" data-label="When" title={row.createdAt}>
           {fmtDateTime(row.createdAt)}
         </td>
-        <td className="audit-actor">
+        <td className="audit-actor" data-label="Actor">
           {row.actor}
           {row.actorId != null ? <span className="muted small"> #{row.actorId}</span> : null}
         </td>
-        <td><code className="audit-action">{row.action}</code></td>
-        <td className="audit-entity">{row.entity}</td>
-        <td className="audit-summary">{row.description}</td>
+        <td data-label="Action"><code className="audit-action">{row.action}</code></td>
+        <td className="audit-entity" data-label="Entity">{row.entity}</td>
+        <td className="audit-summary" data-label="Summary">{row.description}</td>
         <td className="audit-chevron">
           <Icon name={open ? 'chevronDown' : 'chevronRight'} size={14} />
         </td>
