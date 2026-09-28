@@ -90,7 +90,7 @@ for small screens. The mobile rules live in one section at the end of
 | `assignmentPolicy.js` | Who may assign what, to whom (`checkTarget`, `listCandidates`) |
 | `assignmentEngine.js` | Picks the agent: `decide()` → group + skill, `assign()` → agent |
 | `routingService.js` | Keyword rule matching and precedence |
-| `defaultRoutingRules.js` | The 6 starter rules, seeded when none exist |
+| `defaultRoutingRules.js` | The starter rules (incl. `Software (Advanced)`), seeded when none exist |
 | `workloadService.js` | Workload, unattended claiming, `moveTicket`, rebalancing |
 | `handoverService.js` | Handover offers, queue, expiry, reroute |
 | `settingsService.js` | Admin-configurable values (`Setting` table, env defaults) |
@@ -201,6 +201,23 @@ category-specific over agnostic → more matched keywords → longer keyword →
 lower id. Classification and routing read only the sender's own words (quoted
 history and the signature are stripped first). Matching is deterministic and
 punctuation/case-insensitive. **No LLM anywhere in routing or parsing.**
+
+**Skill requirement** — the minimum skill a ticket needs is the bar of the
+routing rule that governs it *inside the group that owns it*, plus the priority
+boost (`high` +1, `critical` +2, capped at 3) — never a per-category figure.
+`assignmentEngine.requiredSkill` derives it on read for `GET /api/tickets/:id`
+(`requiredSkillLevel` / `requiredSkillRule`), and `groupSkillBars()` reports a
+group's bar as the lowest among its active rules, which is what
+`/api/assignment-groups` and the assignment pool display — one source, so no
+screen can advertise a bar the engine does not apply. Derived, never stored:
+correcting a rule corrects every ticket it governs, past and present, with no
+backfill. Software is first-line work, so `Software & Applications` asks for
+JUNIOR while `Software (Advanced)` (priority 5, above its own catch-all at 6)
+keeps MID for wording that is genuinely advanced — a crash, an error code, data
+loss, a deployment, an integration. Seeding never overwrites an
+administrator's rules, so an installation seeded earlier is corrected with
+`npm run db:relevel-software` (`--apply`), which audits both writes and touches
+no ticket row.
 
 **The sender's own words** — `cleanBody` is the body minus quoted history,
 forwarded blocks and the signature. `email/signature.js` is pure and

@@ -9,7 +9,9 @@
 //
 // Priority: lower number = evaluated first = wins. The bands leave room to
 // insert rules without renumbering:
-//   3-9     account provisioning and general support requests
+//   3-9     account provisioning, general support, and the per-category rules
+//           (a specific rule inside a category must beat that category's
+//           catch-all, so 'Software (Advanced)' sits at 5 above 6)
 //   10-29   specific technical domains (network, …)
 //   30-49   reserved for future specific rules
 //   50-89   broad per-category rules
@@ -115,11 +117,42 @@ const DEFAULT_RULES = [
     keywords: [],
   },
   {
+    name: 'Software (Advanced)',
+    // The exception, not the rule: Software is first-line work (the catch-all
+    // below), and the bar only rises when the sender's own words describe
+    // something first line cannot finish — a crash, an error code, data loss,
+    // a deployment or an integration. Being more specific than its catch-all,
+    // it wins precedence for those tickets alone (priority 5 beats 6).
+    priority: 5,
+    category: 'Software',
+    groupKey: 'software',
+    minimumSkillLevel: 'MID',
+    keywords: [
+      'error code',
+      'crash', 'crashes', 'crashing',
+      'blue screen',
+      'not responding',
+      'corrupt',
+      'data loss',
+      'licence server', 'license server',
+      'enterprise application',
+      'integration failure',
+      'deployment failed',
+      'rollout',
+      'database error',
+      'application server',
+      'script failure',
+    ],
+  },
+  {
     name: 'Software & Applications',
     priority: 6,
     category: 'Software',
     groupKey: 'software',
-    minimumSkillLevel: 'MID',
+    // Installing, updating, access and "how do I" requests are L1 work. A
+    // blanket MID here levelled every Software ticket — including plain ones —
+    // at L2, which is what 'Software (Advanced)' exists to express precisely.
+    minimumSkillLevel: 'JUNIOR',
     keywords: [],
   },
   {

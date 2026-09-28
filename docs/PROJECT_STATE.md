@@ -3,7 +3,7 @@
 Current checkpoint. Update this at the end of every task.
 Architecture and conventions live in `../CLAUDE.md`.
 
-_Last updated: 2026-09-26_
+_Last updated: 2026-09-28_
 
 ## Current Phase
 
@@ -44,6 +44,67 @@ can only receive low/moderate priority tickets from those secondary groups.
 - **Notification poll interval reduced** — 60s → 10s for near-real-time updates
 - **Previous session (2026-09-10):** AI classifier seam + benchmark,
   Prisma guard, Vercel/Fly prep (all committed as `6c045eb` etc.)
+
+## Completed This Session (2026-09-28)
+
+- **A mis-levelled ticket can no longer happen by design.** INC-001787 (a
+  Software ticket) read "Skill required L2 · Standard" while the request was
+  first-line work. The cause was twofold: the seeded Software catch-all rule
+  demanded MID, and the ticket screen printed a *group* figure
+  (`config/assignment.config.json` → `categories` → `minSkillLevel`) as if it
+  were the ticket's own requirement — two sources of one rule, free to drift.
+
+- **Skill requirement is now the engine's answer for the ticket.**
+  `assignmentEngine.requiredSkill({category, priority, text, subject, teamId})`
+  returns the bar of the rule governing the ticket *inside the group that owns
+  it*, plus the priority boost (`high` +1, `critical` +2, capped at 3) — the
+  exact figure `assign()` gates on. `GET /api/tickets/:id` exposes it as
+  `requiredSkillLevel` / `requiredSkillRule`; `routingService.matchRule` gained
+  an optional `teamId` scope so another group's rules cannot answer for a
+  ticket. Derived on read, never stored, so correcting a rule corrects every
+  ticket it governs — past and present — with no backfill. The inspector reads
+  it through the new pure module `client/src/ticketSkillView.js` (pinned by
+  `ticket-skill-check.mjs`, 26 checks), falling back to the group bar only for
+  payloads that predate the field.
+
+- **Software is first-line work.** The Software catch-all now requires JUNIOR,
+  and a new `Software (Advanced)` rule (category Software, priority 5 — ahead
+  of its own catch-all at 6) keeps MID for wording that is genuinely advanced:
+  `error code`, `crash/crashes/crashing`, `blue screen`, `not responding`,
+  `corrupt`, `data loss`, `licence|license server`, `enterprise application`,
+  `integration failure`, `deployment failed`, `rollout`, `database error`,
+  `application server`, `script failure`. Plain install/update/access requests
+  stay L1.
+
+- **One source for a group's skill bar.** `config/assignment.config.json` no
+  longer carries a `categories` map (a second copy of the category→group/skill
+  rule). `/api/assignment-groups` and `assignmentPoolService.listGroupPools()`
+  both read `assignmentEngine.groupSkillBars()` — the lowest minimum skill among
+  a group's active rules, keyed by team id — so a screen can never advertise a
+  bar the engine does not apply. This also fixed the opposite drift: the Network
+  Team advertised L1 while its rule demanded MID.
+
+- **Live-data correction: `db:relevel-software`** (dry run by default, `--apply`
+  to write) brings an installation whose Software rules were seeded before the
+  policy in line: a keyword-free Software rule is lowered to JUNIOR,
+  `Software (Advanced)` is created from the seed when missing,
+  administrator-authored keyword rules are reported and left untouched, and both
+  writes are recorded in `RoutingRuleAuditLog`. It prints the before/after
+  effect over the Software tickets already raised; **no ticket row is written**.
+  Verified end to end on the disposable test cluster (18 checks: dry run →
+  apply → idempotent, audits written, ticket rows untouched).
+
+- **What the live dry run found (2026-09-28).** The deployment's Software
+  catch-all (rule #10) is **already at L1** — so INC-001787's "L2 · Standard"
+  came entirely from `assignment.config.json`'s `categories` map, the removed
+  second source, while the engine was gating at L1 all along. 16 software
+  tickets exist; 1 asks for L2 or more today (a high-priority one, via the
+  documented boost). `--apply` would therefore only create `Software
+  (Advanced)`, after which 3 of 16 ask for L2 or more. **`--apply` has NOT been
+  run** — adding the advanced rule is a policy choice (advanced wording would
+  go back to L2), not a correction. New suite pins: `test-routing` (seeded-rule
+  contract + per-ticket derivation + the ticket detail payload),
+  `test-assignment-pool` (B13–B16: the advertised bar follows the rules).
 
 ## Completed This Session (2026-09-26)
 

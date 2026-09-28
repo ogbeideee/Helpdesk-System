@@ -41,7 +41,8 @@ The current routing table sends account-creation and email-provisioning wording
 to **Accounts & Access** (priority 3), while printer/toner, desk-phone and
 meeting-room wording goes to **General IT Support** (priority 4). Password reset
 requests continue to use the category-specific Accounts & Access rule (priority
-5); the specialist category rules follow at priorities 6–8, network at 10 and
+5); the specialist category rules follow at priorities 6–8, with the advanced
+software rule at 5 so it beats its own category catch-all, network at 10 and
 field operations at 30.
 
 Matching is **deterministic string comparison** - no LLM, no network. Text is
@@ -68,6 +69,55 @@ A rule with no keywords matches on category alone; one with neither is a
 catch-all. Classification and routing both read the **sender's own words**:
 quoted history and the signature are stripped before either one runs, so a
 keyword buried in a quoted thread cannot decide where a ticket goes.
+
+## Skill requirements
+
+A ticket's minimum skill is **not** a property of its category: it is the
+requirement of the routing rule that governs the ticket, plus the priority
+boost from `config/assignment.config.json` (`high` +1, `critical` +2, capped at
+3).
+
+| Rule | Requires |
+|---|---|
+| `Network Issues` (priority 10) | MID |
+| `Software (Advanced)` (priority 5) | MID — a crash, an error code, data loss, a deployment, an integration |
+| `Software & Applications` (priority 6, the category catch-all) | JUNIOR |
+| `Field Operations` (priority 30) | JUNIOR |
+| every other rule | JUNIOR — no bar above the first line |
+
+Software is first-line work, so its catch-all asks for **L1** only. An
+advanced rule exists because a blanket MID on the category levelled *every*
+software ticket — plain "please install X" requests included — at L2. A
+specific rule inside a category must beat that category's catch-all, which is
+why `Software (Advanced)` sits at priority 5, above 6.
+
+`GET /api/tickets/:id` answers for the ticket itself, as `requiredSkillLevel`
+and `requiredSkillRule`, and the ticket inspector prints that. It is **derived
+on read**, never stored, and scoped to the group that owns the ticket, so
+another group's rules can never answer for it — and correcting a rule corrects
+every ticket it governs, past and present, with no backfill.
+
+A group's advertised bar — `GET /api/assignment-groups`, and the assignment
+pool's `autoEligible` flag — is the **lowest** minimum skill among that group's
+active rules: the same figure the engine gates on, never a second copy of it.
+`config/assignment.config.json` used to carry its own `categories` map with a
+`minSkillLevel` per category, which is exactly how a screen could read "L1"
+while the engine demanded "L2"; that map is gone.
+
+An installation seeded before this policy existed keeps its old rule rows, by
+design — seeding never overwrites an administrator's edits. Bring it in line
+explicitly:
+
+```bash
+npm run db:relevel-software             # report what would change (dry run)
+npm run db:relevel-software -- --apply  # lower the catch-all, add the advanced rule
+```
+
+The script touches only Software rules: a keyword-free Software rule (the
+category catch-all) is lowered to JUNIOR, `Software (Advanced)` is created from
+the seed when it is missing, and any keyword rule an administrator wrote is
+reported and left alone. Both writes land in the routing audit trail
+(`GET /api/routing/audit`). No ticket row is modified.
 
 ## Routing algorithm
 

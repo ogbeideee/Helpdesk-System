@@ -2,6 +2,41 @@
 
 Major implementation milestones only — not individual code edits.
 
+## 2026-09-28
+
+- **A ticket's skill requirement is the routing engine's answer, not a
+  category-wide bar.** `GET /api/tickets/:id` returns `requiredSkillLevel` and
+  `requiredSkillRule` — the bar of the rule that governs *that* ticket inside
+  the group that owns it, plus the priority boost — derived on read through
+  `assignmentEngine.requiredSkill`, the same service `assign()` gates on. A
+  corrected rule therefore corrects every ticket it governs, past and present,
+  with no backfill. The inspector prints it, keeping the group's bar only as a
+  fallback for payloads that predate the field.
+- **Software is first-line work again.** The Software category catch-all
+  demanded MID, which levelled every software request — plain "please install
+  X" ones included — at L2. It now requires JUNIOR, and a new
+  `Software (Advanced)` rule (priority 5, so it beats its own catch-all at 6)
+  keeps L2 for wording that is genuinely advanced: a crash, an error code, data
+  loss, a deployment, an integration.
+- **One source for a group's skill bar.** `config/assignment.config.json`'s
+  `categories` map — a second copy of the category→group/skill rule, and the
+  reason a screen could read "L1" while the engine demanded "L2" — is deleted.
+  `/api/assignment-groups` and the assignment pool now advertise the lowest
+  minimum skill among a group's active routing rules (`groupSkillBars()`), the
+  figure the engine actually applies.
+- Added `db:relevel-software` (dry run by default; `--apply` to write) for an
+  installation whose Software rules were seeded before this policy: it lowers a
+  keyword-free Software catch-all to JUNIOR and creates `Software (Advanced)`
+  when missing, leaves administrator-authored keyword rules alone, reports the
+  before/after effect on the software tickets already raised, and audits both
+  writes. Dry run against the live database: the catch-all is **already** at
+  L1 — the "L2 · Standard" INC-001787 showed came from the removed config map,
+  not from a rule — so `--apply` there would only add the advanced rule (2 of
+  16 software tickets would then ask for L2). **`--apply` not run.**
+- Client: new `ticketSkillView.js` and `ticket-skill-check.mjs` pin which
+  figure the inspector shows, its vocabulary, and the "assignee is below the
+  required level" warning.
+
 ## 2026-09-26
 
 - Kept email signatures and their logos out of tickets. A new deterministic

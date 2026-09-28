@@ -168,15 +168,10 @@ async function listGroupPools(client = prisma) {
   const assignmentEngine = require('./assignmentEngine');
   const config = assignmentEngine.loadConfig();
   const cap = config.maxActiveTicketsPerAgent || 25;
-  // The group's routing skill bar: the lowest minimum skill among the routing
-  // categories that map to this group (the same figure /api/assignment-groups
-  // shows), 1 when no category maps to it.
-  const minSkillByGroup = new Map();
-  for (const c of Object.values(config.categories || {})) {
-    if (!c || !c.group) continue;
-    const level = Number.isInteger(c.minSkillLevel) ? c.minSkillLevel : 1;
-    minSkillByGroup.set(c.group, Math.min(minSkillByGroup.get(c.group) ?? level, level));
-  }
+  // The group's routing skill bar: the same figure the engine gates on and
+  // /api/assignment-groups shows (assignmentEngine.groupSkillBars), so no
+  // administration screen can advertise a bar the engine does not apply.
+  const minSkillByGroup = await assignmentEngine.groupSkillBars(client);
 
   const [teams, memberships, agents] = await Promise.all([
     client.team.findMany({ where: { isActive: true }, orderBy: { key: 'asc' } }),
@@ -233,7 +228,7 @@ async function listGroupPools(client = prisma) {
   }
 
   return teams.map((team) => {
-    const minSkillLevel = minSkillByGroup.get(team.key) || 1;
+    const minSkillLevel = minSkillByGroup.get(team.id) || 1;
     const members = agents.filter(
       (a) => a.teamId === team.id || (memberTeams.get(a.id) || new Set()).has(team.id)
     );

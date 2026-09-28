@@ -180,6 +180,24 @@ async function mkTicket(overrides = {}) {
     eq('B12 an online, skilled, under-cap agent is auto-eligible', card.autoEligible, true);
   }
 
+  {
+    // The bar a pool advertises is the bar of the group's routing rules — the
+    // engine's own gate — never a second copy of it supplied elsewhere. A member
+    // is only auto-eligible while the group really has no higher bar.
+    eq('B13 a group whose rules ask for nothing above junior advertises L1', appsPool.minSkillLevel, 1);
+    await prisma.routingRule.create({
+      data: {
+        name: 'Pool apps bar', keywords: 'poolappsbar', teamId: apps.id,
+        minimumSkillLevel: 2, priority: 90, isActive: true,
+      },
+    });
+    const withBar = (await poolService.listGroupPools()).find((p) => p.key === 'pool-apps');
+    eq('B14 the advertised bar follows the rules', withBar.minSkillLevel, 2);
+    eq('B15 an L1 member stops being auto-eligible once the bar rises',
+      withBar.agents.find((a) => a.id === carol.id).autoEligible, false);
+    eq('B16 an L2 member stays eligible', withBar.agents.find((a) => a.id === alice.id).autoEligible, true);
+  }
+
   /* ==================================================================== */
   /* C. Transitions — nothing moves when somebody goes offline            */
   /* ==================================================================== */

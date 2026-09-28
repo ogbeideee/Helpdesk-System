@@ -266,7 +266,22 @@ router.get('/:id', async (req, res) => {
   try {
     const ticket = await loadTicketOr404(req.params.id, res);
     if (!ticket) return;
-    res.json(serializeTicket(ticket, await slaCtx()));
+    // What this ticket requires is the routing engine's answer for the group
+    // that owns it plus the priority boost — asked here, never re-derived, so
+    // the screen cannot show a bar the engine would not enforce. Derived on
+    // read, so a corrected rule corrects every ticket it governs.
+    const skill = await assignmentEngine.requiredSkill({
+      category: ticket.category,
+      priority: ticket.priority,
+      text: `${ticket.shortDescription}\n${ticket.body || ''}`,
+      subject: ticket.shortDescription,
+      teamId: ticket.teamId,
+    });
+    res.json({
+      ...serializeTicket(ticket, await slaCtx()),
+      requiredSkillLevel: skill.level,
+      requiredSkillRule: skill.ruleName,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

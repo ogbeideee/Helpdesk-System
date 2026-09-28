@@ -16,6 +16,7 @@ import {
   durationLabel as raDuration, liveSession as raLive, historyRows as raHistoryRows,
 } from '../remoteAccessView.js';
 import { StateBadge, Avatar, fmtDateTime, timeAgo } from './ui.jsx';
+import { requiredSkillOf, skillLabel, assigneeBelowRequired } from '../ticketSkillView.js';
 
 export function Row({ label, children, stack }) {
   return (
@@ -25,8 +26,6 @@ export function Row({ label, children, stack }) {
     </div>
   );
 }
-
-export const SKILL_LABEL = { 1: 'L1 \u00b7 Junior', 2: 'L2 \u00b7 Standard', 3: 'L3 \u00b7 Senior' };
 
 /* ------------------------------------------------------------------ */
 /* Details — the editable facts                                        */
@@ -38,9 +37,10 @@ export function PropertiesCard({ ticket, busy, groupPick, setGroupPick, run, me 
 
   const isAdmin = me.role === 'admin';
   const group = groups.find((g) => g.key === (ticket.team?.key || ''));
-  // Real figure from /api/assignment-groups — the minimum skill the routing
-  // rules require for this group. Never invented.
-  const requiredSkill = group ? group.minSkillLevel : null;
+  // The engine's own answer for THIS ticket — the bar of the routing rule that
+  // governs it in this group, plus the priority boost. The group's bar is only
+  // a fallback for payloads that predate the field (ticketSkillView.js).
+  const requiredSkill = requiredSkillOf(ticket, group);
 
   return (
     <section className="insp-section">
@@ -108,16 +108,17 @@ export function PropertiesCard({ ticket, busy, groupPick, setGroupPick, run, me 
               <span className="insp-strong">{ticket.assignedAgent.name}</span>
             </span>
             {ticket.assignedAgent.skillLevel && (
-              <span className="insp-sub">{SKILL_LABEL[ticket.assignedAgent.skillLevel] || `L${ticket.assignedAgent.skillLevel}`}</span>
+              <span className="insp-sub">{skillLabel(ticket.assignedAgent.skillLevel)}</span>
             )}
           </>
         ) : <span className="unassigned-tag">Unassigned</span>}
       </Row>
 
-      {requiredSkill != null && (
+      {requiredSkill && (
         <Row label="Skill required">
-          <span>{SKILL_LABEL[requiredSkill] || `L${requiredSkill}`}</span>
-          {ticket.assignedAgent && ticket.assignedAgent.skillLevel < requiredSkill && (
+          <span>{skillLabel(requiredSkill.level)}</span>
+          {requiredSkill.ruleName && <span className="insp-sub">{requiredSkill.ruleName}</span>}
+          {assigneeBelowRequired(ticket, requiredSkill) && (
             <span className="insp-sub warn-text">Assignee is below the required level</span>
           )}
         </Row>

@@ -119,6 +119,22 @@ Supporting members receive only low/moderate priority tickets in their
 non-primary groups. Until at least one agent exists in a group, tickets routed
 there are created unassigned and shown as *awaiting assignment*.
 
+A ticket's skill requirement comes from the **routing rule** that governs it,
+never from its category alone: a rule may name a minimum skill, the priority
+adds a boost (`high` +1, `critical` +2, capped at L3), and the ticket screen
+prints that figure together with the rule that decided it. Software is
+first-line work — its catch-all rule asks for L1, and only `Software (Advanced)`
+wording (a crash, an error code, data loss, a deployment, an integration) asks
+for L2. An installation seeded before that policy keeps its old rule rows,
+because seeding never overwrites edited rules; bring it in line explicitly:
+
+```bash
+npm run db:relevel-software            # report what would change (dry run)
+npm run db:relevel-software -- --apply # write it (audited; no ticket row changes)
+```
+
+See [`docs/assignment-groups-and-routing.md`](docs/assignment-groups-and-routing.md).
+
 ## Development demo data (optional)
 
 `npm run seed:demo` generates a fictional dataset — three demo logins, ten

@@ -69,7 +69,8 @@ app.get('/api/teams', require('./src/authMiddleware').requireAuth, async (req, r
 // Assignment groups (routing targets) with live capacity info.
 app.get('/api/assignment-groups', require('./src/authMiddleware').requireAuth, async (req, res) => {  try {
     const { OPEN_STATES } = require('./src/states');
-    const [teams, openRows, unassignedRows, agentRows] = await Promise.all([
+    const assignmentEngine = require('./src/services/assignmentEngine');
+    const [teams, openRows, unassignedRows, agentRows, skillBars] = await Promise.all([
       prisma.team.findMany({ orderBy: { key: 'asc' } }),
       prisma.ticket.groupBy({
         by: ['teamId'],
@@ -82,6 +83,7 @@ app.get('/api/assignment-groups', require('./src/authMiddleware').requireAuth, a
         where: { state: { in: OPEN_STATES }, assignedAgentId: null },
       }),
       prisma.agent.findMany({ where: { isActive: true }, select: { teamId: true } }),
+      assignmentEngine.groupSkillBars(),
     ]);
     const openByTeam = new Map(openRows.map((r) => [r.teamId, r._count._all]));
     const unassignedByTeam = new Map(unassignedRows.map((r) => [r.teamId, r._count._all]));
@@ -89,7 +91,6 @@ app.get('/api/assignment-groups', require('./src/authMiddleware').requireAuth, a
     for (const a of agentRows) {
       agentsByTeam.set(a.teamId, (agentsByTeam.get(a.teamId) || 0) + 1);
     }
-    const rules = require('./src/services/assignmentEngine').loadConfig();
     res.json(
       teams.map((t) => ({
         id: t.id,
@@ -98,9 +99,9 @@ app.get('/api/assignment-groups', require('./src/authMiddleware').requireAuth, a
         activeAgents: agentsByTeam.get(t.id) || 0,
         openTickets: openByTeam.get(t.id) || 0,
         unassignedTickets: unassignedByTeam.get(t.id) || 0,
-        minSkillLevel: rules.categories && Object.values(rules.categories).some((c) => c.group === t.key)
-          ? Math.min(...Object.values(rules.categories).filter((c) => c.group === t.key).map((c) => c.minSkillLevel ?? 1))
-          : 1,
+        // The bar the engine applies to this group — the lowest minimum skill
+        // among its active routing rules — not a second copy of it.
+        minSkillLevel: skillBars.get(t.id) || 1,
       }))
     );
   } catch (err) {

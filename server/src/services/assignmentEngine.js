@@ -23,7 +23,8 @@
 //
 // config/assignment.config.json still supplies the priority skill boost and
 // the workload cap. Category -> group mapping now lives in RoutingRule rows,
-// which administrators edit through the API.
+// which administrators edit through the API — and so does the minimum skill,
+// so `groupSkillBars()` reports the bar the engine is really applying.
 const fs = require('fs');
 const path = require('path');
 const prisma = require('../lib/prisma');
@@ -33,7 +34,6 @@ const CONFIG_PATH = path.join(__dirname, '..', '..', 'config', 'assignment.confi
 
 const FALLBACK_CONFIG = {
   defaultGroup: 'service_desk',
-  categories: {},
   prioritySkillBoost: { low: 0, moderate: 0, high: 1, critical: 2 },
   maxSkillLevel: 3,
   maxActiveTicketsPerAgent: 25,
@@ -76,6 +76,62 @@ function isSupportingTier(priority, config) {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+/**
+ * The skill bar each group is currently enforcing: the LOWEST minimum skill
+ * among that group's active routing rules — the very rows `decide()` reads —
+ * or 1 when no active rule names one. It is the display form of the engine's
+ * own gate, never a second rule, so the pool and the group list can never
+ * claim a bar the engine does not apply. (The routes used to read a
+ * category->skill map out of assignment.config.json, which is how a group
+ * could read "L1" while the engine demanded "L2".)
+ *
+ * @returns {Promise<Map<number, number>>} teamId -> minimum skill level
+ */
+async function groupSkillBars(client = prisma) {
+  const rules = await client.routingRule.findMany({
+    where: { isActive: true },
+    select: { teamId: true, minimumSkillLevel: true },
+  });
+  const bars = new Map();
+  for (const rule of rules) {
+    const level = Number.isInteger(rule.minimumSkillLevel) ? rule.minimumSkillLevel : 1;
+    bars.set(rule.teamId, Math.min(bars.get(rule.teamId) ?? level, level));
+  }
+  return bars;
+}
+
+/**
+ * The skill level a ticket actually requires: the bar of the routing rule that
+ * governs it INSIDE the group that owns it, plus the priority boost — exactly
+ * the figure `assign()` gates on.
+ *
+ * It is derived, never stored, which is deliberate: the answer for an existing
+ * ticket follows the current rules, so correcting an over-stated rule corrects
+ * every ticket it governs, past and present, with no backfill.
+ *
+ * @param {{category:string, priority:string, text:string, subject?:string, teamId?:number|null}} ticket
+ * @returns {Promise<{level:number, ruleId:number|null, ruleName:string|null}>}
+ */
+async function requiredSkill({ category, priority, text, subject, teamId = null }, client = prisma) {
+  const config = loadConfig();
+  const boost = (config.prioritySkillBoost || {})[priority] || 0;
+  const { rule } = await routingService.matchRule(
+    {
+      category,
+      text: text || category,
+      subject,
+      ...(Number.isInteger(teamId) ? { teamId } : {}),
+    },
+    client
+  );
+  const base = rule && Number.isInteger(rule.minimumSkillLevel) ? rule.minimumSkillLevel : 1;
+  return {
+    level: clamp(base + boost, 1, config.maxSkillLevel || 3),
+    ruleId: rule ? rule.id : null,
+    ruleName: rule ? rule.name : null,
+  };
 }
 
 const OPEN = ['NEW', 'IN_PROGRESS'];
@@ -328,4 +384,4 @@ async function assign(
   };
 }
 
-module.exports = { assign, decide, loadConfig };
+module.exports = { assign, decide, requiredSkill, groupSkillBars, loadConfig };

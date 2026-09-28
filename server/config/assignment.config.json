@@ -1,12 +1,6 @@
 {
-  "$comment": "Assignment rules for the ticket routing engine. Edit and restart to apply. skillLevel scale: 1=junior, 2=standard, 3=senior.",
+  "$comment": "Assignment rules for the ticket routing engine. Edit and restart to apply. skillLevel scale: 1=junior (L1), 2=standard (L2), 3=senior (L3). Which group a ticket goes to, and the minimum skill it needs, come from the RoutingRule rows (Routing -> Routing Rules) — the 'categories' map that used to live here was removed because it was a second, silently-drifting copy of the same rule.",
   "defaultGroup": "service_desk",
-  "categories": {
-    "Password Reset": { "group": "accounts", "minSkillLevel": 1 },
-    "Software": { "group": "software", "minSkillLevel": 2 },
-    "Hardware": { "group": "hardware", "minSkillLevel": 1 },
-    "Inquiry / Help": { "group": "service_desk", "minSkillLevel": 1 }
-  },
   "prioritySkillBoost": {
     "low": 0,
     "moderate": 0,

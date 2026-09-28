@@ -193,6 +193,23 @@ async function main() {
     const defaultHardware = DEFAULT_RULES.find((rule) => rule.name === 'Hardware & Devices');
     check('default hardware rule recognises laptop screen failures',
       defaultHardware.keywords.includes('laptop') && defaultHardware.keywords.includes('screen'));
+
+    // Software is first-line work: the category catch-all must not demand more
+    // than JUNIOR, and the bar may only rise through a rule that names the
+    // advanced wording explicitly — a blanket MID levelled every software
+    // ticket, plain ones included, at L2.
+    const defaultSoftware = DEFAULT_RULES.find((rule) => rule.name === 'Software & Applications');
+    eq('default software catch-all requires JUNIOR', defaultSoftware.minimumSkillLevel, 'JUNIOR');
+    const defaultAdvanced = DEFAULT_RULES.find((rule) => rule.name === 'Software (Advanced)');
+    check('default advanced software rule exists and requires MID',
+      Boolean(defaultAdvanced) && defaultAdvanced.minimumSkillLevel === 'MID');
+    check('the advanced rule is Software-category and beats its own catch-all',
+      defaultAdvanced.category === 'Software' && defaultAdvanced.priority < defaultSoftware.priority,
+      `advanced priority ${defaultAdvanced.priority} vs catch-all ${defaultSoftware.priority}`);
+    check('the advanced rule keys on complexity, never on plain software words',
+      ['error code', 'crash', 'corrupt'].every((k) => defaultAdvanced.keywords.includes(k))
+        && ['install', 'update', 'access', 'licence', 'license'].every((k) => !defaultAdvanced.keywords.includes(k)),
+      defaultAdvanced.keywords.join(','));
   }
 
   /* ================================================================== */
@@ -616,6 +633,82 @@ async function main() {
       check('immediate: the routing decision is in the audit trail',
         audits.some((a) => a.note && /rule "/.test(a.note)), JSON.stringify(audits.map((a) => a.note)));
     }
+
+    /* ---- the skill requirement is per ticket, not per category ------- */
+    {
+      // Two Software rules: the category catch-all that first line can work,
+      // and a specific rule that raises the bar only for advanced wording.
+      await mkRule({ name: 'Software', priority: 6, category: 'Software', teamId: teams.software.id, minimumSkillLevel: 1 });
+      await mkRule({
+        name: 'Software Advanced', priority: 5, category: 'Software', teamId: teams.software.id,
+        minimumSkillLevel: 2, keywords: ['error code', 'crashing'],
+      });
+
+      const plain = 'Please install the new design package on my laptop';
+      const advanced = 'Excel keeps crashing with error code 0x80070005';
+
+      const plainDecision = await engine.decide({ category: 'Software', priority: 'moderate', text: plain });
+      eq('skill: a plain software request needs L1 only', plainDecision.minSkillLevel, 1);
+      eq('skill: and still goes to the software group', plainDecision.groupKey, 'software');
+
+      const advancedDecision = await engine.decide({ category: 'Software', priority: 'moderate', text: advanced });
+      eq('skill: advanced wording really does need L2', advancedDecision.minSkillLevel, 2);
+      eq('skill: the specific rule wins over its catch-all', advancedDecision.ruleName, `${MARK}Software Advanced`);
+
+      const critical = await engine.decide({ category: 'Software', priority: 'critical', text: advanced });
+      eq('skill: the priority boost still lifts the bar', critical.minSkillLevel, 3);
+
+      const plainSkill = await engine.requiredSkill({
+        category: 'Software', priority: 'moderate', text: plain, subject: plain, teamId: teams.software.id,
+      });
+      eq('skill: requiredSkill answers L1 for the plain ticket', plainSkill.level, 1);
+      eq('skill: and names the rule behind it', plainSkill.ruleName, `${MARK}Software`);
+
+      const advancedSkill = await engine.requiredSkill({
+        category: 'Software', priority: 'moderate', text: advanced, subject: advanced, teamId: teams.software.id,
+      });
+      eq('skill: requiredSkill answers L2 for the advanced ticket', advancedSkill.level, 2);
+
+      // The bar belongs to the group that owns the ticket: another group's
+      // rules never answer for it.
+      const elsewhere = await engine.requiredSkill({
+        category: 'Software', priority: 'moderate', text: advanced, subject: advanced, teamId: general.id,
+      });
+      eq('skill: another group cannot decide this ticket\'s bar', elsewhere.level, 1);
+      eq('skill: and no rule is named for it', elsewhere.ruleName, null);
+
+      // The advertised group bar is the lowest bar among the group's own active
+      // rules — the figure the engine applies, not a second copy of it.
+      const bars = await req('/api/assignment-groups', { token: adminT });
+      eq('groups: the software bar is the lowest of its rules',
+        bars.data.find((g) => g.key === 'software').minSkillLevel, 1);
+
+      // And the ticket itself carries the engine's answer for its own words.
+      const mkSkillTicket = (text, seq) => prisma.ticket.create({
+        data: {
+          ticketNumber: `${MARK}skill-${seq}`,
+          shortDescription: `${MARK}${text}`,
+          body: text,
+          category: 'Software',
+          priority: 'moderate',
+          state: 'NEW',
+          source: 'portal',
+          requesterEmail: `skill@${DOMAIN}`,
+          teamId: teams.software.id,
+        },
+      });
+
+      const plainTicket = await mkSkillTicket(plain, 1);
+      const plainDetail = await req(`/api/tickets/${plainTicket.id}`, { token: adminT });
+      eq('ticket: the detail carries the per-ticket requirement', plainDetail.data.requiredSkillLevel, 1);
+      eq('ticket: and the rule that decided it', plainDetail.data.requiredSkillRule, `${MARK}Software`);
+
+      const advancedTicket = await mkSkillTicket(advanced, 2);
+      const advancedDetail = await req(`/api/tickets/${advancedTicket.id}`, { token: adminT });
+      eq('ticket: the advanced ticket reads L2', advancedDetail.data.requiredSkillLevel, 2);
+      eq('ticket: named by its own rule', advancedDetail.data.requiredSkillRule, `${MARK}Software Advanced`);
+    }
+
   } finally {
     server.kill();
     await unparkExistingRules();

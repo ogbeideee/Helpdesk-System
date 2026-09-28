@@ -191,12 +191,20 @@ function compareMatches(a, b, category) {
  * explicitly; otherwise the first line of `text` is treated as the subject,
  * which is exactly how the intake pipeline composes it (`subject + "\n" + body`).
  *
- * @param {{category:string, text:string, subject?:string}} ticket
+ * `teamId` optionally scopes the contest to one group's rules — used when
+ * asking what a ticket requires *inside the group that already owns it*, so a
+ * rule pointing at another group can never answer for it.
+ *
+ * @param {{category:string, text:string, subject?:string, teamId?:number}} ticket
  * @returns {Promise<{rule:object|null, matchedKeywords:string[], considered:number}>}
  */
-async function matchRule({ category, text, subject }, client = prisma) {
+async function matchRule({ category, text, subject, teamId }, client = prisma) {
   const rules = await client.routingRule.findMany({
-    where: { isActive: true, team: { isActive: true } },
+    where: {
+      isActive: true,
+      team: { isActive: true },
+      ...(Number.isInteger(teamId) ? { teamId } : {}),
+    },
     include: { team: true, preferredAgent: true },
     orderBy: [{ priority: 'asc' }, { id: 'asc' }],
   });
