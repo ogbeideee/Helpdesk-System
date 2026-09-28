@@ -248,6 +248,30 @@ function transportFor(env, client) {
     check('C19 a broadcast with no DL is refused, not silently dropped', Boolean(threw));
   }
 
+  {
+    const client = fakeClient();
+    const transport = transportFor(COMPLETE, client);
+    // A builder that supplies HTML must produce a multipart/alternative: a rich
+    // client shows the formatted body, everyone else falls back to the text.
+    await transport.sendMail({
+      subject: 's', body: 'plain body', html: '<p>rich <strong>body</strong></p>',
+      toRecipients: [{ emailAddress: { address: 'a@b.test' } }],
+    });
+    eq('C20 an HTML part rides along with the text part',
+      client.sent[0].html, '<p>rich <strong>body</strong></p>');
+    eq('C21 the plain part is still sent', client.sent[0].text, 'plain body');
+  }
+
+  {
+    const client = fakeClient();
+    const transport = transportFor(COMPLETE, client);
+    await transport.sendMail({
+      subject: 's', body: 'plain only',
+      toRecipients: [{ emailAddress: { address: 'a@b.test' } }],
+    });
+    check('C22 a text-only mail carries no HTML part', !('html' in client.sent[0]));
+  }
+
   /* ====================================================================== */
   console.log('\n--- D. the mailer contract under SMTP ---');
 

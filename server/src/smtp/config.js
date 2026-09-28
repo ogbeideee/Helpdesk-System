@@ -151,6 +151,11 @@ function createSmtpTransport(config = smtpConfig, options = {}) {
       // The builders already emit CRLF-wrapped plain text, which is exactly what
       // RFC 5322 wants; do not re-wrap or re-encode it.
       text: String(mail.body || ''),
+      // A builder that supplied HTML sends both parts. Nodemailer turns `text`
+      // + `html` into a multipart/alternative, so a rich client shows the
+      // formatted version and everyone else gets the plain one. Requester mails
+      // carry the formatted body; internal ones stay plain by design.
+      ...(mail.html ? { html: String(mail.html) } : {}),
     };
   }
 

@@ -52,6 +52,52 @@ function recipientsOf(mail) {
   return addrs.join(', ') || '(none)';
 }
 
+/**
+ * Escape text for interpolation into an HTML body. Every value that reaches
+ * the renderer passes through here: a ticket subject is user input, and an
+ * unescaped `&` or `<` would let a requester inject markup into a mail that an
+ * agent reads.
+ */
+function htmlEscape(text) {
+  return String(text ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
+ * The HTML shell every requester mail shares. Inline styles only — Outlook and
+ * Gmail both strip a <style> block in some contexts, and a mail that loses its
+ * formatting is worse than a mail that never had any. A plain-text alternative
+ * is always sent alongside, so a client that refuses the HTML still reads well.
+ */
+function htmlShell(inner) {
+  return `<!doctype html>
+<html>
+<body style="margin:0;padding:0;background:#f4f5f7;">
+  <div style="max-width:560px;margin:0 auto;padding:24px 12px;
+              font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+              font-size:15px;line-height:1.55;color:#1f2430;">
+    ${inner}
+    <div style="margin-top:28px;padding-top:14px;border-top:1px solid #dfe3e8;
+                color:#6b7280;font-size:12px;line-height:1.5;">
+      <div style="color:#4b5563;font-weight:600;">IT Helpdesk &mdash; TicketDesk</div>
+      <div>Reply directly to this email to add information to the ticket.</div>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+/** A bolded `Label: value` fact, the shape the requester mails read as data. */
+function htmlFact(label, value) {
+  return `<div style="margin:4px 0;">
+      <span style="font-weight:600;color:#4b5563;">${htmlEscape(label)}</span>
+      <span style="color:#1f2430;">${htmlEscape(value)}</span>
+    </div>`;
+}
+
 function stateLabel(state) {
   return String(state || '')
     .toLowerCase()
@@ -131,9 +177,23 @@ function newTicketBroadcastMail(ticket) {
 /**
  * REQUESTER — confirmation when their ticket is created. Returns null when
  * the ticket has no requester email (nothing to send to).
+ *
+ * Deliberately no priority and no target resolution date: those are the
+ * helpdesk's internal triage decisions, and a requester reading "high
+ * priority" or a date they have never heard of invites questions the
+ * acknowledgement cannot answer. If they need timing, they ask.
  */
 function ticketAcknowledgementMail(ticket) {
   if (!ticket.requesterEmail) return null;
+  const html = htmlShell(`
+    <p style="margin:0 0 14px;font-size:16px;font-weight:600;">${htmlEscape(greeting(ticket.requesterName))}</p>
+    <p style="margin:0 0 16px;">Your request has been logged with the IT Helpdesk.</p>
+    <div style="margin:0 0 18px;padding:12px 14px;background:#ffffff;border:1px solid #e4e7ec;border-radius:6px;">
+      ${htmlFact('Ticket:', ticket.ticketNumber)}
+      ${htmlFact('Subject:', ticket.shortDescription)}
+    </div>
+    <p style="margin:0;">You will receive updates as we work on it. To add information,
+       simply reply to this email &mdash; your message is attached to the ticket.</p>`);
   return {
     subject: ticketSubject(ticket, 'We received your request'),
     body: [
@@ -143,13 +203,12 @@ function ticketAcknowledgementMail(ticket) {
       '',
       `Ticket:    ${ticket.ticketNumber}`,
       `Subject:   ${ticket.shortDescription}`,
-      `Priority:  ${ticket.priority}`,
-      slaLine(ticket),
       '',
       'You will receive updates as we work on it. To add information,',
       'simply reply to this email — your message is attached to the ticket.',
       ticketFooter(ticket),
     ].filter((l) => l !== null).join('\r\n'),
+    html,
     toRecipients: [toRecipient(ticket.requesterEmail)],
   };
 }
@@ -210,9 +269,29 @@ function statusUpdateMail(ticket, context = {}) {
     );
   }
   body.push(ticketFooter(ticket));
+  const resolutionHtml =
+    resolved && ticket.resolution
+      ? `<div style="margin:14px 0;padding:12px 14px;background:#ffffff;border:1px solid #e4e7ec;border-radius:6px;">
+           <div style="font-weight:600;color:#4b5563;margin-bottom:6px;">Resolution</div>
+           <div style="color:#1f2430;">${htmlEscape(ticket.resolution).replace(/\r?\n/g, '<br>')}</div>
+         </div>`
+      : '';
+  const closingHtml = resolved
+    ? `<p style="margin:0;">If this resolves your issue, no action is needed &mdash; the ticket
+        will be closed after confirmation. If you still need help, reply to this email
+        and the ticket will reopen.</p>`
+    : '';
+  const html = htmlShell(`
+    <p style="margin:0 0 14px;font-size:16px;font-weight:600;">${htmlEscape(greeting(ticket.requesterName))}</p>
+    <p style="margin:0 0 6px;">Your ticket <strong>${htmlEscape(ticket.ticketNumber)}</strong>
+       (<strong>${htmlEscape(ticket.shortDescription)}</strong>) status changed:</p>
+    <p style="margin:0 0 16px;">${previousState ? `${htmlEscape(stateLabel(previousState))} &rarr; ` : ''}${htmlEscape(stateLabel(ticket.state))}.</p>
+    ${resolutionHtml}
+    ${closingHtml}`);
   return {
     subject,
     body: body.join('\r\n'),
+    html,
     toRecipients: [toRecipient(ticket.requesterEmail)],
   };
 }
@@ -227,6 +306,17 @@ function agentReplyMail({ ticket, agentName, body }) {
   const subject = ['RESOLVED', 'CLOSED'].includes(ticket.state)
     ? ticketSubject(ticket, 'Update on your request')
     : ticketSubject(ticket, 'New message about your request');
+  const quotedHtml = String(body || '')
+    .split('\n')
+    .map(
+      (l) =>
+        `<div style="margin:0;padding-left:12px;border-left:3px solid #dfe3e8;color:#374151;">${htmlEscape(l) || '&nbsp;'}</div>`
+    )
+    .join('');
+  const html = htmlShell(`
+    <p style="margin:0 0 14px;font-size:16px;font-weight:600;">${htmlEscape(greeting(ticket.requesterName))}</p>
+    <p style="margin:0 0 12px;"><strong>${htmlEscape(agentName)}</strong> from the IT Helpdesk wrote:</p>
+    <div style="margin:0 0 6px;padding:12px 0 12px 2px;">${quotedHtml}</div>`);
   return {
     subject,
     body: [
@@ -239,6 +329,7 @@ function agentReplyMail({ ticket, agentName, body }) {
       '--',
       `IT Helpdesk — Ticket ${ticket.ticketNumber}`,
     ].join('\r\n'),
+    html,
     toRecipients: [toRecipient(ticket.requesterEmail)],
   };
 }

@@ -167,11 +167,41 @@ async function main() {
     && ack.body.includes('Your request has been logged')
     && ack.body.includes('Ticket:    TK-4242')
     && ack.body.includes('Laptop will not start')
-    && ack.body.includes('Priority:  high')
     && ack.body.includes('Ticket: TK-4242'));
+  // Priority and the resolution target are internal triage decisions; showing
+  // them to a requester invites questions the ack cannot answer.
+  check('B3a the ack hides the internal priority', !ack.body.includes('Priority'));
+  check('B3b the ack hides the internal resolution target',
+    !ack.body.includes('Target resolution'));
+  // B3c-B3e the formatted body, and what it must never contain.
+  check('B3c the ack carries an HTML body', typeof ack.html === 'string' && ack.html.includes('<!doctype html>'));
+  check('B3d the HTML bolds the ticket facts',
+    ack.html.includes('font-weight:600') && ack.html.includes('TK-4242') && ack.html.includes('Laptop will not start'));
+  check('B3e the HTML part carries no URL', !/https?:\/\//.test(ack.html));
+  check('B3f the HTML part omits priority and target too',
+    !ack.html.includes('Priority') && !ack.html.includes('Target resolution'));
   eq('B4 ack falls back to a generic greeting',
     outbound.ticketAcknowledgementMail(ticketShape({ requesterName: null })).body.startsWith('Hi there,'), true);
   eq('B5 ack refuses to assemble without a requester', outbound.ticketAcknowledgementMail(ticketShape({ requesterEmail: null })), null);
+
+  // A ticket subject and a requester name are user input rendered into HTML an
+  // agent reads. Unescaped, a subject like `<img src=x onerror=...>` is markup
+  // injection into the mail client.
+  const nasty = ticketShape({ shortDescription: '<script>alert(1)</script> & "quotes"', requesterName: '<b>Bold</b>' });
+  const nastyMail = outbound.ticketAcknowledgementMail(nasty);
+  check('B5a a markup subject cannot inject a tag into the HTML body',
+    !nastyMail.html.includes('<script>') && nastyMail.html.includes('&lt;script&gt;'), nastyMail.html);
+  check('B5b an ampersand in a subject is escaped', nastyMail.html.includes('&amp;'));
+  check('B5c a requester name cannot inject markup', !nastyMail.html.includes('<b>Bold</b>'));
+  check('B5d the plain-text part is untouched by HTML escaping',
+    nastyMail.body.includes('<script>alert(1)</script>'), nastyMail.body);
+  const nastyReply = outbound.agentReplyMail({ ticket: nasty, agentName: '<i>x</i>', body: '<b>body</b>' });
+  check('B5e an agent reply body cannot inject markup',
+    !nastyReply.html.includes('<i>x</i>') && !nastyReply.html.includes('<b>body</b>'), nastyReply.html);
+  const nastyResolve = outbound.statusUpdateMail(
+    ticketShape({ state: 'RESOLVED', resolution: '<img src=x onerror=alert(1)>' }), {});
+  check('B5f a resolution note cannot inject markup',
+    !nastyResolve.html.includes('<img src=x'), nastyResolve.html);
 
   // B6-B8 status update
   const resolvedMail = outbound.statusUpdateMail(
