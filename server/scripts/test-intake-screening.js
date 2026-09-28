@@ -315,6 +315,75 @@ async function main() {
     eq('F4 absent header collection degrades to null', noHeaders.autoSubmitted, null);
   }
 
+  /* ---- G. permitted subjects: HR notices that must survive every gate ---- */
+  console.log('\n--- G. permitted subjects ---');
+  {
+    // The organisation decided an induction plan is kept as a ticket: it is the
+    // schedule for the account-creation work that follows.
+    eq('G1 an induction plan is a permitted subject',
+      screening.isPermittedSubject('NEW EMPLOYEE INDUCTION PLAN - MONDAY 5TH OCTOBER 2026'), true);
+    eq('G2 a new-starter variant is permitted too',
+      screening.isPermittedSubject('New starter induction - Monday'), true);
+    eq('G3 unrelated subjects are not permitted',
+      screening.isPermittedSubject('Laptop will not start'), false);
+    eq('G4 a passing mention is not enough',
+      screening.isPermittedSubject('RE: agenda for the induction day'), false);
+    eq('G5 an empty subject is not permitted', screening.isPermittedSubject(''), false);
+    eq('G6 a null subject is not permitted', screening.isPermittedSubject(null), false);
+
+    // The exemption must survive the automated-mail gate too: an HR notice sent
+    // with Precedence: bulk would otherwise be screened out before triage runs.
+    const hrMail = {
+      requesterEmail: 'hr@hr-notices.test',
+      subject: 'NEW EMPLOYEE INDUCTION PLAN - MONDAY 5TH OCTOBER 2026',
+      precedence: 'bulk',
+      autoSubmitted: 'auto-generated',
+    };
+    eq('G7 a bulk induction notice still opens a ticket',
+      await screening.screenMessage(hrMail), null);
+    const newsletter = { ...hrMail, subject: 'Weekly newsletter' };
+    check('G8 a bulk newsletter is still screened out',
+      Boolean(await screening.screenMessage(newsletter)));
+  }
+
+  /* ---- H. the relevance gate cannot suppress a permitted subject -------- */
+  console.log('\n--- H. the relevance gate honours permitted subjects ---');
+  {
+    const policy = require('../src/services/emailTriagePolicy');
+    eq('H1 the policy module exports the same predicate',
+      policy.isPermittedSubject('INDUCTION PLAN'), true);
+    const verdict = policy.canAutoSkip({
+      disposition: 'skip',
+      confidence: 0.99,
+      reasonCode: 'informational_announcement',
+      senderEmail: 'hr@hr-notices.test',
+      subject: 'NEW EMPLOYEE INDUCTION PLAN - MONDAY 5TH OCTOBER 2026',
+      body: 'Please find the induction programme attached.',
+      approvedSenders: ['@hr-notices.test'],
+      requireApprovedSender: false,
+      threshold: 95,
+      hasAttachments: false,
+    });
+    eq('H2 a confident skip is refused for a permitted subject',
+      verdict.policyCode, 'permitted_subject');
+    eq('H3 and it is therefore never suppressed', verdict.allowed, false);
+
+    // The exemption must not leak: a genuine newsletter is still suppressible.
+    const newsletterVerdict = policy.canAutoSkip({
+      disposition: 'skip',
+      confidence: 0.99,
+      reasonCode: 'informational_announcement',
+      senderEmail: 'news@hr-notices.test',
+      subject: 'Weekly newsletter',
+      body: 'Read our latest stories.',
+      approvedSenders: ['@hr-notices.test'],
+      requireApprovedSender: false,
+      threshold: 95,
+      hasAttachments: false,
+    });
+    eq('H4 a newsletter is still suppressible', newsletterVerdict.allowed, true);
+  }
+
   await cleanup();
   console.log(failures ? `\n${failures} check(s) FAILED` : '\nAll checks passed');
 }

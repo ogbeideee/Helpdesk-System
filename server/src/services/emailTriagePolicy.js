@@ -122,6 +122,30 @@ function normalizeThreshold(value) {
 
 const NEGATED_ACTION_SIGNAL_RE = /\b(?:no|without|not?)\s+(?:actions?|requests?|help|responses?|follow[- ]?up|ticket assistance)\b/gi;
 
+/*
+ * Subjects the organisation has decided must always open a ticket, whatever the
+ * model says. A new-employee induction plan is not an IT request, but it is the
+ * schedule for the account-creation work that follows — suppressing it means a
+ * new starter has no laptop on day one. The model would classify it as a pure
+ * `informational_announcement`, which is right for a newsletter and wrong here.
+ *
+ * Whole-word, subject-only, and deliberately narrow: if HR renames the notice,
+ * extend this list rather than loosening the pattern. Mirrors
+ * intakeScreening.js, which exempts the same mail from automated screening.
+ */
+const PERMITTED_SUBJECT_RES = [
+  /\binduction\s+plan\b/i,
+  /\bnew\s+employee\s+induction\b/i,
+  /\bnew\s+starter\s+induction\b/i,
+];
+
+/** True when the subject is one the organisation always wants kept. */
+function isPermittedSubject(subject) {
+  const value = String(subject === null || subject === undefined ? '' : subject).trim();
+  if (!value) return false;
+  return PERMITTED_SUBJECT_RES.some((re) => re.test(value));
+}
+
 function hasActionSignal(value) {
   // Phrases such as "no request" or "no action required" describe the absence
   // of work; remove only that explicit negation before looking for a real
@@ -148,6 +172,11 @@ function canAutoSkip({
   threshold = DEFAULT_SKIP_THRESHOLD,
   hasAttachments = false,
 } = {}) {
+  // An explicitly permitted notice always opens a ticket. Checked before the
+  // model verdict can be acted on, so a low-confidence `skip` cannot suppress it.
+  if (isPermittedSubject(subject)) {
+    return { allowed: false, policyCode: 'permitted_subject' };
+  }
   if (disposition !== 'skip') return { allowed: false, policyCode: 'not_skip' };
   if (typeof confidence !== 'number' || !Number.isFinite(confidence)) {
     return { allowed: false, policyCode: 'invalid_confidence' };
@@ -282,6 +311,7 @@ module.exports = {
   senderMatches,
   normalizeThreshold,
   hasActionSignal,
+  isPermittedSubject,
   canAutoSkip,
   buildSystemPrompt,
   buildUserPrompt,

@@ -83,6 +83,38 @@ function matchIgnoredSender(senderEmail, entries) {
 
 const BULK_PRECEDENCE = new Set(['bulk', 'list', 'junk']);
 
+/*
+ * HR notices the helpdesk is expected to KEEP as a ticket.
+ *
+ * This looks like the opposite of an ignore-list, so it earns its own note.
+ * Everything else in this file removes mail; these subjects are the exception.
+ * A new-employee induction plan is not an IT request, but it is a standing
+ * operational notice the helpdesk is copied on deliberately — it is the
+ * schedule for the account-creation work that follows, and losing it silently
+ * means a new starter has no laptop on day one. The relevance gate would
+ * otherwise suppress it as a pure `informational_announcement`, which is
+ * exactly right for a newsletter and exactly wrong for this.
+ *
+ * Matching is on the SUBJECT only, and only as a whole word: a mail that merely
+ * mentions induction in passing is not caught. If HR renames the notice, say so
+ * here rather than widening the pattern.
+ */
+const PERMITTED_SUBJECT_PATTERNS = [
+  /\binduction\s+plan\b/i,
+  /\bnew\s+employee\s+induction\b/i,
+  /\bnew\s+starter\s+induction\b/i,
+];
+
+/**
+ * A subject the organisation has explicitly decided to keep as a ticket,
+ * whatever the relevance model concludes about it.
+ */
+function isPermittedSubject(subject) {
+  const value = String(subject === null || subject === undefined ? '' : subject).trim();
+  if (!value) return false;
+  return PERMITTED_SUBJECT_PATTERNS.some((re) => re.test(value));
+}
+
 /**
  * The header half of screening. Returns a short reason string when the
  * message declares itself automated, null otherwise.
@@ -112,6 +144,11 @@ function screenHeaders(msg) {
  * @returns {Promise<null | { reason: string }>} null = the message may open a ticket
  */
 async function screenMessage(msg, options = {}) {
+  // An explicitly permitted notice opens a ticket whatever else says so. Checked
+  // first, and only for its subject: an induction plan is the schedule for the
+  // account-creation work, and suppressing it means a new starter has no laptop.
+  if (isPermittedSubject(msg && msg.subject)) return null;
+
   const headerHit = screenHeaders(msg);
   if (headerHit) return { reason: headerHit };
 
@@ -135,6 +172,8 @@ async function screenMessage(msg, options = {}) {
 
 module.exports = {
   DEFAULT_IGNORED_SENDERS,
+  PERMITTED_SUBJECT_PATTERNS,
+  isPermittedSubject,
   parseSenderEntries,
   matchIgnoredSender,
   screenHeaders,
