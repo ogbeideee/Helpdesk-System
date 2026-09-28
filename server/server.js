@@ -338,6 +338,10 @@ function startBackgroundJobs() {
 
   require('./src/graph/poller').startPolling();
 
+  // Outbound mail. Graph wins when configured, SMTP next, otherwise the
+  // console fallback. Only the safe fields are ever printed.
+  require('./src/smtp/config').logSmtpStatus((line) => console.log(line));
+
   // IMAP ingestion — safe no-op unless IMAP_HOST/IMAP_USER/IMAP_PASSWORD
   // are configured; a failed cycle is logged and the next tick retries.
   require('./src/imap/poller').startImapPoller();

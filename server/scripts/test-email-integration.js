@@ -145,7 +145,7 @@ async function main() {
     && outbound.slaLine(subjectTicket).includes('high priority'));
   const footer = outbound.ticketFooter(subjectTicket);
   check('A11 footer names the ticket', footer.includes('Ticket: TK-4242'));
-  check('A12 footer links the portal', footer.includes('View in portal: http://portal.test/tickets/101'));
+  check('A12 the footer carries no portal link', !footer.includes('View in portal') && !footer.includes('http'));
   check('A13 footer invites the reply-by-email flow', footer.includes('Reply directly to this email'));
   check('A14 footer uses CRLF lines', footer.includes('\r\n'));
   const ack = outbound.ticketAcknowledgementMail(subjectTicket);

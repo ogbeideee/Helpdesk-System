@@ -8,8 +8,14 @@
 // them. It never sends and never touches a transport: every builder is a pure
 // function from ticket/requester/agent data to the mailer's mail shape
 // ({ subject, body, toRecipients }), so tests can assert on exact content
-// with no transport at all. src/mailer.js stays the only place that talks to
-// Graph (or the console fallback), wrapping these builders in sendMailSafe.
+// with no transport at all. src/mailer.js stays the only place that talks to a
+// transport (Graph, SMTP or the console fallback), wrapping these builders in
+// sendMailSafe.
+//
+// No mail carries a link. A requester has no portal account — often their
+// account is the very thing that is broken — and an agent already works in
+// TicketDesk, so the reply-to-this-mail address is the single channel both
+// audiences need. Nothing here references the portal base URL or a signed link.
 //
 // Recipient classes, explicit per builder:
 //   - REQUESTER mails (ticketAcknowledgementMail, statusUpdateMail,
@@ -23,9 +29,6 @@
 // SLA alerts (slaNotifier.js) and scheduled reports (reportScheduler.js)
 // assemble their own wording but reuse the shared formatting here and send
 // through the same mailer; both are internal-only.
-const PORTAL_BASE_URL = (process.env.PORTAL_BASE_URL || '').replace(/\/+$/, '');
-const statusLink = require('./statusLink');
-
 /* ------------------------------------------------------------------ */
 /* Shared formatting — the single source of the email conventions      */
 /* ------------------------------------------------------------------ */
@@ -47,10 +50,6 @@ function recipientsOf(mail) {
     }
   }
   return addrs.join(', ') || '(none)';
-}
-
-function portalLink(ticket) {
-  return PORTAL_BASE_URL ? `${PORTAL_BASE_URL}/tickets/${ticket.id}` : null;
 }
 
 function stateLabel(state) {
@@ -82,18 +81,16 @@ function slaLine(ticket) {
   return `\r\nTarget resolution: ${due.toUTCString()} (${ticket.priority} priority)`;
 }
 
+/**
+ * The footer every notification carries. Deliberately link-free: a requester has
+ * no portal account (their account may be the very thing that is broken) and an
+ * agent reads the ticket in TicketDesk, so a link helps neither audience. The
+ * reply-to-this-mail address is the only channel either of them needs.
+ */
 function ticketFooter(ticket) {
   const lines = ['', '--', 'IT Helpdesk — TicketDesk', `Ticket: ${ticket.ticketNumber}`];
-  const link = portalLink(ticket);
-  if (link) lines.push(`View in portal: ${link}`);
   lines.push('Reply directly to this email to add information to the ticket.');
   return lines.join('\r\n');
-}
-
-/** One-line self-service status link for REQUESTER mails (signed, no login). */
-function statusLine(ticket) {
-  const url = statusLink.statusUrl(ticket);
-  return url ? `Check progress any time: ${url}` : null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -151,7 +148,6 @@ function ticketAcknowledgementMail(ticket) {
       '',
       'You will receive updates as we work on it. To add information,',
       'simply reply to this email — your message is attached to the ticket.',
-      statusLine(ticket),
       ticketFooter(ticket),
     ].filter((l) => l !== null).join('\r\n'),
     toRecipients: [toRecipient(ticket.requesterEmail)],
@@ -213,8 +209,6 @@ function statusUpdateMail(ticket, context = {}) {
       'reply to this email and the ticket will reopen.'
     );
   }
-  const status = statusLine(ticket);
-  if (status) body.push('', status);
   body.push(ticketFooter(ticket));
   return {
     subject,
@@ -279,13 +273,13 @@ module.exports = {
   ticketSubject,
   toRecipient,
   recipientsOf,
-  portalLink,
+
   stateLabel,
   greeting,
   requesterDisplay,
   excerpt,
   slaLine,
-  statusLine,
+
   ticketFooter,
   // message builders
   newTicketBroadcastMail,

@@ -34,6 +34,7 @@ const SUITES = [
   'test-email-sources',
   'test-imap',
   'test-imap-oauth',
+  'test-smtp',
   'test-email-rules',
   'test-intake-screening',
   'test-email-triage',

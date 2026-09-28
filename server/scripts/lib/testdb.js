@@ -221,6 +221,20 @@ function use(name) {
   // deploy would apply schema changes to whatever DIRECT_URL says (production).
   process.env.DIRECT_URL = url;
 
+  // Outbound mail is the same hazard, and worse: a developer's server/.env holds
+  // a real SMTP credential, and a spawned server would load it and send genuine
+  // mail to fixture addresses (or, worse, to a real requester) during a test run.
+  // Cleared here — one choke point, so no suite can forget. Suites that want an
+  // SMTP transport inject one (scripts/test-smtp.js) or assert the console
+  // fallback. Empty strings, not deletions, so a variable already defined in the
+  // environment cannot survive.
+  for (const key of [
+    'SMTP_HOST', 'SMTP_PORT', 'SMTP_SECURE', 'SMTP_USER', 'SMTP_PASS', 'SMTP_FROM',
+    'SMTP_FROM_NAME', 'SMTP_BROADCAST_DL', 'SMTP_TLS_REJECT_UNAUTHORIZED',
+  ]) {
+    process.env[key] = '';
+  }
+
   migrateDeploy();
 
   const cleanup = () => {

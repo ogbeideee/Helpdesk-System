@@ -142,7 +142,7 @@ async function main() {
     check('N1 email states the SLA status', toAgent.body.includes('Status:     Approaching breach — 25% of the response window remains'), toAgent.body);
     check('N1 email carries the due time', toAgent.body.includes(`Due:        ${DUE_RESPONSE_MON_10}`), toAgent.body);
     check('N1 email carries the remaining working time', toAgent.body.includes('Remaining:  10 minutes of working time'), toAgent.body);
-    check('N1 email carries the portal link', toAgent.body.includes(`View in portal: https://portal.slanotify.test/tickets/${ticket.id}`), toAgent.body);
+    check('N1 email carries no portal link', !/https?:\/\//.test(toAgent.body), toAgent.body);
     check('N1 email keeps the mailer footer', toAgent.body.includes('IT Helpdesk — TicketDesk'), toAgent.body);
   }
 

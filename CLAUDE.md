@@ -249,15 +249,25 @@ stamps it on every password write (self-service or admin reset) and
 `requireAuth` rejects any token whose `iat` predates it. `express` runs with
 `trust proxy: 1` so rate-limit keys see the real client address behind Fly.
 
-**Requester self-service status** — `email/statusLink.js` mints a stateless
-HMAC token over `ticketId.requesterEmail`; the acknowledgement and
-status-update mails link to `#/status/<token>`, rendered by `StatusPage.jsx`
-without a session. Possession of the link is proof of mailbox access — the same
-trust level as "reply to this email". The public endpoint returns only the
-ticket's public face (number, subject, state, category, priority, dates) and
-404s for a forged, tampered or cross-requester token, so probing learns
-nothing. It requires `PORTAL_BASE_URL` and a secret (`STATUS_LINK_SECRET`, or
-`JWT_SECRET` as fallback); it refuses to load in production without one.
+**No links in email.** No notification carries a URL. A requester has no portal
+account — often their account is the very thing that is broken — and an agent
+already works in TicketDesk, so the reply-to-this-mail address is the only
+channel either audience needs. `email/statusLink.js` and the public status route
+remain (a link that is already in someone's inbox keeps working) but nothing
+emits one; `PORTAL_BASE_URL` is no longer read by the email layer.
+
+**Outbound transport** — `src/mailer.js` picks exactly one: **Microsoft Graph →
+SMTP → the console fallback**, in that order. All three speak the same small
+interface (`sendMail`, `sendBroadcastMail`, `hasBroadcastTarget`, and
+`broadcastTarget` for the reply-alert fallback), so no caller and no test changes
+when the choice does. `src/smtp/config.js` is the SMTP option: enabled by
+`SMTP_HOST` + `SMTP_USER` + `SMTP_PASS`, implicit TLS on 465 by default,
+`SMTP_FROM` defaulting to the authenticated user, and `SMTP_BROADCAST_DL`
+falling back to `GRAPH_BROADCAST_DL` so a migration never silently stops the team
+alert. `publicSmtpConfig()` is the only printable shape — the password is never
+logged, stored or returned. `scripts/testdb.js` clears every `SMTP_*` variable for
+every suite, so a developer's real App Password can never send real mail from a
+test run.
 
 **Throttling** — `src/rateLimit.js` is a fixed-window in-memory limiter,
 applied only where guessing is cheap: `POST /api/auth/login` (IP + target
@@ -317,7 +327,7 @@ Reuse it; do not write a bare `update` for ownership.
 
 ```bash
 npm run dev                  # root: API :4000 + UI :5173 via concurrently
-cd server && npm test        # all 41 suites (scripts/run-all-tests.js)
+cd server && npm test        # all 42 suites (scripts/run-all-tests.js)
 cd server && node scripts/run-all-tests.js imap   # a few suites, by substring
 cd server && npm run test:pg:up      # one-time: disposable local test PostgreSQL
 cd client && npx vite build  # production build

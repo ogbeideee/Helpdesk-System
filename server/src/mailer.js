@@ -9,6 +9,7 @@
 // All builders go through a small factory so callers (and tests) can inject
 // an alternative transport.
 const { graphConfig } = require('./graph/config');
+const { smtpConfig, createSmtpTransport } = require('./smtp/config');
 const {
   toRecipient,
   recipientsOf,
@@ -64,11 +65,19 @@ function renderDevNotification({ kind, to, mail }) {
   return lines.join('\n');
 }
 
+/**
+ * Transport selection, in order: Microsoft Graph, then SMTP, then the console
+ * fallback. Only one is ever live, and every one of them speaks the same small
+ * interface, so no caller (and no test) changes when the choice changes.
+ */
 function getDefaultTransport() {
-  if (!graphConfig.enabled) return consoleTransport();
-  // Lazy require so the Graph SDK/MSAL never loads when integration is off.
-  const { graphOps } = require('./graph/graphClient');
-  return graphOps;
+  if (graphConfig.enabled) {
+    // Lazy require so the Graph SDK/MSAL never loads when integration is off.
+    const { graphOps } = require('./graph/graphClient');
+    return graphOps;
+  }
+  if (smtpConfig.enabled) return createSmtpTransport(smtpConfig);
+  return consoleTransport();
 }
 
 /**
@@ -146,7 +155,15 @@ function createMailer(options = {}) {
     if (ticket.assignedAgent && ticket.assignedAgent.email) {
       targets.push(ticket.assignedAgent.email);
     }
-    if (!targets.length && graphConfig.broadcastDl) targets.push(graphConfig.broadcastDl);
+    if (!targets.length) {
+      // Transport-neutral: whichever transport is live owns the team address, so
+      // the reply alert still lands somewhere when the assignee has none.
+      const dl =
+        typeof transport.broadcastTarget === 'function'
+          ? transport.broadcastTarget()
+          : graphConfig.broadcastDl;
+      if (dl) targets.push(dl);
+    }
     if (!targets.length) return false;
     const { subject, body } = replyAlertMail(ticket, {
       fromName: context.fromName,

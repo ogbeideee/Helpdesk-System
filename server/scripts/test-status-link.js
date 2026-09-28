@@ -5,7 +5,7 @@
      B. statusUrl — only with PORTAL_BASE_URL and a requester email
      C. the HTTP endpoint — valid token answers the public ticket shape;
         forged/unknown tokens are 404; no body, comments or agent details leak
-     D. the requester emails carry the status link (acknowledgement + update)
+     D. no requester or internal mail carries a self-service status link
      E. the endpoint is rate-limited per IP */
 
 process.env.PORT = process.env.PORT || '4197';
@@ -113,17 +113,18 @@ async function stopServer(proc) {
   eq('C10 a token for an unknown ticket is 404',
     (await fetch(`http://localhost:${process.env.PORT}/api/public/ticket-status?token=${encodeURIComponent(wrongTicket)}`)).status, 404);
 
-  /* ---- D. the requester emails carry the link --------------------------- */
-  console.log('\n--- D. requester emails include the link ---');
+  /* ---- D. no email carries a self-service link -------------------------- */
+  console.log('\n--- D. requester emails are link-free ---');
   const ack = outbound.ticketAcknowledgementMail(ticket);
-  check('D1 the acknowledgement includes the status link',
-    ack.body.includes(`Check progress any time: https://portal.test/#/status/${token}`));
+  check('D1 the acknowledgement carries no status link', !ack.body.includes('#/status/'));
+  check('D2 the acknowledgement carries no URL at all', !/https?:\/\//.test(ack.body));
   const update = outbound.statusUpdateMail({ ...ticket, state: 'RESOLVED' });
-  check('D2 the status update includes the status link',
-    update.body.includes(`#/status/${token}`));
-  // Internal mails never carry a requester-authenticated link.
+  check('D3 the status update carries no status link', !update.body.includes('#/status/'));
+  // The ticket number is the only handle a requester gets — reply to the mail.
+  check('D4 the acknowledgement still names the ticket', ack.body.includes(ticket.ticketNumber));
+  // Internal mails are link-free for the same reason.
   const broadcast = outbound.newTicketBroadcastMail(ticket);
-  check('D3 the internal broadcast does NOT carry the link', !broadcast.body.includes('#/status/'));
+  check('D5 the internal broadcast carries no link', !/https?:\/\/|#\/status\//.test(broadcast.body));
 
   /* ---- E. rate limiting -------------------------------------------------- */
   console.log('\n--- E. rate limiting ---');
