@@ -20,6 +20,9 @@ const {
   agentReplyMail,
   replyAlertMail,
 } = require('./email/outbound');
+// Resolving asks the requester to confirm; the mail carries the signed
+// confirmation link when a portal base URL is configured.
+const { confirmUrl } = require('./email/statusLink');
 
 function consoleTransport(logger = console) {
   return {
@@ -131,9 +134,17 @@ function createMailer(options = {}) {
     return sendMailSafe(mail);
   }
 
-  /** Status change updates to the requester (includes resolution notes). */
+  /**
+   * Status change updates to the requester (includes resolution notes). On a
+   * resolve it carries the signed confirmation link — the one link any
+   * outbound email carries — so the requester can close the ticket themselves.
+   */
   async function notifyStatusChanged(ticket, context = {}) {
-    const mail = statusUpdateMail(ticket, { previousState: context.previousState });
+    const mail = statusUpdateMail(ticket, {
+      previousState: context.previousState,
+      // Only a RESOLVED mail carries it; the builder ignores it otherwise.
+      confirmUrl: ticket.state === 'RESOLVED' ? confirmUrl(ticket) : null,
+    });
     if (!mail) return false;
     return sendMailSafe(mail);
   }

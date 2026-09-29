@@ -116,6 +116,21 @@ export default function SlaSettingsPage() {
           <span className="chip chip-dev">admin</span>
         </div>
 
+        <div className="settings-group-label">Resolution confirmation</div>
+        <div className="settings-grid">
+          <Field
+            label="Auto-close resolved tickets after (days)"
+            hint={hintFor(data.definitions, 'resolutionAutoCloseDays')}
+          >
+            <input
+              type="number"
+              min="0"
+              value={form.resolutionAutoCloseDays}
+              onChange={set('resolutionAutoCloseDays')}
+            />
+          </Field>
+        </div>
+
         <div className="settings-group-label">Response target</div>
         <div className="settings-grid">
           <Field label="Response SLA target (working minutes)" hint={hintFor(data.definitions, 'slaResponseTargetMinutes')}>

@@ -4,7 +4,7 @@ import { STATES, PRIORITIES, CATEGORIES } from '../constants.js';
 import { usePageHeader } from '../pageHeader.js';
 import { slaOverview } from '../slaView.js';
 import {
-  ErrorState, EmptyState, StateBadge, PriorityBadge,
+  ErrorState, EmptyState, StateBadge, PriorityBadge, ConfirmationChip,
   Avatar, Icon, timeAgo, fmtDateTime, useToast,
 } from './ui.jsx';
 
@@ -499,7 +499,12 @@ export default function TicketsPage({ onOpen, initialFilters }) {
                         {t.requesterName && <span className="muted"> · {t.requesterEmail}</span>}
                       </span>
                     </td>
-                    <td data-label="Status"><StateBadge state={t.state} /></td>
+                    <td data-label="Status">
+                      <span className="status-cell">
+                        <StateBadge state={t.state} />
+                        <ConfirmationChip ticket={t} />
+                      </span>
+                    </td>
                     <td data-label="Priority"><PriorityBadge priority={t.priority} /></td>
                     <td data-label="SLA"><SlaCell ticket={t} /></td>
                     <td data-label="Group">

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { OPEN_STATES } from '../constants.js';
 import { slaOverview } from '../slaView.js';
+import { confirmationIndicator, confirmationTone } from '../confirmationView.js';
 
 /* ------------------------------------------------------------------ */
 /* Formatting helpers                                                  */
@@ -215,6 +216,26 @@ export function usePopover() {
 
 export function StateBadge({ state }) {
   return <span className={`pill pill-state-${String(state).toLowerCase()}`}>{stateLabel(state)}</span>;
+}
+
+/**
+ * The "awaiting confirmation" chip for a RESOLVED ticket waiting on the
+ * requester's click. Every word and tone comes from confirmationView.js,
+ * which reads the API's awaitingConfirmation / confirmationAutoCloseAt
+ * fields — this only renders. Renders nothing when the ticket is not
+ * awaiting confirmation.
+ */
+export function ConfirmationChip({ ticket }) {
+  const ind = confirmationIndicator(ticket);
+  if (!ind) return null;
+  const tone = confirmationTone(ind);
+  const cls = tone === 'overdue' ? 'chip-confirm is-overdue' : tone === 'soon' ? 'chip-confirm is-soon' : 'chip-confirm';
+  return (
+    <span className={cls} title={ind.detail}>
+      <span className="chip-confirm-dot" aria-hidden="true" />
+      {ind.label}
+    </span>
+  );
 }
 
 export function PriorityBadge({ priority }) {

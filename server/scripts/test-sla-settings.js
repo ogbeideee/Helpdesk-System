@@ -171,7 +171,7 @@ async function main() {
     eq('B1 working days default Mon–Fri', initial.data.settings.slaWorkingDays, '1,2,3,4,5');
     eq('B1 timezone default is Africa/Lagos', initial.data.settings.slaTimezone, 'Africa/Lagos');
     eq('B1 no holidays yet', initial.data.holidays.length, 0);
-    eq('B2 definitions describe all 9 SLA keys', initial.data.definitions.length, 9);
+    eq('B2 definitions describe all 11 SLA keys (incl. resolution auto-close)', initial.data.definitions.length, 11);
     check('B2 definitions carry labels, help and defaults',
       initial.data.definitions.every((d) => d.label && d.help && d.default != null && d.group === 'sla'));
 

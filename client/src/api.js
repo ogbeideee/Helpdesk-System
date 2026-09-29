@@ -49,6 +49,8 @@ export const api = {
 
   // ---- public (no session — the emailed self-service status link) ----
   ticketStatus: (token) => request(`/public/ticket-status?token=${encodeURIComponent(token)}`),
+  // The "Yes, it's resolved" button on the confirmation page.
+  confirmResolution: (token) => request('/public/confirm-resolution', body({ token })),
 
   // ---- reference / analytics ----
   teams: () => request('/teams'),

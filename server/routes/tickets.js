@@ -20,6 +20,9 @@ const assignmentPolicy = require('../src/services/assignmentPolicy');
 const workloadService = require('../src/services/workloadService');
 const handoverService = require('../src/services/handoverService');
 const auditService = require('../src/services/auditService');
+// The requester confirmation window (SLA settings group), so serialized
+// tickets can carry when an unconfirmed RESOLVED ticket will auto-close.
+const settingsService = require('../src/services/settingsService');
 const { getAttachmentStorage } = require('../src/services/attachmentStorage');
 
 const router = express.Router();
@@ -105,11 +108,23 @@ function serializeTicket(t, slaContext = {}) {
   // no slaEvents loaded and expose none (undefined keys vanish in JSON).
   const { slaCycles, slaEvents, attachments, ...ticket } = t;
   const hoursLeft = workloadService.hoursUntilClaimable(t);
+  // Requester resolution confirmation: a RESOLVED ticket is waiting for the
+  // requester's click (the resolve email asked). The auto-close deadline is
+  // the server's derivation too — the client never reimplements the admin's
+  // window. With auto-close disabled (window 0) the ticket still shows as
+  // awaiting; it just carries no deadline.
+  const confWindow = slaContext.confirmationWindow;
+  const autoCloseAt =
+    t.state === 'RESOLVED' && confWindow && confWindow.windowDays > 0 && t.resolvedAt
+      ? new Date(new Date(t.resolvedAt).getTime() + confWindow.windowDays * 24 * 60 * 60 * 1000)
+      : null;
   return {
     ...ticket,
     // Metadata only — storage keys never leave the backend.
     ...(attachments ? { attachments: attachments.map(serializeAttachment) } : {}),
     awaitingAssignment: !t.assignedAgentId && isOpenState(t.state),
+    awaitingConfirmation: t.state === 'RESOLVED',
+    ...(autoCloseAt ? { confirmationAutoCloseAt: autoCloseAt.toISOString() } : {}),
     // A NEW ticket becomes takeable by a teammate once it has gone unattended
     // for the configured threshold. Surfaced so the UI reflects the rule the
     // backend enforces rather than re-deriving it.
@@ -147,7 +162,25 @@ async function slaCtx(now = new Date(), policy = null) {
       prisma,
       effectivePolicy
     ),
+    // The requester confirmation window rides the same context, so every
+    // serialized ticket in this request derives its auto-close deadline
+    // from one settings read.
+    confirmationWindow: await confirmationWindow(),
   };
+}
+
+/**
+ * The requester confirmation window, read once per request. `windowDays` of
+ * 0 means auto-close is disabled; null means the setting failed to read —
+ * the indicator degrades to "awaiting confirmation" without a deadline.
+ */
+async function confirmationWindow() {
+  try {
+    const days = await settingsService.get('resolutionAutoCloseDays', prisma);
+    return { windowDays: Number.isFinite(days) ? days : null };
+  } catch {
+    return { windowDays: null };
+  }
 }
 
 async function loadTicketOr404(idParam, res, include = DETAIL_INCLUDE) {
@@ -409,6 +442,11 @@ ${body || ''}`,
 
 // Shared state-machine application (used by /status, /resolve, /close).
 async function applyStateChange(existing, toState, { actor, agent, note, resolution }) {
+  // Closing a ticket that is awaiting the requester's confirmation (the
+  // resolve email asked for it) is a FORCE CLOSE: the admin overrides the
+  // pending confirmation. The CAS write below decides the winner, so a
+  // requester confirming in the same instant can never be overwritten.
+  const forceClose = toState === 'CLOSED' && existing.state === 'RESOLVED';
   if (!isValidState(toState)) {
     return { status: 400, body: { errors: [`state must be one of: ${STATES.join(', ')}`] } };
   }
@@ -455,11 +493,52 @@ async function applyStateChange(existing, toState, { actor, agent, note, resolut
     data.closedAt = new Date();
   }
 
-  const updated = await prisma.ticket.update({
-    where: { id: existing.id },
-    data,
-    include: ACTION_INCLUDE,
-  });
+  // A force close is a compare-and-set on state = 'RESOLVED': the requester's
+  // confirmation POST, the auto-close sweep and this admin action all race on
+  // the same CAS, so whichever write wins is the state that stands and the
+  // losers see the already-decided ticket rather than overwriting anything.
+  const updated = forceClose
+    ? await prisma.ticket.updateMany({
+        where: { id: existing.id, state: 'RESOLVED' },
+        data: { state: toState, closedAt: data.closedAt },
+      }).then(async (cas) => {
+        if (cas.count === 0) {
+          // Someone else (a confirmation click or the sweep) closed it first.
+          const current = await prisma.ticket.findUnique({
+            where: { id: existing.id },
+            select: { state: true },
+          });
+          return { conflict: current ? current.state : 'unknown' };
+        }
+        // Write the domain audit row separately: updateMany cannot nest creates.
+        await prisma.ticketAuditLog.create({
+          data: {
+            ticketId: existing.id,
+            fromState: existing.state,
+            toState,
+            actor,
+            note: note || null,
+          },
+        });
+        return prisma.ticket.findUnique({ where: { id: existing.id }, include: ACTION_INCLUDE });
+      })
+    : await prisma.ticket.update({
+        where: { id: existing.id },
+        data,
+        include: ACTION_INCLUDE,
+      });
+
+  if (updated && updated.conflict) {
+    return {
+      status: 409,
+      body: {
+        error:
+          updated.conflict === 'CLOSED'
+            ? 'Ticket was already closed'
+            : `Ticket is no longer RESOLVED (it is ${updated.conflict} now) — refresh and try again`,
+      },
+    };
+  }
 
   // Unified trail: the state transition (TicketAuditLog keeps its own row
   // above — the domain timeline is untouched).
@@ -481,8 +560,17 @@ async function applyStateChange(existing, toState, { actor, agent, note, resolut
     actor: agent || actor,
     from: { state: existing.state },
     to: { state: toState },
-    description: `${existing.ticketNumber} moved from ${existing.state} to ${toState}`,
-    metadata: note ? { note } : null,
+    description: forceClose
+      ? `${existing.ticketNumber} force-closed by ${agent ? agent.name : actor} — the requester's pending confirmation was overridden`
+      : `${existing.ticketNumber} moved from ${existing.state} to ${toState}`,
+    metadata: forceClose
+      ? {
+          via: 'force_close',
+          ...(note ? { note } : {}),
+        }
+      : note
+        ? { note }
+        : null,
   });
 
   notificationService

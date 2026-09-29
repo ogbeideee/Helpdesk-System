@@ -63,10 +63,29 @@ function verifyToken(token) {
   return { ticketId, email };
 }
 
-/** Absolute portal URL for the requester status page, or null when unknown. */
+/**
+ * Absolute portal URL for the requester status page, or null when unknown.
+ *
+ * The status page is read-only history; nothing emits a link to it any more
+ * (see confirmUrl for the one link the system does send).
+ */
 function statusUrl(ticket) {
   if (!PORTAL_BASE_URL || !ticket.requesterEmail) return null;
   return `${PORTAL_BASE_URL}/#/status/${makeToken(ticket.id, ticket.requesterEmail)}`;
 }
 
-module.exports = { makeToken, verifyToken, statusUrl };
+/**
+ * Absolute portal URL for the resolution-confirmation page, or null when
+ * unknown. Carried by exactly ONE email — the resolve notification — and is
+ * the deliberate exception to the no-links rule: closing a ticket is the one
+ * action a requester cannot safely express by replying ("yes" is ambiguous),
+ * while the two-step page (GET shows the ticket, a button POSTs) keeps mail
+ * scanners that prefetch links from closing anything. Same signed token as
+ * the status page: possession of the link is proof of mailbox access.
+ */
+function confirmUrl(ticket) {
+  if (!PORTAL_BASE_URL || !ticket.requesterEmail) return null;
+  return `${PORTAL_BASE_URL}/#/confirm/${makeToken(ticket.id, ticket.requesterEmail)}`;
+}
+
+module.exports = { makeToken, verifyToken, statusUrl, confirmUrl };

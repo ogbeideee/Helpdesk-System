@@ -79,6 +79,7 @@ const NUMBER_KEYS = [
   'slaResolutionHoursLow',
   'slaWorkdayStartHour',
   'slaWorkdayEndHour',
+  'resolutionAutoCloseDays',
 ];
 
 /**
@@ -116,6 +117,7 @@ export function validateForm(form) {
     else if (max !== undefined && Number(v) > max) errors.push(`${label} must be at most ${max}`);
   };
 
+  whole('Auto-close resolved tickets', 'resolutionAutoCloseDays', 0, 90); // 0 = never
   whole('Response SLA target', 'slaResponseTargetMinutes', 1);
   whole('Critical resolution target', 'slaResolutionHoursCritical', 1);
   whole('High resolution target', 'slaResolutionHoursHigh', 1);

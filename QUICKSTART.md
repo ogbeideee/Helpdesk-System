@@ -50,7 +50,7 @@ deliberately creates no agents.
 
 ## Tests
 
-Plain Node scripts, no test framework — 41 suites, each running on its own
+Plain Node scripts, no test framework — 43 suites, each running on its own
 throw-away PostgreSQL database. One-time setup, then:
 
 ```bash

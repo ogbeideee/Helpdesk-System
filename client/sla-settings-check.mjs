@@ -47,6 +47,7 @@ const PAYLOAD = {
     slaWorkdayEndHour: 17,
     slaWorkingDays: '1,2,3,4,5',
     slaTimezone: 'Africa/Lagos',
+    resolutionAutoCloseDays: 3,
   },
   definitions: [{ key: 'slaResponseTargetMinutes', label: 'Response SLA target (working minutes)', help: 'Working time…', default: 60, group: 'sla' }],
   holidays: [
@@ -90,11 +91,16 @@ eq('numbers become numbers', payload.slaResponseTargetMinutes, 60);
 eq('working days are canonicalised and sorted', payload.slaWorkingDays, '1,3,5');
 eq('working days are deduplicated', formPayload({ ...valid, workingDays: [1, 1, 2] }).slaWorkingDays, '1,2');
 eq('timezone is trimmed', payload.slaTimezone, 'Africa/Abidjan');
-check('payload carries exactly the nine settings keys',
-  Object.keys(payload).length === 9 && 'slaResponseTargetMinutes' in payload && 'slaTimezone' in payload);
+check('payload carries exactly the ten settings keys',
+  Object.keys(payload).length === 10 && 'slaResponseTargetMinutes' in payload && 'slaTimezone' in payload
+  && 'resolutionAutoCloseDays' in payload);
 
 /* ---- formDirty: save/reset enablement --------------------------------- */
 eq('a fresh form is not dirty', formDirty(form, PAYLOAD), false);
+eq('the auto-close window round-trips as a string input', form.resolutionAutoCloseDays, '3');
+check('auto-close 0 is allowed (never close automatically)', validateForm({ ...valid, resolutionAutoCloseDays: '0' }).length === 0);
+check('auto-close 91 is rejected', broken({ resolutionAutoCloseDays: '91' }).length > 0);
+check('auto-close errors name the field', broken({ resolutionAutoCloseDays: '-1' })[0].includes('Auto-close resolved tickets'));
 eq('an edited form is dirty', formDirty({ ...form, slaResponseTargetMinutes: '30' }, PAYLOAD), true);
 eq('reordering working days is not a change', formDirty({ ...form, workingDays: [5, 4, 3, 2, 1] }, PAYLOAD), false);
 eq('nothing is dirty without a payload', formDirty(form, null), false);

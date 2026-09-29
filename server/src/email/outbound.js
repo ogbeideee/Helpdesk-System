@@ -260,13 +260,31 @@ function statusUpdateMail(ticket, context = {}) {
   if (resolved && ticket.resolution) {
     body.push('', 'Resolution:', `> ${ticket.resolution}`);
   }
+  // The resolve mail is the ONE email that carries a link — the deliberate
+  // exception to the no-links rule. The confirmation page it opens is
+  // two-step (the page shows the ticket; a button closes it), so a mail
+  // scanner that prefetches the URL cannot close anything: only the POST
+  // from the page does.
+  const confirmLink = typeof context.confirmUrl === 'string' ? context.confirmUrl : null;
   if (resolved) {
     body.push(
       '',
-      'If this resolves your issue, no action is needed — the ticket',
-      'will be closed after confirmation. If you still need help,',
-      'reply to this email and the ticket will reopen.'
+      'Was your issue resolved?',
     );
+    if (confirmLink) {
+      body.push(
+        `Yes — confirm here: ${confirmLink}`,
+        '',
+        'If the link does not work, reply to this email and the ticket',
+        'will reopen so we can take another look.',
+      );
+    } else {
+      body.push(
+        'If this resolves your issue, no action is needed — the ticket',
+        'will be closed after confirmation. If you still need help,',
+        'reply to this email and the ticket will reopen.'
+      );
+    }
   }
   body.push(ticketFooter(ticket));
   const resolutionHtml =
@@ -277,9 +295,16 @@ function statusUpdateMail(ticket, context = {}) {
          </div>`
       : '';
   const closingHtml = resolved
-    ? `<p style="margin:0;">If this resolves your issue, no action is needed &mdash; the ticket
+    ? (confirmLink
+      ? `<p style="margin:0 0 10px;">Was your issue resolved?</p>
+         <p style="margin:0 0 10px;"><a href="${htmlEscape(confirmLink)}"
+            style="display:inline-block;padding:10px 18px;background:#2563eb;color:#ffffff;
+                   text-decoration:none;border-radius:6px;font-weight:600;">Yes, it&apos;s resolved &mdash; close my ticket</a></p>
+         <p style="margin:0;color:#6b7280;">If the link does not work, reply to this email and the
+            ticket will reopen so we can take another look.</p>`
+      : `<p style="margin:0;">If this resolves your issue, no action is needed &mdash; the ticket
         will be closed after confirmation. If you still need help, reply to this email
-        and the ticket will reopen.</p>`
+        and the ticket will reopen.</p>`)
     : '';
   const html = htmlShell(`
     <p style="margin:0 0 14px;font-size:16px;font-weight:600;">${htmlEscape(greeting(ticket.requesterName))}</p>

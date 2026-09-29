@@ -260,6 +260,7 @@ app.get('*', (req, res, next) => {
 //   - workload rebalancer      (server/src/services/workloadService)
 //   - handover expiry sweeper  (server/src/services/handoverService)
 //   - SLA sweeper             (server/src/slaSweeper)
+//   - resolution auto-close sweeper (server/src/resolutionSweeper)
 //   - report scheduler        (server/src/reportScheduler)
 //   - Graph mailbox poller     (server/src/graph/poller)
 //   - IMAP mailbox poller      (server/src/imap/poller)
@@ -333,6 +334,11 @@ function startBackgroundJobs() {
   // against overlapping sweeps; no-op with SLA_SWEEP_INTERVAL_MS=0.
   require('./src/slaSweeper').startSlaSweeper({ logger: console });
 
+  // Requester resolution confirmation: unconfirmed RESOLVED tickets close
+  // after the configured window. No-op when the window is 0 (never auto-close)
+  // or RESOLUTION_SWEEP_INTERVAL_MINUTES=0.
+  require('./src/resolutionSweeper').startResolutionSweeper({ logger: console });
+
   // Scheduled weekly/monthly reports. No-op with REPORT_SCHEDULER_INTERVAL_MS=0.
   require('./src/reportScheduler').startReportScheduler({ logger: console });
 
@@ -370,6 +376,7 @@ if (isStandalone) {
     require('./src/services/workloadService').stopRebalancer();
     require('./src/services/handoverService').stopExpirySweeper();
     require('./src/slaSweeper').stopSlaSweeper();
+    require('./src/resolutionSweeper').stopResolutionSweeper();
     require('./src/reportScheduler').stopReportScheduler();
     require('./src/graph/subscriptionService').getSubscriptionService().stopLifecycle();
     server.close(async () => {

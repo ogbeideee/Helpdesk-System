@@ -707,6 +707,32 @@ body {
 .chip-primary    { background: var(--primary-soft); color: var(--primary-2); border-color: transparent; }
 .chip-supporting { background: var(--warning-soft); color: var(--warning); border-color: transparent; font-style: italic; }
 
+/* Requester resolution confirmation — the chip a RESOLVED ticket shows while
+   it waits for the requester's click (queue cell, detail header, inspector).
+   The dot carries the state like a priority dot; tone escalates as the
+   auto-close deadline approaches, and past it the sweep closes imminently. */
+.chip-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  line-height: 1.55;
+  background: var(--info-soft);
+  color: var(--info);
+}
+.chip-confirm-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.chip-confirm.is-soon    { background: var(--warning-soft); color: var(--warning); }
+.chip-confirm.is-overdue { background: var(--danger-soft);  color: var(--danger); }
+
+/* The queue's status cell stacks the state pill over the confirmation chip,
+   the same one-column shape the SLA cell uses. */
+.status-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+
 .ticket-no {
   font-family: var(--font-mono);
   font-size: 0.85em;

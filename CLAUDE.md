@@ -118,7 +118,8 @@ every derivation, formatter and vocabulary lives in a pure module next to the
 components that render it, never inside the component: `slaView.js`,
 `remoteAccessView.js`, `auditView.js`, `reportsView.js`, `slaReportView.js`,
 `slaKpis.js`, `poolView.js`, `emailRulesView.js`, `m365View.js`,
-`availabilityHistoryView.js`, `ticketTimelineView.js`, `attachmentView.js`. A
+`availabilityHistoryView.js`, `ticketTimelineView.js`, `attachmentView.js`,
+`confirmationView.js`. A
 screen owns layout, local state and the API call; a view module owns the rule.
 Each is pinned by a plain-node check script in `client/` wired into
 `cd client && npm test` — the same contract the server suites keep.
@@ -171,9 +172,21 @@ the queue already filters on are honoured.
 ## Business rules
 
 **Lifecycle** — `NEW → IN_PROGRESS → RESOLVED → CLOSED`, plus
-`RESOLVED → IN_PROGRESS` rework. `CLOSED` is final for people; only a requester
-email reply reopens it, via `ticketIntake.js`, which deliberately bypasses
-`canTransition`.
+`RESOLVED → IN_PROGRESS` rework. Resolving asks the requester to confirm (the
+resolve email carries the confirmation link). `CLOSED` is final for people;
+only a requester email reply reopens it, via `ticketIntake.js`, which
+deliberately bypasses `canTransition`. Four paths write `ticket.closed`, all
+compare-and-set and audited with their `via` metadata: an agent closing their
+own ticket (plain), an administrator overriding a pending confirmation
+(`via: force_close` — the button reads "Force close…", the requester's link
+goes dead), the requester's confirmation click (`via:
+resolution_confirmation`), and the auto-close sweep (`via: auto_close`) —
+unconfirmed RESOLVED tickets close after `resolutionAutoCloseDays` (default 3,
+admin-tunable; 0 disables), swept by `src/resolutionSweeper.js`. Every serialized ticket carries the derived
+`awaitingConfirmation` flag and, when auto-close is enabled, an absolute
+`confirmationAutoCloseAt` deadline — the queue's status cell, the detail
+header and the inspector render it through `confirmationView.js`; the client
+never re-derives the window.
 
 **Roles** — `user` (no tickets), `agent`, `admin`. First sign-in yields `agent`.
 Nobody changes their own role. **At least one active admin always remains** — the
@@ -249,12 +262,19 @@ stamps it on every password write (self-service or admin reset) and
 `requireAuth` rejects any token whose `iat` predates it. `express` runs with
 `trust proxy: 1` so rate-limit keys see the real client address behind Fly.
 
-**No links in email.** No notification carries a URL. A requester has no portal
-account — often their account is the very thing that is broken — and an agent
-already works in TicketDesk, so the reply-to-this-mail address is the only
-channel either audience needs. `email/statusLink.js` and the public status route
-remain (a link that is already in someone's inbox keeps working) but nothing
-emits one; `PORTAL_BASE_URL` is no longer read by the email layer.
+**One link in email: the resolution confirmation.** No notification carries a
+URL **except the resolve notification**, whose signed `#/confirm/:token` link
+lets the requester close their own resolved ticket — the one action a requester
+cannot safely express by replying ("yes" is ambiguous against reopen-on-reply).
+The page is deliberately two-step (the GET shows the ticket; a button POSTs
+closes it), so mail scanners that prefetch links close nothing.
+`email/statusLink.js` signs it; `routes/public.js` POST /confirm-resolution
+answers it (compare-and-set close from RESOLVED only, rate-limited, audited as
+`via: resolution_confirmation`). A requester has no portal account — often
+their account is the very thing that is broken — so every other notification
+stays link-free and the reply-to-this-mail address remains the channel for
+everything else. `PORTAL_BASE_URL` gates the link: unset, the resolve mail
+falls back to the old "will be closed after confirmation" wording.
 
 **Outbound transport** — `src/mailer.js` picks exactly one: **Microsoft Graph →
 SMTP → the console fallback**, in that order. All three speak the same small
@@ -271,10 +291,10 @@ test run.
 
 **Throttling** — `src/rateLimit.js` is a fixed-window in-memory limiter,
 applied only where guessing is cheap: `POST /api/auth/login` (IP + target
-email), `POST /api/profile/password` (account) and the public status lookup
-(IP). A 429 never reaches the handler, so it also caps the bcrypt cost an
-attacker can impose. Single-instance by design — a second machine would get
-its own buckets.
+email), `POST /api/profile/password` (account), and both public surfaces
+(`GET /ticket-status` and `POST /confirm-resolution`, IP). A 429 never reaches
+the handler, so it also caps the bcrypt cost an attacker can impose.
+Single-instance by design — a second machine would get its own buckets.
 
 **Concurrency** — every ownership change goes through
 `workloadService.moveTicket`, a compare-and-set (`updateMany` with the expected
@@ -327,7 +347,7 @@ Reuse it; do not write a bare `update` for ownership.
 
 ```bash
 npm run dev                  # root: API :4000 + UI :5173 via concurrently
-cd server && npm test        # all 42 suites (scripts/run-all-tests.js)
+cd server && npm test        # all 43 suites (scripts/run-all-tests.js)
 cd server && node scripts/run-all-tests.js imap   # a few suites, by substring
 cd server && npm run test:pg:up      # one-time: disposable local test PostgreSQL
 cd client && npx vite build  # production build

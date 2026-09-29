@@ -3,16 +3,52 @@
 Current checkpoint. Update this at the end of every task.
 Architecture and conventions live in `../CLAUDE.md`.
 
-_Last updated: 2026-09-28_
+_Last updated: 2026-09-29_
 
 ## Current Phase
 
-Supporting (multi-group) membership feature — an agent can belong to up to 3
-groups. Groups other than the primary act as "supporting" memberships, which
-can only receive low/moderate priority tickets from those secondary groups.
+Requester resolution confirmation — the resolve-ask, the requester's one-click
+close, the auto-close sweep, and now the agent-facing "awaiting confirmation"
+indicator (queue status cell, detail header, inspector) derived from the
+serialized `awaitingConfirmation` / `confirmationAutoCloseAt` fields and
+rendered through `client/src/confirmationView.js`.
 
 ## Completed
 
+- **Admin force close of a pending confirmation (2026-09-29, same feature).**
+  Closing a RESOLVED ticket — which is always awaiting the requester's
+  confirmation — is now a first-class audited override: `applyStateChange`
+  writes the close as a compare-and-set on `state = 'RESOLVED'` (a requester
+  confirming in the same instant wins; the admin gets a 409 with refresh
+  guidance instead of double-closing), stamps `via: force_close` in the trail,
+  and the description names the overriding admin. The detail header's primary
+  action reads "Force close…" for those tickets and the dialog spells out the
+  override. Permission boundary unchanged: admins anywhere, the ticket's own
+  agent, and nobody else. Pinned by H1–H12 in `test-resolution-confirm`.
+- **Awaiting-confirmation indicator (2026-09-29, same feature).** Serialized
+  tickets now carry `awaitingConfirmation` (true while RESOLVED) and, when
+  auto-close is enabled, an absolute `confirmationAutoCloseAt` — both derived
+  server-side in `serializeTicket` from one settings read per request (the
+  confirmation window rides `slaCtx`). New pure module
+  `client/src/confirmationView.js` (26 checks, `confirmation-check.mjs` in the
+  client chain) shapes the chip label/tone; `ConfirmationChip` in `ui.jsx`
+  renders it in the queue's status cell, the detail header and the inspector,
+  which also gains an absolute "Auto-close" row. Window 0 shows the chip with
+  no clock. Pinned by G1–G9 in `test-resolution-confirm`.
+- **Requester resolution confirmation + auto-close (2026-09-29).** The resolve
+  notification now carries a signed confirmation link (the one link any
+  outbound email carries — a deliberate, documented exception to the no-links
+  rule) to a public two-step page: GET shows the resolution, the button POSTs
+  `POST /api/public/confirm-resolution`, which compare-and-set closes the
+  ticket from RESOLVED only and audits `via: resolution_confirmation`.
+  Unconfirmed tickets auto-close after `resolutionAutoCloseDays` (default 3,
+  0 disables; admin-tunable on SLA Settings) via the new
+  `src/resolutionSweeper.js` background job (conventions of the handover/SLA
+  sweepers; interval read at boot from `RESOLUTION_SWEEP_INTERVAL_MINUTES`).
+  New suite `test-resolution-confirm` (41 checks) registered in the runner
+  (43 suites total); `sla-settings-check` and `test-sla-settings` updated for
+  the two new SLA-group keys. Client: `#/confirm/:token` route,
+  `ConfirmResolutionPage.jsx`, `api.confirmResolution`.
 - Email parsing → ticket pipeline (deterministic, no LLM)
 - Microsoft 365 shared-mailbox ingestion: polling + change-notification webhooks
 - Ticket lifecycle and reassignment authorization
@@ -548,6 +584,15 @@ Picked up the interrupted session and finished it. The suite count went 37 → 4
   assignment engine only gates at time of assignment.
 
 ## Last Verified
+
+**2026-09-29**, after the requester resolution-confirmation feature:
+
+- `cd server && npm test`: **43/43 suites passed** on the disposable local
+  PostgreSQL test cluster (incl. the new `test-resolution-confirm`, 41 checks)
+- `cd client && npm test`: all check scripts pass, including `mobile-check.mjs`
+  (619 assertions, 0 failures)
+- `cd client && npx vite build`: Vite production build passed
+- `npm run scan:secrets`: clean
 
 **2026-09-27**, after the pending-deployment audit and the two fixes it found:
 

@@ -8,7 +8,7 @@ import { Conversation } from './TicketConversation.jsx';
 import { PropertiesCard, SlaCard, RemoteAccessCard, ActionsCard } from './TicketInspector.jsx';
 import { ReassignModal, HandoverModal, ResolveModal, DeleteZone } from './TicketModals.jsx';
 import {
-  Spinner, ErrorState, StateBadge, PriorityBadge, SlaBadge, ConfirmDialog, useToast,
+  Spinner, ErrorState, StateBadge, PriorityBadge, SlaBadge, ConfirmationChip, ConfirmDialog, useToast,
 } from './ui.jsx';
 
 const STATE_LABELS = Object.fromEntries(STATES.map((s) => [s.value, s.label]));
@@ -167,6 +167,7 @@ export default function TicketDetail({ id, me, onChanged }) {
             <div className="pill-row">
               <span className="cell-id">{ticket.ticketNumber}</span>
               <StateBadge state={ticket.state} />
+              <ConfirmationChip ticket={ticket} />
               <PriorityBadge priority={ticket.priority} />
               <SlaBadge ticket={ticket} />
               {ticket.awaitingAssignment && <span className="chip chip-warn">awaiting assignment</span>}
@@ -291,14 +292,21 @@ export default function TicketDetail({ id, me, onChanged }) {
 
       {closeConfirm && (
         <ConfirmDialog
-          title="Close this ticket?"
-          message={`${ticket.ticketNumber} will be closed. Closed tickets can be reopened if the requester replies, but no further status changes to NEW are possible.`}
-          confirmLabel="Close ticket"
+          title={ticket.awaitingConfirmation ? 'Force close this ticket?' : 'Close this ticket?'}
+          message={
+            ticket.awaitingConfirmation
+              ? `${ticket.ticketNumber} is awaiting the requester's confirmation. Force closing overrides it: the ticket closes now${ticket.confirmationAutoCloseAt ? ` (the auto-close was set for ${new Date(ticket.confirmationAutoCloseAt).toLocaleString()})` : ''}, the audit trail records the override, and only a reply from the requester can reopen it.`
+              : `${ticket.ticketNumber} will be closed. Closed tickets can be reopened if the requester replies, but no further status changes to NEW are possible.`
+          }
+          confirmLabel={ticket.awaitingConfirmation ? 'Force close' : 'Close ticket'}
           danger
           busy={busy}
           onCancel={() => setCloseConfirm(false)}
           onConfirm={async () => {
-            const ok = await run(async () => api.closeTicket(id, {}), 'Ticket closed');
+            const ok = await run(
+              async () => api.closeTicket(id, { note: ticket.awaitingConfirmation ? 'Force closed by an administrator — pending confirmation overridden' : undefined }),
+              ticket.awaitingConfirmation ? 'Ticket force-closed' : 'Ticket closed'
+            );
             if (ok) setCloseConfirm(false);
           }}
         />
@@ -379,14 +387,19 @@ function PrimaryActions({
     && !['RESOLVED', 'CLOSED'].includes(ticket.state);
 
   // The single most likely next step. Everything else drops to secondary so
-  // the eye is not asked to choose between five equal buttons.
+  // the eye is not asked to choose between five equal buttons. Closing a
+  // ticket that is awaiting the requester's confirmation overrides that
+  // confirmation, so the button names it.
   let primary = null;
   if (canStart && ticket.state === 'NEW' && (mine || isAdmin)) {
     primary = { label: 'Start working', onClick: onStart };
   } else if (canResolve) {
     primary = { label: 'Resolve…', onClick: onResolve };
   } else if (canClose) {
-    primary = { label: 'Close ticket', onClick: onClose };
+    primary = {
+      label: ticket.awaitingConfirmation ? 'Force close…' : 'Close ticket',
+      onClick: onClose,
+    };
   } else if (canTake) {
     primary = { label: 'Take ticket', onClick: onTake };
   }

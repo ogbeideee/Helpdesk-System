@@ -4,6 +4,7 @@ import { PageHeaderContext } from './pageHeader.js';
 import { Avatar, Icon } from './components/ui.jsx';
 import Login from './components/Login.jsx';
 import StatusPage from './components/StatusPage.jsx';
+import ConfirmResolutionPage from './components/ConfirmResolutionPage.jsx';
 import ErrorBoundary from './components/ErrorBoundary.jsx';
 import Dashboard from './components/Dashboard.jsx';
 import TicketsPage from './components/TicketsPage.jsx';
@@ -177,6 +178,7 @@ export default function App() {
   // The requester status page is public: it renders without a session and
   // without the staff shell — and without waiting on /api/auth/me.
   if (route.name === 'status') return <StatusPage token={route.token} />;
+  if (route.name === 'confirm') return <ConfirmResolutionPage token={route.token} />;
   if (me === undefined) return <div className="boot-screen"><span className="spinner" /></div>;
   if (me === null) return <Login onLogin={setMe} />;
 
@@ -377,6 +379,10 @@ function parseHash() {
   // Public requester status lookup — the signed link from helpdesk emails.
   const statusMatch = /^\/status\/([A-Za-z0-9._~-]+)$/.exec(hash);
   if (statusMatch) return { name: 'status', token: statusMatch[1], path: '/status', search, query };
+  // Public resolution confirmation — the "Yes, it's resolved" link in the
+  // resolve email. Same signed token, one deliberate POST on the page.
+  const confirmMatch = /^\/confirm\/([A-Za-z0-9._~-]+)$/.exec(hash);
+  if (confirmMatch) return { name: 'confirm', token: confirmMatch[1], path: '/confirm', search, query };
 
   const base = { search, query };
   switch (hash) {

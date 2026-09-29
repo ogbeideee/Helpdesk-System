@@ -200,7 +200,8 @@ npm run test:e2e                # full end-to-end workflow
 npm run test:sla                # SLA cycle tracking
 npm run test:lifecycle          # ticket state machine
 npm run test:users              # role management
-# … ~35 suites total
+npm run test:resolution-confirm # requester resolution confirmation + auto-close
+# … 43 suites total
 ```
 
 `npm test` runs every suite in sequence. Each suite reports `PASS` / `FAIL`,

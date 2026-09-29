@@ -59,6 +59,7 @@ const SUITES = [
   'test-sla-notify',
   'test-assignment-groups',
   'test-status-link',
+  'test-resolution-confirm',
   'test-e2e',
 ];
 

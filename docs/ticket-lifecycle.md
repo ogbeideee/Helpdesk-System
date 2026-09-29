@@ -24,6 +24,43 @@ Resolving records the resolution note, the resolving agent, `resolvedAt` and
 the transition. Closing records the closing actor, `closedAt` and an audit
 entry.
 
+## Resolution confirmation and auto-close
+
+Resolving asks the requester to confirm. The resolve email carries a signed
+confirmation link (the one link any outbound email carries; it needs
+`PORTAL_BASE_URL`) to a public page that shows the resolution and a
+"Yes, it's resolved — close my ticket" button.
+
+- The page itself closes nothing: opening (or prefetching) the link is a GET;
+  only the button POSTs (`POST /api/public/confirm-resolution`), so mail
+  scanners cannot close tickets.
+- The close is a compare-and-set from `RESOLVED` only. A ticket reopened by a
+  requester reply, already closed by an agent, or already swept answers the
+  click with a polite "nothing to confirm" instead of overwriting anything.
+- Four paths write `ticket.closed`, each audited with its `via` metadata:
+  an agent closing their own ticket (plain), an administrator overriding a
+  pending confirmation (`via: force_close`), the requester's confirmation
+  (`via: resolution_confirmation`), and the auto-close sweep
+  (`via: auto_close`).
+- **An administrator may force close a ticket that is awaiting the requester's
+  confirmation** — the detail header shows "Force close…" for those tickets,
+  the dialog spells out that the pending confirmation is overridden, the trail
+  stamps `via: force_close` with the admin as the actor, and the requester's
+  confirmation link stops working (the close is a compare-and-set, so a
+  confirmation arriving at the same instant wins and the admin is told to
+  refresh instead of double-closing).
+- An unconfirmed ticket does not stay RESOLVED forever: the background sweep
+  (`src/resolutionSweeper.js`) closes it after
+  `resolutionAutoCloseDays` (default 3, admin-tunable on the SLA Settings
+  screen; **0 disables auto-close** and the ticket waits for a manual close).
+- Agents can see the wait: every ticket payload carries a derived
+  `awaitingConfirmation` flag (and, when auto-close is on, an absolute
+  `confirmationAutoCloseAt` deadline). The queue's status cell, the detail
+  header and the inspector render it — the chip escalates from neutral to
+  "soon" (last 24h) to overdue, and the tooltip names when the sweep fires.
+- Every path leaves `CLOSED` final for people: only a requester email reply
+  reopens the ticket, exactly as before.
+
 ## Who may do what
 
 All of it is enforced in `src/services/assignmentPolicy.js` and applied by

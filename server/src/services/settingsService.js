@@ -203,6 +203,33 @@ const DEFINITIONS = {
     },
   },
 
+  // ---- requester resolution confirmation (see src/resolutionSweeper.js) ---
+  // How long a RESOLVED ticket waits for the requester's confirmation before
+  // the background sweep closes it. 0 keeps it RESOLVED until someone closes
+  // it by hand — nothing is ever closed automatically.
+  resolutionAutoCloseDays: {
+    group: 'sla',
+    label: 'Auto-close resolved tickets after (days)',
+    type: 'int',
+    min: 0,
+    max: 90,
+    env: 'RESOLUTION_AUTO_CLOSE_DAYS',
+    fallback: 3,
+    help:
+      'Days a RESOLVED ticket waits for the requester to confirm before the sweep closes it. ' +
+      '0 never closes automatically — an agent closes it by hand instead.',
+  },
+  resolutionSweepIntervalMinutes: {
+    group: 'sla',
+    label: 'Resolution auto-close sweep interval (minutes)',
+    type: 'int',
+    min: 5,
+    max: 24 * 60,
+    env: 'RESOLUTION_SWEEP_INTERVAL_MINUTES',
+    fallback: 60,
+    help: 'How often the sweep looks for resolved tickets past their confirmation window. Read at boot; changing it needs a restart.',
+  },
+
   // ---- scheduled reports (see src/reportScheduler.js) ---------------------
   // Report periods use the SLA timezone above; these keys configure delivery.
   // Empty recipients keeps the scheduler dormant — nothing is ever sent (and

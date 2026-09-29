@@ -15,7 +15,7 @@ import {
   canRequest as raCanRequest, allowedActions as raAllowedActions,
   durationLabel as raDuration, liveSession as raLive, historyRows as raHistoryRows,
 } from '../remoteAccessView.js';
-import { StateBadge, Avatar, fmtDateTime, timeAgo } from './ui.jsx';
+import { StateBadge, ConfirmationChip, Avatar, fmtDateTime, timeAgo } from './ui.jsx';
 import { requiredSkillOf, skillLabel, assigneeBelowRequired } from '../ticketSkillView.js';
 
 export function Row({ label, children, stack }) {
@@ -51,7 +51,20 @@ export function PropertiesCard({ ticket, busy, groupPick, setGroupPick, run, me 
         {ticket.requesterEmail && <span className="insp-sub mono-sm">{ticket.requesterEmail}</span>}
       </Row>
 
-      <Row label="Status"><StateBadge state={ticket.state} /></Row>
+      <Row label="Status">
+        <span className="insp-inline">
+          <StateBadge state={ticket.state} />
+          <ConfirmationChip ticket={ticket} />
+        </span>
+      </Row>
+      {ticket.state === 'RESOLVED' && ticket.confirmationAutoCloseAt && (
+        <Row label="Auto-close">
+          <span title={fmtDateTime(ticket.confirmationAutoCloseAt)}>
+            {fmtDateTime(ticket.confirmationAutoCloseAt)}
+          </span>
+          <span className="insp-sub">if the requester does not confirm</span>
+        </Row>
+      )}
 
       <Row label="Priority">
         <select
