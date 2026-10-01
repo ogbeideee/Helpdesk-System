@@ -367,7 +367,7 @@ Reuse it; do not write a bare `update` for ownership.
 
 ```bash
 npm run dev                  # root: API :4000 + UI :5173 via concurrently
-cd server && npm test        # all 43 suites (scripts/run-all-tests.js)
+cd server && npm test        # all 45 suites (scripts/run-all-tests.js)
 cd server && node scripts/run-all-tests.js imap   # a few suites, by substring
 cd server && npm run test:pg:up      # one-time: disposable local test PostgreSQL
 cd client && npx vite build  # production build

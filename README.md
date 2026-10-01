@@ -203,7 +203,7 @@ npm run test:sla                # SLA cycle tracking
 npm run test:lifecycle          # ticket state machine
 npm run test:users              # role management
 npm run test:resolution-confirm # requester resolution confirmation + auto-close
-# … 43 suites total
+# … 45 suites total
 ```
 
 `npm test` runs every suite in sequence. Each suite reports `PASS` / `FAIL`,

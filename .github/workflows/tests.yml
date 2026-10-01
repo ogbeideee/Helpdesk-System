@@ -1,6 +1,6 @@
 # The test gate. The secret-scan workflow proves no credential leaked; this one
 # proves the code still works. It runs the same suites a developer runs before
-# pushing — the 43 server suites on a disposable PostgreSQL service, the client
+# pushing — the 45 server suites on a disposable PostgreSQL service, the client
 # check scripts, and the production build — so a red run means exactly what it
 # means locally.
 #
@@ -28,7 +28,7 @@ concurrency:
 
 jobs:
   server:
-    name: Server suites (43)
+    name: Server suites (45)
     runs-on: ubuntu-latest
     services:
       postgres:
