@@ -6,13 +6,14 @@
 // looks: a chat bubble for conversation, a compact one-line marker for
 // everything else, so a status change never out-shouts an actual message.
 
-import { useState } from 'react';
-import { fmtDateTime, timeAgo, Avatar } from './ui.jsx';
+import { useEffect, useState } from 'react';
+import { fmtDateTime, timeAgo, Avatar, Modal } from './ui.jsx';
 import {
   eventMeta, isMessageKind, handoverMeta,
 } from '../ticketTimelineView.js';
 import {
   attachmentTitle, attachmentType, formatBytes, downloadAttachment,
+  canPreviewInline, fetchAttachmentObjectUrl,
 } from '../attachmentView.js';
 
 export function Conversation({ ticket, events, handovers, originalAttachments }) {
@@ -119,19 +120,43 @@ function EventItem({ ev }) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Attachments — metadata chips with an authorized download action.    */
-/* Visually secondary: a quiet row under the message they arrived with. */
+/* Attachments — metadata chips, with the actions the server allows.    */
+/* Images the server marked previewable open in place; everything else   */
+/* is a download. Visually secondary: a quiet row under the message.     */
 /* ------------------------------------------------------------------ */
 
 export function AttachmentChips({ ticketId, items }) {
   const [busyId, setBusyId] = useState(null);
   const [error, setError] = useState('');
+  // { att, url } while a preview is open. The URL is an authorized blob, never
+  // a direct link to the endpoint, so the session token is still required.
+  const [preview, setPreview] = useState(null);
+
+  // One owner for the object URL: revoking when the preview closes AND on
+  // unmount keeps a ticket switch from leaking blobs.
+  useEffect(() => {
+    if (!preview) return undefined;
+    const { url } = preview;
+    return () => URL.revokeObjectURL(url);
+  }, [preview]);
 
   async function download(att) {
     setBusyId(att.id);
     setError('');
     try {
       await downloadAttachment(ticketId, att);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function openPreview(att) {
+    setBusyId(att.id);
+    setError('');
+    try {
+      setPreview({ att, url: await fetchAttachmentObjectUrl(ticketId, att) });
     } catch (e) {
       setError(e.message);
     } finally {
@@ -146,6 +171,15 @@ export function AttachmentChips({ ticketId, items }) {
           <span className="attachment-name">{att.filename}</span>
           <span className="muted small">{attachmentType(att)}</span>
           <span className="muted small">{formatBytes(att.size)}</span>
+          {canPreviewInline(att) && (
+            <button
+              className="btn btn-ghost btn-sm"
+              disabled={busyId === att.id}
+              onClick={() => openPreview(att)}
+            >
+              {busyId === att.id ? '…' : 'Preview'}
+            </button>
+          )}
           <button
             className="btn btn-ghost btn-sm"
             disabled={busyId === att.id}
@@ -156,6 +190,25 @@ export function AttachmentChips({ ticketId, items }) {
         </span>
       ))}
       {error && <span className="muted small" role="alert">{error}</span>}
+      {preview && (
+        <Modal title={preview.att.filename} onClose={() => setPreview(null)} width={760}>
+          <div className="attachment-preview">
+            <img src={preview.url} alt={preview.att.filename} />
+          </div>
+          <div className="modal-actions">
+            <span className="muted small">
+              {attachmentType(preview.att)} · {formatBytes(preview.att.size)}
+            </span>
+            <button
+              className="btn btn-primary btn-sm"
+              disabled={busyId === preview.att.id}
+              onClick={() => download(preview.att)}
+            >
+              {busyId === preview.att.id ? '…' : 'Download'}
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

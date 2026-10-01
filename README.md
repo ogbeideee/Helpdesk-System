@@ -165,9 +165,11 @@ deliberately not documented here, in the UI, or in any configuration file.
   status/priority/category/group/agent filters, multi-select, bulk priority /
   category / group changes, and pagination.
 - **Ticket detail** — properties panel, workflow actions (start, resolve with
-  mandatory note, close, reopen), assign/reassign, group & priority changes,
-  internal notes vs requester-facing updates, and a unified activity timeline
-  (created, assignments, status changes, notes, resolution).
+  mandatory note, close, reopen, and an admin force close), assign/reassign,
+  group & priority changes, internal notes vs requester-facing updates, and a
+  unified activity timeline (created, assignments, status changes, notes,
+  resolution) including the files each message carried — image attachments open
+  in place, everything else downloads.
 - **Agents** (admin) — create/edit agents, skill levels L1–L3, availability
   toggles, live workload, **multi-group membership** (primary + up to 2 supporting
   groups shown with distinct badges); deactivation releases their open tickets.
@@ -239,10 +241,15 @@ self-service sign-up.
 - **Microsoft Graph has never run against live credentials.** Polling, webhooks
   and subscription renewal are written and tested against mocks; the live
   deployment currently uses the Microsoft 365-to-Gmail forwarding and IMAP path.
-- **Attachments are metadata only** — no file is stored anywhere.
+- **Attachments are viewable, not archived.** A ticket shows the files and
+  images the requester sent, and an image opens in place; the bytes are cached,
+  not kept forever. The message itself stays in the shared mailbox and is the
+  archive, so a cache miss re-reads it. See
+  [`docs/email-parsing.md`](docs/email-parsing.md).
 - **Classification and routing remain deterministic.** The optional Groq
   relevance filter only decides whether a new message is safe to suppress from
   ticket creation; it never chooses category, priority, assignment group, or
   agent, and it is disabled by default.
-- **Background jobs run in every server process.** Safe, but wasteful if you
-  ever run more than one instance.
+- **Background jobs run in every server process, and a second process is not
+  merely wasteful: it duplicates every poll.** That is why the deployment runs
+  exactly one machine (`min_machines_running = 1`, and no auto-scaling).

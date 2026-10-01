@@ -11,7 +11,14 @@ const app = express();
 // Deployed behind the Fly.io proxy — honor one hop of X-Forwarded-For so
 // rate limiting keys on the real client address, not the proxy's.
 app.set('trust proxy', 1);
-app.use(cors());
+// Security headers on every response (nosniff, no framing, referrer policy).
+// See src/securityHeaders.js for what is set and what is deliberately not.
+app.use(require('./src/securityHeaders').securityHeaders());
+// CORS: in production the SPA is served by this process, so cross-origin
+// browser calls are not expected — the wildcard is switched off unless
+// CORS_ORIGINS names real origins. Development keeps the permissive shape.
+const corsOptions = require('./src/securityHeaders').corsOptions();
+if (corsOptions) app.use(cors(corsOptions));
 // gzip every response — the SPA bundle and API payloads alike. Express serves
 // no compression by default, so a first visit previously downloaded the bundle
 // uncompressed.
@@ -241,6 +248,11 @@ app.get('*', (req, res, next) => {
   res.sendFile(path.join(__dirname, '..', 'client', 'dist', 'index.html'));
 });
 
+// Central error handler — registered LAST, after every route and the SPA
+// fallback. Anything a route re-throws lands here: the log keeps the truth// (status, route, stack) and a 5xx answer carries a generic message instead of
+// a raw Prisma error. See src/errorHandler.js.
+app.use(require('./src/errorHandler').errorHandler(console));
+
 // NOTE: Everything from here down is the "standalone server" concern — binding a
 // TCP port and running the long-lived background timers. server.js is THE entry
 // point (`node server.js`, the Docker CMD); the export at the bottom exists so
@@ -262,6 +274,7 @@ app.get('*', (req, res, next) => {
 //   - SLA sweeper             (server/src/slaSweeper)
 //   - resolution auto-close sweeper (server/src/resolutionSweeper)
 //   - report scheduler        (server/src/reportScheduler)
+//   - ingestion watchdog      (server/src/ingestionWatchdog)
 //   - Graph mailbox poller     (server/src/graph/poller)
 //   - IMAP mailbox poller      (server/src/imap/poller)
 //   - Graph subscription      lifecycle (server/src/graph/subscriptionService)
@@ -339,8 +352,20 @@ function startBackgroundJobs() {
   // or RESOLUTION_SWEEP_INTERVAL_MINUTES=0.
   require('./src/resolutionSweeper').startResolutionSweeper({ logger: console });
 
+  // Attachment byte cache. The bytes are a cache, not the record — the source
+  // message in the mailbox is — so this only evicts what the TTL says is stale.
+  // No-op with ATTACHMENT_CACHE_TTL_DAYS=0 or
+  // ATTACHMENT_CACHE_SWEEP_INTERVAL_MINUTES=0.
+  require('./src/attachmentCacheSweeper').startAttachmentCacheSweeper({ logger: console });
+
   // Scheduled weekly/monthly reports. No-op with REPORT_SCHEDULER_INTERVAL_MS=0.
   require('./src/reportScheduler').startReportScheduler({ logger: console });
+
+  // Ingestion watchdog: the one failure that must not be silent is email
+  // stopping becoming tickets. Watches the pollers' own operational snapshots
+  // and alerts every active administrator (in-app + email) once per incident.
+  // No-op with INGESTION_WATCHDOG_INTERVAL_MINUTES=0.
+  require('./src/ingestionWatchdog').startIngestionWatchdog({ logger: console });
 
   require('./src/graph/poller').startPolling();
 
@@ -377,7 +402,9 @@ if (isStandalone) {
     require('./src/services/handoverService').stopExpirySweeper();
     require('./src/slaSweeper').stopSlaSweeper();
     require('./src/resolutionSweeper').stopResolutionSweeper();
+    require('./src/attachmentCacheSweeper').stopAttachmentCacheSweeper();
     require('./src/reportScheduler').stopReportScheduler();
+    require('./src/ingestionWatchdog').stopIngestionWatchdog();
     require('./src/graph/subscriptionService').getSubscriptionService().stopLifecycle();
     server.close(async () => {
       await prisma.$disconnect();

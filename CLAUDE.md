@@ -94,7 +94,7 @@ for small screens. The mobile rules live in one section at the end of
 | `workloadService.js` | Workload, unattended claiming, `moveTicket`, rebalancing |
 | `handoverService.js` | Handover offers, queue, expiry, reroute |
 | `settingsService.js` | Admin-configurable values (`Setting` table, env defaults) |
-| `intakeScreening.js` | Automated-mail gate — RFC 3834 headers + ignored senders → `skipped_automated` |
+| `intakeScreening.js` | Deterministic gate — recall notices, RFC 3834 headers, ignored subjects/senders → `skipped_automated` |
 | `emailTriageService.js` | Optional Groq relevance gate → `skipped_non_ticket`; fail-open, policy-gated, audited |
 | `ticketIntake.js` / `emailIngestion.js` | Email → ticket pipeline |
 
@@ -238,12 +238,32 @@ conservative: it strips only a legal/social footer marker, or a *trailing run*
 of contact lines behind a closing salutation — never a lone line, never a
 contact detail written mid-request. The raw `body` always keeps everything.
 
-**Attachments** — bytes are fetched and uploaded by `attachmentService`; the
-body stays text, so decorative inline images (signature logos, social icons,
-pasted pictures) are **skipped, not stored** — inline images only, and they
-never consume the size/count limits. Skips are logged and counted in the
-`ticket.created` audit metadata. `ATTACHMENT_SKIP_INLINE_IMAGES=false` restores
-the old behaviour.
+**Attachments are a cache, not the record.** The source message stays in the
+shared mailbox for good (the poller never moves or deletes it, only flags
+`\Seen`), and that is the archive — attachment binaries are not kept long-term
+because nobody archives them and they only have to be *viewable*. So
+`attachmentService` caches what arrived, and `attachmentFetchService` serves a
+view: cache first, then a re-read of the source message by the identity the
+`Attachment` row already carries (`messageId` + `source`), matched strictly by
+sanitized display name **and** byte size so the wrong bytes are never served. A
+miss — deploy, machine replacement, eviction, a cache that could not be written
+— costs a re-read, never data, which is why the directory is allowed to be
+ephemeral and why a failed cache write **must not** cost the ticket. Everything
+here is decided from the sender's message, never from the file: the body stays
+text, so decorative inline images (signature logos, social icons, pasted
+pictures) are **skipped** — inline images only, they never consume the
+size/count limits, and skips are logged and counted in the `ticket.created`
+audit metadata (`ATTACHMENT_SKIP_INLINE_IMAGES=false` restores the old
+behaviour). Eviction is `ATTACHMENT_CACHE_TTL_DAYS` (default 30, 0 keeps
+everything) via `src/attachmentCacheSweeper.js`.
+
+**Only images preview, and only by allowlist.** The download endpoint serves
+`inline` with its real type for png/jpeg/gif/webp — the set
+`attachmentFetchService.PREVIEW_IMAGE_TYPES` holds — and an inert
+`application/octet-stream` with an attachment disposition for everything else,
+SVG and HTML included, always with `nosniff`. The client never decides this:
+`serializeAttachment` sets a `previewable` flag and the ticket screen renders an
+image only when the server said so, through an authenticated blob URL.
 
 **Email relevance triage** — `emailTriageService` runs only after deterministic
 screening and thread resolution, and only for new-ticket candidates. Groq may
@@ -387,10 +407,13 @@ exist.
 - **Live Microsoft Graph verification.** Polling, webhooks and subscription
   renewal are written and tested against mocks; they have never run against real
   Microsoft credentials.
-- **Object storage beyond the local filesystem.** Attachment bytes are stored
-  and served (`src/services/attachmentStorage.js`, local private directory by
-  default), but only behind the injectable `put`/`get` provider seam — no S3 or
-  Azure Blob provider is implemented.
+- **Object storage beyond the local filesystem — deliberately not needed.**
+  Attachment bytes are cached in a private local directory
+  (`src/services/attachmentStorage.js`) behind the injectable `put`/`get`
+  provider seam, and re-read from the source message when the cache cannot
+  answer. Because the mailbox is the archive, there is no durable blob store to
+  build, back up or replicate — no S3 or Azure Blob provider is implemented,
+  and adding one would only change where a disposable cache lives.
 - **Firebase.** Not used anywhere. (Supabase, by contrast, **is** the
   production PostgreSQL host.)
 

@@ -1,11 +1,12 @@
 /* Pins the attachment rules: how a file is labelled, which message it belongs
-   to, and that nothing on this path can render what it downloads. Pure module,
-   checked the same way the other client view modules are (plain node, no DOM
-   for the pure parts).
+   to, which bytes may be rendered in place (the server decides), and that the
+   download path stays inert. Pure module, checked the same way the other client
+   view modules are (plain node, no DOM for the pure parts).
    Usage: node attachments-check.mjs */
 
 import {
   attachmentType, formatBytes, attachmentTitle, originalAttachments, attachmentsForComment,
+  canPreviewInline,
 } from './src/attachmentView.js';
 
 let failures = 0;
@@ -92,6 +93,35 @@ check('C5 nothing here can execute or inline a file',
   !/innerHTML|insertAdjacentHTML|data:text|eval\(/.test(src));
 check('C6 the view module has no JSX, so it is importable by the node checks',
   !/<\w+[ />]/.test(src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')));
+
+/* ---- D. preview: the server decides, the client reflects -------------- */
+
+/* An image the server marked `previewable` opens in place; everything else is
+   a download. The allowlist is the SERVER's (attachmentFetchService.js) and the
+   client keeps no copy of it — same rule as `selectable` assignment candidates
+   and every other server-decided flag. */
+
+check('D1 preview follows the server flag and nothing else',
+  /attachment\.previewable/.test(src));
+check('D2 the client keeps no MIME allowlist of its own',
+  !/image\/(png|jpe?g|gif|webp|svg)/i.test(src));
+eq('D3 a server-flagged image previews', canPreviewInline({ previewable: true }), true);
+eq('D4 an unflagged attachment does not', canPreviewInline({ previewable: false }), false);
+eq('D5 a payload from before the flag existed does not preview',
+  canPreviewInline({ mimeType: 'image/png', size: 10 }), false);
+eq('D6 a null attachment does not preview', canPreviewInline(null), false);
+check('D7 the preview is fetched with the same authenticated call as the download',
+  (src.match(/Authorization:\s*`Bearer \$\{getToken\(\)\}`/g) || []).length === 2);
+
+/* The object URL for a preview belongs to whoever opened it: the component must
+   revoke it, or every preview leaks a blob for the life of the tab. */
+const conversation = readFileSync(new URL('./src/components/TicketConversation.jsx', import.meta.url), 'utf8');
+check('D8 the preview URL is revoked (no leaked blobs)',
+  /URL\.revokeObjectURL\(/.test(conversation));
+check('D9 the preview renders an object URL, never the API path directly',
+  /<img src=\{preview\.url\}/.test(conversation) && !/<img src="\/api\//.test(conversation));
+check('D10 the lightbox is the shared Modal, not a second dialog',
+  /<Modal /.test(conversation));
 
 console.log(failures === 0 ? '\nattachments-check: ALL PASS' : `\n${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

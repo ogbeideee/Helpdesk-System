@@ -69,8 +69,40 @@ keeps them apart.
 
 **Real attachments** - a file the sender actually attached (an invoice PDF, a
 named screenshot, `error-log.txt`). Metadata is persisted on the ticket or
-comment, and the bytes are fetched and uploaded through
-`attachmentService` → the configured `attachmentStorage` driver.
+comment, and the bytes are cached through `attachmentService` → the configured
+`attachmentStorage` driver.
+
+### The bytes are a cache; the mailbox is the archive
+
+Attachment binaries are not kept long-term, on purpose: nobody archives them and
+they only have to be *viewable*. The source message stays in the shared mailbox
+for good - the poller never moves, deletes or expunges mail, it only flags
+`\Seen` - so that message *is* the archive, and the local directory is a cache:
+
+- A view (`GET /api/tickets/:id/attachments/:attachmentId`) is served from the
+  cache when the bytes are there, and otherwise re-reads the source message by
+  the identity the `Attachment` row already stores (`messageId` + `source`),
+  parses it with the same adapter that parsed it on intake, and takes the part
+  whose **sanitized display name and byte size both match**. A near-miss is
+  never served: the agent is told the content is no longer available.
+- Anything that empties the cache costs a re-read, never data - a deploy, a
+  machine replacement, or the TTL sweep
+  (`ATTACHMENT_CACHE_TTL_DAYS`, default 30 days; 0 keeps everything;
+  `src/attachmentCacheSweeper.js`).
+- A cache that cannot be written to does **not** cost the ticket: intake logs it
+  and creates the ticket with attachment metadata anyway, and the first view
+  re-reads the source.
+- Re-reading needs the mailbox credential to work. If it does not, an uncached
+  attachment reports as unavailable - the same message a deleted file used to
+  produce, so nothing regresses.
+
+**Viewing.** The download endpoint is the only path to the bytes, and it always
+sets `nosniff`. Images on a strict allowlist (png / jpeg / gif / webp) are
+served with their real type and an `inline` disposition, so the ticket screen
+can show a thumbnail in a modal; **everything else, SVG and HTML included, stays
+an inert `application/octet-stream` download**. The client does not decide this:
+the serialized attachment carries a `previewable` flag and the screen renders an
+image only when the server set it.
 
 **Decorative inline images** - a mail client's own furniture: the signature logo,
 social-media icons, a pasted picture. These are `multipart/related` parts with
@@ -92,6 +124,8 @@ verbatim, so one policy covers both channels.
 that were stored before this policy existed. Dry run by default, like every
 other purge script; it only ever matches image parts whose filename is a mail
 client's own `imageNNN.ext` / hash name, so named attachments are untouched.
+It is no longer urgent: cached bytes are evicted on their TTL regardless, and
+the rows they belong to are metadata.
 
 ## Signatures and legal footers
 
@@ -112,6 +146,38 @@ So "Please call me on 0803 000 0000" inside a request survives, while a
 Bestaf/MRS-style block under "Regards," does not. Classification, routing and
 the relevance gate read `cleanBody`; nothing is deleted from `body`, which is
 what the ticket and the audit trail keep.
+
+## Deterministic intake screening
+
+Before any model sees a message, `services/intakeScreening.js` decides whether a
+**new** mail may open a ticket at all. It is deterministic — no LLM — and runs
+after dedupe and thread resolution, so a reply on an existing ticket is never
+blocked. Four signals, first match wins:
+
+1. **A permitted subject opens a ticket.** An induction notice is the schedule
+   for the account-creation work that follows, so it is kept however the mail is
+   flagged. Checked first; nothing below can override it.
+2. **A recalled message is suppressed.** Microsoft marks a recall with the
+   message class `IPM.Outlook.Recall` and the subject `Recall: <original>`;
+   neither ingestion channel carries the class, so the subject prefix is the
+   signal. A recall notice arrives looking like the original human sender, so no
+   sender-based rule could separate it from their real mail.
+3. **Automated-mail headers**: `Auto-Submitted` (anything but `no`),
+   `Precedence: bulk|list|junk`, `List-Id`, `List-Unsubscribe`.
+4. **Two administrator lists**, matched against what the sender actually wrote:
+   - *ignored subjects* (`intakeIgnoredSubjects`, env `INTAKE_IGNORED_SUBJECTS`)
+     — a case- and spacing-insensitive substring of the subject. This is the
+     deterministic answer to a standing announcement that is not an IT request
+     (a holiday notice, an all-hands mail): no model, no per-message judgement.
+   - *ignored senders* (`intakeIgnoredSenders`, env `INTAKE_IGNORED_SENDERS`)
+     — local-part prefix, exact address, or `@domain`. The recall **report**
+     back to the sender (`Office365Reports@microsoft.com`) is built in.
+
+A screened message is `skipped_automated`, gets no acknowledgement, and is never
+retried. A settings read failure fails open onto the built-in lists, so a
+configuration problem can never block inbound mail. `db:purge-automated` reuses
+these exact rules to remove tickets that predate them (and takes `--subject` for
+a one-off cleanup).
 
 ## Development endpoint
 

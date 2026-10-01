@@ -317,10 +317,10 @@ const DEFINITIONS = {
     // Kept in sync with DEFAULT_IGNORED_SENDERS in intakeScreening.js (no
     // import either way — the two modules would require each other).
     fallback:
-      'noreply, no-reply, donotreply, do-not-reply, mailer-daemon, postmaster, quarantine@messaging.microsoft.com',
+      'noreply, no-reply, donotreply, do-not-reply, mailer-daemon, postmaster, quarantine@messaging.microsoft.com, office365reports@microsoft.com',
     help:
       'Comma-separated. "noreply" matches a local-part prefix, "a@b.com" one exact address, "@b.com" a whole domain. ' +
-      'Automated-mail headers (Auto-Submitted, Precedence: bulk/list/junk, List-Id) are always screened regardless of this list.',
+      'Automated-mail headers (Auto-Submitted, Precedence: bulk/list/junk, List-Id) and recalled messages are always screened regardless of this list.',
     validate(value) {
       const entries = String(value ?? '')
         .split(',')
@@ -336,6 +336,36 @@ const DEFINITIONS = {
       }
       // Canonical stored form; an empty list is allowed and simply disables
       // the sender half of screening (header screening still applies).
+      return { ok: true, value: [...new Set(entries)].join(', ') };
+    },
+  },
+  intakeIgnoredSubjects: {
+    group: 'intake',
+    label: 'Subjects that never open tickets',
+    type: 'string',
+    env: 'INTAKE_IGNORED_SUBJECTS',
+    // Kept in sync with DEFAULT_IGNORED_SUBJECTS in intakeScreening.js (empty by
+    // default — only the organisation can name its own standing notices).
+    fallback: '',
+    help:
+      'Comma-separated phrases. A message whose subject contains any phrase (case- and spacing-insensitive) never opens a ticket — ' +
+      'use it for standing announcements that are not IT requests. A permitted subject (an induction plan) is never suppressed, whatever this list says.',
+    validate(value) {
+      const entries = String(value ?? '')
+        .split(',')
+        .map((entry) => entry.replace(/\s+/g, ' ').trim().toLowerCase())
+        .filter(Boolean);
+      if (entries.length > 100) {
+        return { ok: false, error: 'Subjects that never open tickets accepts at most 100 entries' };
+      }
+      for (const entry of entries) {
+        if (entry.length < 2) {
+          return { ok: false, error: `Ignored-subject entry "${entry}" is too short — use at least two characters` };
+        }
+        if (entry.length > 200) {
+          return { ok: false, error: `Ignored-subject entry "${entry.slice(0, 40)}…" is longer than 200 characters` };
+        }
+      }
       return { ok: true, value: [...new Set(entries)].join(', ') };
     },
   },

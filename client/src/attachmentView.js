@@ -53,16 +53,53 @@ export function attachmentsForComment(ticket, commentId) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Preview                                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * May these bytes be rendered on screen?
+ *
+ * The answer is the SERVER's: `previewable` is set from an allowlist of image
+ * types when the ticket is serialized (a screenshot yes; SVG, HTML and
+ * anything unrecognised no — those stay an inert download). This module keeps
+ * no allowlist of its own, so there is exactly one place to change the rule.
+ */
+export function canPreviewInline(attachment) {
+  return Boolean(attachment && attachment.previewable);
+}
+
+/**
+ * Fetch a previewable attachment and return a local object URL to render.
+ *
+ * The bytes still come through the authorized endpoint with the session token
+ * — a preview is not a second, weaker way in. The caller owns the URL and must
+ * revoke it when the preview closes.
+ *
+ * @throws {Error} with the server's own message when the content is unavailable
+ */
+export async function fetchAttachmentObjectUrl(ticketId, attachment) {
+  const res = await fetch(`/api/tickets/${ticketId}/attachments/${attachment.id}`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Could not open the attachment (${res.status})`);
+  }
+  return URL.createObjectURL(await res.blob());
+}
+
+/* ------------------------------------------------------------------ */
 /* Download                                                            */
 /* ------------------------------------------------------------------ */
 
 /**
  * Fetch one attachment and hand it to the browser as a file.
  *
- * The response is never rendered or interpreted: the server sends an inert
- * octet-stream with an attachment disposition and `nosniff`, and the blob
- * keeps that inertness on the client side. The object URL is revoked
- * immediately after the synthetic click.
+ * This is the path for everything that is not previewable, and it never
+ * renders what it receives: the blob is handed to the browser as a file and
+ * the object URL is revoked immediately after the synthetic click. The server
+ * sends an attachment disposition and `nosniff` for every non-image, so a
+ * saved file is exactly the bytes that arrived.
  *
  * @throws {Error} with the server's own message when the download is refused
  */

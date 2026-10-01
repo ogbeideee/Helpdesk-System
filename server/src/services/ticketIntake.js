@@ -330,10 +330,15 @@ async function intakeEmailMessage(
   }
 
   // Attachment persistence — the ONE shared path for every channel (IMAP,
-  // Graph, dev endpoint). Planning is pure; binaries upload only after the
-  // dedupe gates, so a replayed message never stores anything twice. A
-  // storage failure throws before any ticket/comment/attachment row exists
-  // and the message stays unseen for retry.
+  // Graph, dev endpoint). Planning is pure; binaries cache only after the
+  // dedupe gates, so a replayed message never stores anything twice.
+  //
+  // The cached bytes are NOT the record (see services/attachmentStorage.js and
+  // services/attachmentFetchService.js): the source message in the mailbox is,
+  // and a cache miss re-reads it. So a cache write failure is logged and the
+  // ticket is created anyway — losing the ticket because a disk filled up
+  // would be the wrong way round. The attachment row keeps its key and
+  // metadata, and the first view re-reads and re-caches the bytes.
   const storageClient = storage || getAttachmentStorage();
   const plan = prepareForStorage(attachments);
   if (plan.skipped.length) {
@@ -353,7 +358,16 @@ async function intakeEmailMessage(
     );
   }
   if (plan.accepted.length) {
-    await uploadAll(plan.accepted, storageClient);
+    try {
+      await uploadAll(plan.accepted, storageClient);
+    } catch (err) {
+      // Degrade to metadata-only. The message is not left unseen for a retry:
+      // a retry would re-race the dedupe gates for the same outcome.
+      logger.warn(
+        `[intake] ${plan.accepted.length} attachment(s) could not be cached: ${err.message} — ` +
+          'the ticket is created with attachment metadata; the bytes are re-read on first view'
+      );
+    }
   }
 
   // Requester reply on an existing ticket?

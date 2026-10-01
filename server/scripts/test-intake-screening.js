@@ -9,6 +9,9 @@
         the ignored-sender list is settings-driven
      E. IMAP adapter extracts the headers from raw RFC 822 source
      F. Graph adapter extracts them from internetMessageHeaders
+     G. permitted subjects (induction notices) survive every gate
+     H. the relevance gate honours permitted subjects
+     I. recalled mail, and the administrator ignored-subject list
 
    Usage: node scripts/test-intake-screening.js  (from server/) */
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
@@ -83,7 +86,9 @@ async function cleanup() {
   await prisma.ticketSlaEvent.deleteMany({ where: { ticketId: { in: ids } } });
   await prisma.ticketSlaCycle.deleteMany({ where: { ticketId: { in: ids } } });
   await prisma.ticket.deleteMany({ where: { id: { in: ids } } });
-  await prisma.setting.deleteMany({ where: { key: 'intakeIgnoredSenders' } });
+  await prisma.setting.deleteMany({
+    where: { key: { in: ['intakeIgnoredSenders', 'intakeIgnoredSubjects'] } },
+  });
 }
 
 
@@ -382,6 +387,82 @@ async function main() {
       hasAttachments: false,
     });
     eq('H4 a newsletter is still suppressible', newsletterVerdict.allowed, true);
+  }
+
+  /* ---- I. recalled mail, and the ignored-subject list ------------------ */
+  console.log('\n--- I. recalled mail and administrator subject list ---');
+  {
+    // Built-in recall detection. Microsoft marks a recall with the message
+    // class IPM.Outlook.Recall and the subject "Recall: <original subject>";
+    // neither ingestion channel carries the class, so the prefix is the signal.
+    eq('I1 a recall notification is recognised',
+      screening.isRecallSubject('Recall: REQUEST FOR REPLACEMENT OF OFFICIAL PHONE'), true);
+    eq('I2 a hyphen separator is tolerated', screening.isRecallSubject('Recall - Weekly update'), true);
+    eq('I3 a subject that merely mentions recall is not one',
+      screening.isRecallSubject('Cannot recall my password'), false);
+    eq('I4 an empty subject is not a recall', screening.isRecallSubject(''), false);
+
+    const recallVerdict = await screening.screenMessage({
+      requesterEmail: `colleague@${DOMAIN}`,
+      subject: 'Recall: REQUEST FOR REPLACEMENT OF OFFICIAL PHONE',
+    });
+    eq('I5 a recall is screened out', Boolean(recallVerdict), true);
+    eq('I5 the reason names the recall', recallVerdict && recallVerdict.reason, 'recalled message');
+
+    // The ignored-subject list: case- and spacing-insensitive substring.
+    const entries = screening.parseSubjectEntries(' Independence   Day , PUBLIC HOLIDAY NOTICE ');
+    eq('I6 entries normalized + deduped', entries.join('|'), 'independence day|public holiday notice');
+    eq('I7 matched case/space-insensitively',
+      screening.matchIgnoredSubject('FWD:  INDEPENDENCE   DAY ANNOUNCEMENT', entries), 'independence day');
+    eq('I8 no match returns null', screening.matchIgnoredSubject('My laptop will not start', entries), null);
+    eq('I9 an empty subject never matches', screening.matchIgnoredSubject('', entries), null);
+
+    // End to end: a recall opens no ticket with no configuration at all.
+    const recallTicket = await intakeEmailMessage(
+      intakePayload({ from: `colleague@${DOMAIN}`, subject: 'Recall: VPN maintenance window' }),
+      { logger: quiet, mailer: captureMailer() }
+    );
+    eq('I10 a recall creates no ticket end to end', recallTicket.status, 'skipped_automated');
+
+    const updated = await settingsService.update(
+      { intakeIgnoredSubjects: 'independence day, public holiday notice' },
+      'screening-test'
+    );
+    check('I11 settings update accepted', updated.ok === true, JSON.stringify(updated.errors || []));
+
+    const announcement = await intakeEmailMessage(
+      intakePayload({
+        from: `hr@${DOMAIN}`,
+        subject: 'INDEPENDENCE DAY ANNOUNCEMENT',
+        body: 'The office will be closed on Monday.',
+      }),
+      { logger: quiet, mailer: captureMailer() }
+    );
+    eq('I12 a configured announcement creates no ticket', announcement.status, 'skipped_automated');
+
+    const humanMail = await intakeEmailMessage(
+      intakePayload({ from: `user@${DOMAIN}`, subject: 'My laptop will not start' }),
+      { logger: quiet, mailer: captureMailer() }
+    );
+    eq('I13 unrelated human mail still creates a ticket', humanMail.status, 'created');
+
+    // A permitted subject outranks the ignored-subject list.
+    await settingsService.update({ intakeIgnoredSubjects: 'induction' }, 'screening-test');
+    const induction = await intakeEmailMessage(
+      intakePayload({ from: `hr@${DOMAIN}`, subject: 'NEW EMPLOYEE INDUCTION PLAN - MONDAY' }),
+      { logger: quiet, mailer: captureMailer() }
+    );
+    eq('I14 a permitted subject beats the ignored-subject list', induction.status, 'created');
+
+    const tooShort = await settingsService.update({ intakeIgnoredSubjects: 'x' }, 'screening-test');
+    eq('I15 a one-character entry is rejected', tooShort.ok, false);
+
+    await prisma.setting.deleteMany({ where: { key: 'intakeIgnoredSubjects' } });
+    const backToDefault = await intakeEmailMessage(
+      intakePayload({ from: `hr@${DOMAIN}`, subject: 'INDEPENDENCE DAY ANNOUNCEMENT' }),
+      { logger: quiet, mailer: captureMailer() }
+    );
+    eq('I16 defaults return when the override is removed', backToDefault.status, 'created');
   }
 
   await cleanup();

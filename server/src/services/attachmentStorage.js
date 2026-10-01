@@ -1,4 +1,12 @@
-// Private object storage for inbound email attachments.
+// Byte cache for inbound email attachments.
+//
+// The bytes are a CACHE, not the record. The source message stays in the shared
+// mailbox (the poller never moves or deletes it), and that is the archive; this
+// directory exists so the common case — an agent opening a screenshot minutes
+// after the ticket arrives — never round-trips to the mail server. A miss is
+// therefore routine, not a data loss: attachmentFetchService re-reads the
+// source message and re-caches the bytes (see sweepAttachmentCache for
+// eviction, and attachmentFetchService for the re-read).
 //
 // The provider sits behind this small factory so it can be replaced later
 // (S3, Azure Blob, ...) without touching the ingestion pipeline or the
@@ -89,6 +97,85 @@ function createLocalStorage({ rootDir, logger = console } = {}) {
   };
 }
 
+/**
+ * Where the default local cache lives. Exported so the eviction job and the
+ * purge scripts resolve the directory exactly the same way the provider does —
+ * a second copy of this rule is a second place to get it wrong.
+ */
+function resolveAttachmentRootDir(options = {}) {
+  return options.rootDir
+    || process.env.ATTACHMENT_STORAGE_DIR
+    || path.join(__dirname, '..', '..', 'data', 'attachments');
+}
+
+/** Every file under the cache root, oldest-last is irrelevant: callers stat. */
+async function listCacheFiles(rootDir) {
+  const out = [];
+  async function walk(dir) {
+    let entries;
+    try {
+      entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    } catch (err) {
+      if (err.code === 'ENOENT') return; // empty or absent cache is not an error
+      throw err;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) await walk(full);
+      // Symlinks are deliberately NOT followed: the cache holds regular files
+      // written by the provider, and a link could point anywhere.
+      else if (entry.isFile()) out.push(full);
+    }
+  }
+  await walk(rootDir);
+  return out;
+}
+
+/**
+ * Evict cached bytes older than the TTL.
+ *
+ * Attachment bytes are a CACHE, not the record: the source message in the
+ * mailbox is the archive, and a view re-reads it on a miss (see
+ * attachmentFetchService). So eviction costs a re-read later, never data.
+ * Deleting by mtime — not by database row — is deliberate: the `Attachment`
+ * row keeps its key and metadata forever, so an evicted object is
+ * indistinguishable from one that was never cached.
+ *
+ * `ttlDays` 0 (or anything non-positive) disables eviction entirely.
+ */
+async function sweepAttachmentCache({ rootDir, ttlDays, now = new Date(), logger = console } = {}) {
+  const dir = rootDir || resolveAttachmentRootDir();
+  const days = Number(ttlDays);
+  if (!Number.isFinite(days) || days <= 0) {
+    return { disabled: true, scanned: 0, removed: 0, freedBytes: 0, failed: 0 };
+  }
+
+  const cutoff = now.getTime() - days * 24 * 60 * 60 * 1000;
+  let scanned = 0;
+  let removed = 0;
+  let freedBytes = 0;
+  let failed = 0;
+
+  for (const file of await listCacheFiles(dir)) {
+    scanned += 1;
+    try {
+      const stat = await fs.promises.stat(file);
+      if (stat.mtimeMs > cutoff) continue;
+      await fs.promises.rm(file, { force: true });
+      removed += 1;
+      freedBytes += stat.size;
+    } catch (err) {
+      // One unreadable file must not stop the sweep. The key is server-
+      // generated, so the basename is safe to log — the full path is not
+      // printed, to keep machine layout out of the log.
+      failed += 1;
+      logger.warn(`[attachments] cache eviction failed for ${path.basename(file)}: ${err.message}`);
+    }
+  }
+
+  return { disabled: false, scanned, removed, freedBytes, failed };
+}
+
 /** In-memory provider for tests: same contract, no filesystem. */
 function createMemoryStorage(initial = {}) {
   const objects = new Map(Object.entries(initial));
@@ -125,9 +212,7 @@ function createAttachmentStorage(options = {}) {
   if (kind !== 'local') {
     throw new Error(`Unknown ATTACHMENT_STORAGE kind "${kind}" — only "local" is built in`);
   }
-  const rootDir = options.rootDir
-    || process.env.ATTACHMENT_STORAGE_DIR
-    || path.join(__dirname, '..', '..', 'data', 'attachments');
+  const rootDir = resolveAttachmentRootDir(options);
   return createLocalStorage({ rootDir, logger: options.logger });
 }
 
@@ -161,5 +246,7 @@ module.exports = {
   createLocalStorage,
   createMemoryStorage,
   getAttachmentStorage,
+  resolveAttachmentRootDir,
+  sweepAttachmentCache,
   LIMITS,
 };

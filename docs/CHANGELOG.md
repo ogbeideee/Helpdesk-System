@@ -2,6 +2,42 @@
 
 Major implementation milestones only — not individual code edits.
 
+## 2026-10-01
+
+- **A recall or a standing announcement never opens a ticket — no model
+  involved.** `intakeScreening.js` gains two deterministic signals: the built-in
+  M365 recall marker (`Recall: <original subject>`; the message class is not
+  carried by either ingestion channel) and an administrator **ignored-subject**
+  list (`intakeIgnoredSubjects` / `INTAKE_IGNORED_SUBJECTS`, a case- and
+  spacing-insensitive substring of the subject), for holiday notices and
+  all-hands mail that are not IT requests. A permitted subject (an induction
+  plan) is still checked first and wins; the recall report sender
+  (`Office365Reports@microsoft.com`) joins the built-in ignored senders.
+  `db:purge-automated` reuses the same rules and gains `--subject` for a one-off
+  cleanup.
+- **The test harness no longer inherits the relevance gate.** `testdb.js` clears
+  `GROQ_API_KEY` and `INTAKE_RELEVANCE_*` per suite, so a developer's real key
+  and `auto_skip` can never make a fixture attempt a live provider call — the
+  same rationale that already cleared `SMTP_*`.
+- **Attachment bytes are a cache; the mailbox is the archive.** Keeping inbound
+  binaries forever was never the requirement — they only have to be *viewable* —
+  so the local directory is now explicitly a cache and the source message, which
+  the poller never moves or deletes, is the record. A view is served from the
+  cache and otherwise re-reads the source message by the identity the
+  `Attachment` row already stores, taking only the part whose sanitized name
+  **and** byte size both match. A deploy, a machine replacement or an eviction
+  now costs a re-read instead of the file, and a cache that cannot be written to
+  no longer costs the ticket.
+- **Images open on the ticket; everything else stays inert.** The download
+  endpoint serves png/jpeg/gif/webp with their real type and an `inline`
+  disposition behind a strict allowlist and `nosniff`, so a screenshot renders in
+  a modal. SVG, HTML and every unrecognised type remain an inert octet-stream
+  download, and the client renders an image only when the server's new
+  `previewable` flag says so.
+- **Eviction, not accumulation.** `src/attachmentCacheSweeper.js` drops cached
+  bytes past `ATTACHMENT_CACHE_TTL_DAYS` (default 30; 0 keeps everything), which
+  makes `db:purge-signature-images` unnecessary — the same bytes age out.
+
 ## 2026-09-28
 
 - **A ticket's skill requirement is the routing engine's answer, not a

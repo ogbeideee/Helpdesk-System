@@ -8,12 +8,19 @@ const { spawn } = require('child_process');
      C. the persistence service: limits (size / count / total), rejection
         reasons, dedupe guard, upload-failure contract
      D. IMAP flow through intake: ticket + comment attachments, duplicate
-        replay idempotency, storage failure + retry
+        replay idempotency, and a cache-write failure that still keeps the
+        ticket (the bytes are a cache; the source message is the record)
      E. Graph flow: content fetch, per-attachment failure containment,
         oversized rejection
      F. live API: authorized download, unauthorized access, MIME-type
-        spoofing served inert, cross-ticket access, missing storage object,
-        zero attachments, and no storage keys or credentials in any response
+        spoofing served inert, the inline allowlist (an image renders, an SVG
+        never does), cross-ticket access, missing storage object, zero
+        attachments, and no storage keys or credentials in any response
+     G. the cache miss path: strict name+size matching, "unavailable" for
+        every way the source can fail, the preview allowlist, and eviction
+     H. the IMAP re-read (the live path): search by Message-ID, read-only
+        (nothing is marked seen), and an answer of nothing for every reason it
+        cannot answer
 
    Usage: npm run test:attachments  (from server/) */
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
@@ -269,34 +276,37 @@ async function main() {
   eq('D9 no duplicate attachment rows', await prisma.attachment.count({ where: { ticketId: created.ticket.id } }), 2);
   eq('D10 no duplicate attachment rows', await prisma.attachment.count({ where: { ticketId: created.ticket.id } }), 2);
 
-  // D11-D13: a storage failure must not leave ticket or attachment state behind.
+  // D11-D14: a CACHE write failure must never cost the ticket.
+  //
+  // The bytes are a cache and the source message is the record (see
+  // attachmentFetchService.js), so a cache that cannot be written to degrades
+  // to metadata-only: the ticket — and the attachment row — are created, and
+  // the first view re-reads the source message (section G). This deliberately
+  // replaces the old contract, where a storage failure threw before any row
+  // existed and the message stayed unseen for a retry: losing a real request
+  // because a disk filled up is the wrong way round.
   const failing = {
     kind: 'failing',
     async put() { throw new Error('object storage down'); },
     async get() { throw new Error('object storage down'); },
     async delete() {},
   };
-  let storageFailureSurfaced = false;
-  try {
-    await intakeEmailMessage({
-      messageId: 'att-imap-fail@attach.test',
-      subject: 'Will fail', body: 'x', from: 'rita@attach.test',
-    }, { logger: QUIET, mailer, channel: 'imap', storage: failing, attachments: [{ filename: 'a.bin', content: BUF('x') }] });
-  } catch (err) {
-    storageFailureSurfaced = /object storage down/.test(err.message);
-  }
-  check('D11 the storage failure propagates (message stays unseen for retry)', storageFailureSurfaced);
-  eq('D12 no ticket was created by the failed attempt',
-    await prisma.ticket.count({ where: { graphMessageId: 'att-imap-fail@attach.test' } }), 0);
-  eq('D13 no attachment rows exist for it',
-    await prisma.attachment.count({ where: { messageId: 'att-imap-fail@attach.test' } }), 0);
-
-  // D14: after recovery, the retry creates everything exactly once.
-  const retried = await intakeEmailMessage({
+  const cacheDown = await intakeEmailMessage({
     messageId: 'att-imap-fail@attach.test',
-    subject: 'Will fail', body: 'x', from: 'rita@attach.test',
-  }, { logger: QUIET, mailer, channel: 'imap', storage: imapStorage, attachments: [{ filename: 'a.bin', content: BUF('x') }] });
-  eq('D14 the retry succeeds with its attachment', await prisma.attachment.count({ where: { ticketId: retried.ticket.id } }), 1);
+    subject: 'Cache down', body: 'x', from: 'rita@attach.test',
+  }, { logger: QUIET, mailer, channel: 'imap', storage: failing, attachments: [{ filename: 'a.bin', contentType: 'application/octet-stream', content: BUF('x') }] });
+  eq('D11 the ticket is created even though the cache refused the bytes', cacheDown.status, 'created');
+  const cacheDownRow = await prisma.attachment.findFirst({ where: { messageId: 'att-imap-fail@attach.test' } });
+  check('D12 the attachment row survives as metadata (name and size intact)',
+    Boolean(cacheDownRow) && cacheDownRow.filename === 'a.bin' && cacheDownRow.size === 1);
+  check('D13 no byte was cached for it',
+    Boolean(cacheDownRow) && !fs.existsSync(path.join(STORAGE_DIR, cacheDownRow.storageKey)));
+  const cacheDownReplay = await intakeEmailMessage({
+    messageId: 'att-imap-fail@attach.test',
+    subject: 'Cache down', body: 'x', from: 'rita@attach.test',
+  }, { logger: QUIET, mailer, channel: 'imap', storage: imapStorage });
+  eq('D14 the replay is still a duplicate — dedupe rides identity, not storage',
+    cacheDownReplay.status, 'duplicate');
 
   // D15: a requester reply carries attachments onto the comment.
   const reply = await intakeEmailMessage({
@@ -445,6 +455,51 @@ async function main() {
     eq('F7 nosniff is set', down.headers.get('x-content-type-options'), 'nosniff');
     eq('F8 the bytes are the stored ones', (await down.text()).includes('log line 2'), true);
 
+    // F8a-F8f: the inline policy is a server-side ALLOWLIST.
+    //
+    // An image on the allowlist is served with its real type and an inline
+    // disposition so the ticket screen can render it; everything else — SVG
+    // and HTML included — stays an inert octet-stream download even though a
+    // browser could be talked into rendering those. `nosniff` is always set,
+    // and the payload's own `previewable` flag is what the client follows, so
+    // the client never owns a copy of this rule.
+    const pngRow = await prisma.attachment.create({
+      data: {
+        ticketId: created.ticket.id, filename: 'screenshot.png', mimeType: 'image/png',
+        size: 3, messageId: 'att-imap-1@attach.test', source: 'imap',
+        storageKey: generateStorageKey(),
+      },
+    });
+    await imapStorage.put(pngRow.storageKey, Buffer.from([0x89, 0x50, 0x4e]));
+    const svgRow = await prisma.attachment.create({
+      data: {
+        ticketId: created.ticket.id, filename: 'logo.svg', mimeType: 'image/svg+xml',
+        size: 5, messageId: 'att-imap-1@attach.test', source: 'imap',
+        storageKey: generateStorageKey(),
+      },
+    });
+    await imapStorage.put(svgRow.storageKey, BUF('<svg>'));
+
+    const pngDown = await fetch(`${BASE}/api/tickets/${created.ticket.id}/attachments/${pngRow.id}`, {
+      headers: { Authorization: `Bearer ${admin}` },
+    });
+    eq('F8a an allowlisted image keeps its real content type', pngDown.headers.get('content-type'), 'image/png');
+    check('F8b ...and is inline, so the ticket screen may render it',
+      (pngDown.headers.get('content-disposition') || '').startsWith('inline;'));
+    eq('F8c nosniff still guards it', pngDown.headers.get('x-content-type-options'), 'nosniff');
+    const svgDown = await fetch(`${BASE}/api/tickets/${created.ticket.id}/attachments/${svgRow.id}`, {
+      headers: { Authorization: `Bearer ${admin}` },
+    });
+    eq('F8d an SVG is NOT previewable (script-carrying format)',
+      svgDown.headers.get('content-type'), 'application/octet-stream');
+    check('F8e ...and stays a forced download',
+      (svgDown.headers.get('content-disposition') || '').startsWith('attachment;'));
+    const withImages = await req(BASE, `/api/tickets/${created.ticket.id}`, { token: admin });
+    eq('F8f the payload marks the png previewable',
+      (withImages.data.attachments || []).find((a) => a.id === pngRow.id)?.previewable, true);
+    eq('F8g ...and the SVG not previewable',
+      (withImages.data.attachments || []).find((a) => a.id === svgRow.id)?.previewable, false);
+
     // F9: no token, no attachment.
     eq('F9 unauthenticated download is 401', (await fetch(`${BASE}/api/tickets/${created.ticket.id}/attachments/${appLog.id}`)).status, 401);
 
@@ -482,6 +537,211 @@ async function main() {
   } finally {
     server.kill();
   }
+
+  /* ---- G. cache miss: re-read the source message ------------------------------- */
+  console.log('\n--- G. cache miss, matching and eviction ---');
+  const {
+    readAttachmentContent,
+    matchSourcePart,
+    isPreviewableImage,
+    PREVIEW_IMAGE_TYPES,
+  } = require('../src/services/attachmentFetchService');
+  const {
+    sweepAttachmentCache,
+    resolveAttachmentRootDir,
+  } = require('../src/services/attachmentStorage');
+  const { runAttachmentCacheSweep } = require('../src/attachmentCacheSweeper');
+
+  const row = {
+    filename: 'shot.png', mimeType: 'image/png', size: 4,
+    storageKey: 'att/2026/10/g1', source: 'imap', messageId: 'g1@attach.test',
+  };
+  const sourceParts = [{ filename: 'shot.png', contentType: 'image/png', size: 4, content: BUF('PNG!') }];
+  let fetches = 0;
+
+  // G1-G2: a cached byte is served without touching the mail server.
+  const cacheStore = createMemoryStorage();
+  await cacheStore.put(row.storageKey, BUF('PNG!'));
+  const hit = await readAttachmentContent({
+    attachment: row, storage: cacheStore, logger: QUIET,
+    fetchers: { imap: async () => { fetches += 1; return null; } },
+  });
+  eq('G1 a cached attachment is served from the cache', hit.origin, 'cache');
+  eq('G2 ...and the source message is never asked', fetches, 0);
+
+  // G3-G6: a miss re-reads the source message and re-caches what it read.
+  const missRow = { ...row, storageKey: 'att/2026/10/g3' };
+  const miss = await readAttachmentContent({
+    attachment: missRow, storage: cacheStore, logger: QUIET,
+    fetchers: { imap: async () => { fetches += 1; return sourceParts; } },
+  });
+  eq('G3 a cache miss is served from the source message', miss.origin, 'source');
+  eq('G4 the served bytes are the source bytes', miss.content.toString(), 'PNG!');
+  eq('G5 the re-read is written back to the cache',
+    (await cacheStore.get(missRow.storageKey)).toString(), 'PNG!');
+  const again = await readAttachmentContent({
+    attachment: missRow, storage: cacheStore, logger: QUIET,
+    fetchers: { imap: async () => { throw new Error('the cache should have answered'); } },
+  });
+  eq('G6 ...so the next view is a cache hit again', again.origin, 'cache');
+
+  // G7-G10: the match is strict, because the wrong bytes are worse than none.
+  eq('G7 the right name with the wrong size never matches',
+    matchSourcePart([{ filename: 'shot.png', content: BUF('PNG!!') }], row), null);
+  eq('G8 a different name never matches',
+    matchSourcePart([{ filename: 'other.png', content: BUF('PNG!') }], row), null);
+  check('G9 the exact part matches', matchSourcePart(sourceParts, row) === sourceParts[0]);
+  eq('G10 an unknown size never matches',
+    matchSourcePart(sourceParts, { filename: 'shot.png', size: 0 }), null);
+
+  // G11-G14: every way the source can fail ends as "unavailable", and a broken
+  // cache provider is NOT one of them — that is a real error, not a miss.
+  async function unavailable(attachment, fetcher) {
+    try {
+      await readAttachmentContent({
+        attachment, storage: cacheStore, logger: QUIET, fetchers: { imap: fetcher },
+      });
+      return null;
+    } catch (err) {
+      return err && err.code === 'NOT_FOUND' ? err : null;
+    }
+  }
+  check('G11 a source that cannot answer is "unavailable", not an error',
+    (await unavailable({ ...row, storageKey: 'att/2026/10/g11' }, async () => null)) !== null);
+  check('G12 a source that throws is "unavailable" too',
+    (await unavailable({ ...row, storageKey: 'att/2026/10/g12' }, async () => { throw new Error('mailbox unreachable'); })) !== null);
+  check('G13 an unknown channel (dev/simulated) is "unavailable"',
+    (await unavailable({ ...row, source: 'dev', storageKey: 'att/2026/10/g13' }, async () => sourceParts)) !== null);
+  check('G14 no message identity is "unavailable"',
+    (await unavailable({ ...row, messageId: null, storageKey: 'att/2026/10/g14' }, async () => sourceParts)) !== null);
+  const brokenCache = {
+    async get() { throw new Error('cache disk on fire'); },
+    async put() {},
+    async delete() {},
+  };
+  let brokenSurfaced = false;
+  try {
+    await readAttachmentContent({
+      attachment: row, storage: brokenCache, logger: QUIET,
+      fetchers: { imap: async () => sourceParts },
+    });
+  } catch (err) {
+    brokenSurfaced = /cache disk on fire/.test(err.message);
+  }
+  check('G15 a broken cache provider is a real failure, never disguised as "gone"', brokenSurfaced);
+
+  // G16-G22: the preview allowlist is the security boundary, so it is pinned
+  // as a set: image types a browser renders harmlessly yes; SVG, HTML and
+  // everything else no.
+  eq('G16 a png is previewable', isPreviewableImage('image/png'), true);
+  eq('G17 a jpeg is previewable, case-insensitively', isPreviewableImage('IMAGE/JPEG'), true);
+  eq('G18 an SVG is NOT previewable (script-carrying)', isPreviewableImage('image/svg+xml'), false);
+  eq('G19 HTML is not previewable', isPreviewableImage('text/html'), false);
+  eq('G20 a pdf is not previewable', isPreviewableImage('application/pdf'), false);
+  eq('G21 an empty type is not previewable', isPreviewableImage(''), false);
+  check('G22 the allowlist holds nothing but renderable image types',
+    [...PREVIEW_IMAGE_TYPES].every((t) => t.startsWith('image/'))
+    && !PREVIEW_IMAGE_TYPES.has('image/svg+xml'));
+
+  // G23-G28: eviction is retention, not data loss.
+  const cacheDir = path.join(os.tmpdir(), `ticketing-att-cache-${Date.now()}`);
+  fs.mkdirSync(path.join(cacheDir, 'att', '2026', '01'), { recursive: true });
+  const oldFile = path.join(cacheDir, 'att', '2026', '01', 'old');
+  const newFile = path.join(cacheDir, 'att', '2026', '01', 'new');
+  fs.writeFileSync(oldFile, 'old bytes');
+  fs.writeFileSync(newFile, 'new bytes');
+  const longAgo = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
+  fs.utimesSync(oldFile, longAgo, longAgo);
+
+  const swept = await runAttachmentCacheSweep({ rootDir: cacheDir, ttlDays: 30, logger: QUIET });
+  eq('G23 an expired cached file is evicted', fs.existsSync(oldFile), false);
+  eq('G24 a fresh one is kept', fs.existsSync(newFile), true);
+  eq('G25 the sweep reports what it scanned and removed', `${swept.removed}/${swept.scanned}`, '1/2');
+  eq('G26 the freed size is reported', swept.freedBytes, BUF('old bytes').length);
+  const kept = await runAttachmentCacheSweep({ rootDir: cacheDir, ttlDays: 0, logger: QUIET });
+  check('G27 TTL 0 disables eviction (a cache may be kept on purpose)',
+    kept.disabled === true && fs.existsSync(newFile));
+  eq('G28 a missing cache directory is not an error',
+    (await sweepAttachmentCache({ rootDir: path.join(cacheDir, 'nope'), ttlDays: 30, logger: QUIET })).scanned, 0);
+  eq('G29 the cache root resolves from ATTACHMENT_STORAGE_DIR (one source of the path)',
+    resolveAttachmentRootDir(), STORAGE_DIR);
+
+  /* ---- H. the IMAP re-read (the live path) -------------------------------- */
+  console.log('\n--- H. IMAP source fetcher ---');
+  const { createImapSourceFetcher } = require('../src/imap/sourceFetch');
+
+  // A real (small) RFC 822 multipart message, so the adapter, mailparser and
+  // the matcher all run for real; only the mailbox is fake.
+  const PNG_BYTES = BUF('PNG!');
+  const RAW_MESSAGE = [
+    'From: Rita <rita@attach.test>',
+    'To: helpdesk@example.com',
+    'Subject: Screenshot',
+    'Message-ID: <h1@attach.test>',
+    'MIME-Version: 1.0',
+    'Content-Type: multipart/mixed; boundary="BOUND"',
+    '',
+    '--BOUND',
+    'Content-Type: text/plain',
+    '',
+    'see attached',
+    '--BOUND',
+    'Content-Type: image/png; name="shot.png"',
+    'Content-Disposition: attachment; filename="shot.png"',
+    'Content-Transfer-Encoding: base64',
+    '',
+    PNG_BYTES.toString('base64'),
+    '--BOUND--',
+    '',
+  ].join('\r\n');
+
+  const calls = [];
+  const fakeClient = {
+    async connect() { calls.push('connect'); },
+    async getMailboxLock(mailbox) {
+      calls.push(`lock:${mailbox}`);
+      return { release() { calls.push('release'); } };
+    },
+    async search(query, options) {
+      calls.push(`search:${query.header['message-id']}:${options.uid}`);
+      return [7];
+    },
+    async fetchOne(uid, fields, options) {
+      calls.push(`fetch:${uid}:source=${fields.source}:uid=${options.uid}`);
+      return { uid: Number(uid), source: Buffer.from(RAW_MESSAGE) };
+    },
+    async logout() { calls.push('logout'); },
+    // The read-only invariant: nothing on a re-read may touch the flags.
+    async messageFlagsAdd() { calls.push('FLAGS-ADD'); },
+  };
+  const fetchFrom = (overrides = {}) => createImapSourceFetcher({
+    config: { enabled: true, mailbox: 'INBOX', ...(overrides.config || {}) },
+    clientFactory: overrides.clientFactory || (async () => fakeClient),
+  });
+
+  const parts = await fetchFrom()({ attachment: { messageId: 'h1@attach.test', filename: 'shot.png', size: 4 } });
+  eq('H1 the re-read searches the configured mailbox by Message-ID',
+    calls.includes('search:h1@attach.test:true'), true);
+  eq('H2 ...and fetches the source with an explicit uid fetch',
+    calls.includes('fetch:7:source=true:uid=true'), true);
+  const hMatch = matchSourcePart(parts, { filename: 'shot.png', size: 4 });
+  check('H3 the re-read yields the part the row describes', Boolean(hMatch));
+  eq('H4 ...with the message bytes', hMatch && hMatch.content.toString(), 'PNG!');
+  check('H5 a re-read never marks the message seen', !calls.includes('FLAGS-ADD'));
+  check('H6 the connection is released and closed',
+    calls.includes('release') && calls.includes('logout'));
+  eq('H7 the fetcher answers nothing when IMAP is not configured',
+    await fetchFrom({ config: { enabled: false }, clientFactory: async () => { throw new Error('must not connect'); } })({ attachment: { messageId: 'h1@attach.test' } }),
+    null);
+  eq('H8 ...or when the row has no message identity',
+    await fetchFrom({ clientFactory: async () => { throw new Error('must not connect'); } })({ attachment: {} }),
+    null);
+  eq('H9 a message that is no longer in the mailbox answers nothing',
+    await fetchFrom({ clientFactory: async () => ({ ...fakeClient, async search() { return []; } }) })({ attachment: { messageId: 'gone@attach.test' } }),
+    null);
+  eq('H10 an empty fetch result answers nothing',
+    await fetchFrom({ clientFactory: async () => ({ ...fakeClient, async fetchOne() { return null; } }) })({ attachment: { messageId: 'h1@attach.test' } }),
+    null);
 }
 
 (async () => {

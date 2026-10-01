@@ -3340,6 +3340,24 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
   white-space: nowrap;
 }
 .attachment-chip .btn { padding: 2px 8px; }
+/* An image the server marked previewable, shown in a modal. Sized against the
+   viewport rather than in pixels so it behaves the same on a phone. */
+.attachment-preview {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: var(--surface-2, var(--surface));
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md, 8px);
+  padding: 8px;
+  overflow: auto;
+}
+.attachment-preview img {
+  display: block;
+  max-width: 100%;
+  max-height: 68vh;
+  object-fit: contain;
+}
 
 /* ====================== Remote access (ticket detail) ====================== */
 /* Application-side remote-session bookkeeping: the current-session block and

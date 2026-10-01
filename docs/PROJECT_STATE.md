@@ -3,17 +3,63 @@
 Current checkpoint. Update this at the end of every task.
 Architecture and conventions live in `../CLAUDE.md`.
 
-_Last updated: 2026-09-29_
+_Last updated: 2026-10-01_
 
 ## Current Phase
 
-Requester resolution confirmation — the resolve-ask, the requester's one-click
-close, the auto-close sweep, and now the agent-facing "awaiting confirmation"
-indicator (queue status cell, detail header, inspector) derived from the
-serialized `awaitingConfirmation` / `confirmationAutoCloseAt` fields and
-rendered through `client/src/confirmationView.js`.
+Intake screening is now deterministic about the mail that is *not* a request:
+recalled messages and administrator-named subjects never open a ticket, and that
+happens before the optional relevance gate is consulted. (Before that:
+attachment bytes as a **cache, not the record** — the source message in the
+shared mailbox is the archive, a view re-reads it on a miss, images open on the
+ticket, and everything else stays an inert download.)
 
 ## Completed
+
+- **Deterministic recall and subject screening — a recall or a standing
+  announcement never opens a ticket (2026-10-01).** Two messages reached the
+  queue that nobody had asked for: an M365 message recall (`Recall: <original
+  subject>`) and an HR holiday announcement. Neither was catchable before — a
+  recall arrives looking like the original human sender, so an ignored-sender
+  rule could never separate it from their real mail, and the announcement came
+  from a real internal address with no automated header. `services/
+  intakeScreening.js` now applies two more deterministic signals, before the
+  relevance gate and with no model involved: the built-in recall subject marker
+  (`Recall:`), and a new administrator **ignored-subject** list
+  (`intakeIgnoredSubjects`, env `INTAKE_IGNORED_SUBJECTS`; case- and
+  spacing-insensitive substring of the subject). A permitted subject (an
+  induction plan) is still checked first and still wins. The recall *report*
+  sender `Office365Reports@microsoft.com` joins the built-in ignored senders.
+  `db:purge-automated` reuses the same rules and gains `--subject` for a one-off
+  cleanup. Pinned by `test-intake-screening` I1–I16. Separately, the test
+  harness stopped inheriting the relevance gate: `testdb.js` now clears
+  `GROQ_API_KEY` and `INTAKE_RELEVANCE_*`, so a developer's real key and
+  `auto_skip` can no longer make a suite attempt a live provider call. The three
+  junk tickets that prompted the change (INC-001815/INC-001816, the duplicated
+  holiday announcement, and INC-001817, the recall) were then removed with
+  `db:purge-automated --ticket … --apply`.
+- **Attachment bytes are a cache, and the mailbox is the archive (2026-10-01).**
+  Storing inbound binaries forever was never the requirement — they only have to
+  be *viewable* — so the local directory is now explicitly a cache and the source
+  message is the record. New `services/attachmentFetchService.js` serves a view
+  cache-first, then re-reads the source message by the identity the `Attachment`
+  row already carries (`messageId` + `source`) through the same adapter that
+  parsed it on intake (`imap/sourceFetch.js` searches by RFC Message-ID;
+  `graph/sourceFetch.js` lists and fetches by message id), matching strictly by
+  sanitized name **and** byte size — a near-miss reports unavailable rather than
+  serving the wrong file. Consequences: a deploy or machine replacement now
+  costs a re-read instead of the bytes, and a cache write that fails **no longer
+  costs the ticket** (intake logs it and keeps the metadata row; the old
+  contract threw before any row existed — D11-D14 updated deliberately).
+  Eviction is `src/attachmentCacheSweeper.js` (`ATTACHMENT_CACHE_TTL_DAYS`,
+  default 30, 0 keeps everything; `ATTACHMENT_CACHE_SWEEP_INTERVAL_MINUTES`,
+  default 360). Viewing: png/jpeg/gif/webp are served with their real type and
+  an `inline` disposition behind a strict allowlist and `nosniff`, so a ticket
+  can render a screenshot in a modal; SVG, HTML and everything else stay inert
+  downloads, and the client follows the new `previewable` flag rather than
+  deciding for itself. `db:purge-signature-images` is no longer needed (eviction
+  covers the same bytes). Pinned by `test-attachments` D11-D14, F8a-F8g and
+  G1-G29, plus `attachments-check` D1-D10.
 
 - **Admin force close of a pending confirmation (2026-09-29, same feature).**
   Closing a RESOLVED ticket — which is always awaiting the requester's
@@ -170,7 +216,9 @@ rendered through `client/src/confirmationView.js`.
   metadata, excluded from the size/count limits). New
   `db:purge-signature-images` cleans the backlog: dry run reports **277 of 308**
   stored attachments (8.8 MB, 50 tickets) match; the other 31 are real named
-  attachments. **Not yet applied — awaiting the go-ahead for `--apply`.**
+  attachments. **Superseded 2026-10-01 — no longer needed.** Cached bytes are
+  evicted on their TTL and a re-read is routine, so those rows are now just
+  metadata; `--apply` was never run and does not need to be.
   Suites green: parser (182), attachments, email-sources, classifier-seam,
   email-rules, email-integration, imap, ingest, triage ×2, screening,
   graph-mailbox, m365.
@@ -277,11 +325,11 @@ Picked up the interrupted session and finished it. The suite count went 37 → 4
 
   **Scaling BACK UP is not a one-liner.** `fly scale count app=2` is easy, but
   three things assume one process and are not safe at two:
-  1. **Attachments** — local filesystem, no volume, no object storage. This is
-     the blocker. Needs S3/Azure via the existing `attachmentStorage.js`
-     provider seam (only `local` is implemented; AGENTS.md lists this as
-     deliberately not done). It also fixes losing attachments on machine
-     replacement, which is a pre-existing risk at one machine too.
+  1. ~~**Attachments** — local filesystem, no volume, no object storage.~~
+     _(Resolved 2026-10-01 by design, not by adding storage: the bytes are a
+     cache and the source message is the archive, so an empty cache costs a
+     re-read rather than the file, and two machines may each hold their own
+     cache. No S3/Azure provider is needed. See the 2026-10-01 entry.)_
   2. **`rateLimit.js`** — in-memory `Map`, so each machine keeps its own
      buckets and login throttling on `/api/auth/login` silently HALVES. A
      security regression. Needs a shared store (Redis or DB-backed).
@@ -569,6 +617,17 @@ Picked up the interrupted session and finished it. The suite count went 37 → 4
 
 ## Known Issues
 
+- **Viewing an attachment depends on the mailbox credential.** Bytes are cached
+  and re-read from the source message on a miss, so if the mailbox cannot be
+  reached, an *uncached* attachment reports "no longer available". Same message
+  the old lost-blob path produced, so nothing regresses — but it is the reason
+  the ingestion credential health matters beyond ingestion.
+- **The Graph re-read path has never run against live credentials**, like the
+  rest of the Graph integration. The IMAP path (the live deployment) is the one
+  exercised by `test-attachments`.
+- **A cached byte is kept for `ATTACHMENT_CACHE_TTL_DAYS` (default 30).** That
+  is a retention policy, not a limit: raise it, or set 0 to keep every cached
+  file, if an installation wants attachments to stay on disk.
 - **The dashboard KPI cards carry no trend line.** _Accepted, not a defect._
 - **The Agents table scrolls horizontally at ~1440px.** _Accepted, not a defect._
 - **Microsoft Graph has never run against live credentials.**
@@ -584,6 +643,30 @@ Picked up the interrupted session and finished it. The suite count went 37 → 4
   assignment engine only gates at time of assignment.
 
 ## Last Verified
+
+**2026-10-01**, after the deterministic recall/subject screening change:
+
+- `cd server && npm test`: **45/45 suites passed** on the disposable local
+  PostgreSQL test cluster — 0 failures anywhere in the run (incl. the extended
+  `test-intake-screening`, section I1–I16 added)
+- The junk tickets this change is about were removed from the application
+  database with `db:purge-automated --ticket INC-001815 --ticket INC-001816
+  --ticket INC-001817 --apply` (65 → 62 email+portal tickets; 0 comments and 0
+  attachment rows on any of them; the unrelated vendor tickets INC-001804/001805
+  were left untouched)
+
+**2026-10-01**, after the attachment-cache change:
+
+- `cd server && npm test`: `test-attachments` (incl. the new section G, 29
+  checks) plus `test-api`, `test-e2e`, `test-email-ingest`, `test-graph`,
+  `test-graph-mailbox`, `test-imap`, `test-imap-oauth`, `test-lifecycle`,
+  `test-sla-settings` and `test-resolution-confirm` all pass on the disposable
+  local PostgreSQL test cluster. The remaining suites were not re-run in this
+  session (the change does not touch them).
+- `cd client && npm test`: all check scripts pass, including the extended
+  `attachments-check.mjs` (preview section D) and `mobile-check.mjs`
+  (0 failures)
+- `cd client && npx vite build`: Vite production build passed
 
 **2026-09-29**, after the requester resolution-confirmation feature:
 

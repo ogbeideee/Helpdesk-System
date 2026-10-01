@@ -24,6 +24,10 @@ const auditService = require('../src/services/auditService');
 // tickets can carry when an unconfirmed RESOLVED ticket will auto-close.
 const settingsService = require('../src/services/settingsService');
 const { getAttachmentStorage } = require('../src/services/attachmentStorage');
+const {
+  readAttachmentContent,
+  isPreviewableImage,
+} = require('../src/services/attachmentFetchService');
 
 const router = express.Router();
 
@@ -71,6 +75,11 @@ function serializeAttachment(a) {
     size: a.size,
     source: a.source,
     createdAt: a.createdAt,
+    // The server decides how the ticket screen may treat these bytes (an
+    // allowlist of renderable image types); the client reflects that flag and
+    // keeps its own copy of no such rule. Everything not previewable stays an
+    // inert download.
+    previewable: isPreviewableImage(a.mimeType),
   };
 }
 
@@ -1013,11 +1022,20 @@ router.post('/:id/handover', async (req, res) => {
 //
 // The ONLY path to attachment content. Authentication comes from the router
 // (requireAuth on /api/tickets); any agent who may read the ticket may
-// download its attachments, matching ticket visibility. Content is always
-// served as an inert octet-stream with an attachment disposition and
-// nosniff — an inbound attachment is never executed, rendered or previewed,
-// whatever its declared MIME type says. Storage keys never appear anywhere
-// in the response.
+// download its attachments, matching ticket visibility.
+//
+// Disposition is decided HERE, from the stored MIME type, never from what the
+// caller asks for and never from the file's bytes:
+//   - an image on the PREVIEW allowlist (png/jpeg/gif/webp) is served with its
+//     real type and an inline disposition, so the ticket screen can render a
+//     thumbnail and a lightbox;
+//   - everything else — including SVG, HTML and anything unrecognised — is an
+//     inert octet-stream with an attachment disposition, exactly as before.
+// `nosniff` is always set, so a declared type can never talk the browser into
+// executing these bytes; storage keys never appear anywhere in the response.
+//
+// Bytes come from the cache when they are cached, and from the source message
+// in the mailbox when they are not (see services/attachmentFetchService.js).
 router.get('/:id/attachments/:attachmentId', async (req, res) => {
   try {
     const ticket = await loadTicketOr404(req.params.id, res, {});
@@ -1033,23 +1051,30 @@ router.get('/:id/attachments/:attachmentId', async (req, res) => {
 
     let content;
     try {
-      content = await getAttachmentStorage().get(attachment.storageKey);
+      ({ content } = await readAttachmentContent({
+        attachment,
+        storage: getAttachmentStorage(),
+        logger: console,
+      }));
     } catch (err) {
       if (err && err.code === 'NOT_FOUND') {
-        // The metadata row exists but the object is gone — say so plainly
-        // instead of pretending the download succeeded.
+        // Either the cached copy is gone and the source message could not
+        // supply it, or the message no longer holds a part that matches this
+        // row. Say so plainly instead of pretending the download succeeded.
+        // (No reason, no key, no mailbox detail — the log has those.)
         return res.status(404).json({ error: 'Attachment content is no longer available' });
       }
       throw err;
     }
 
+    const preview = isPreviewableImage(attachment.mimeType);
     const asciiFallback = attachment.filename.replace(/[^\x20-\x7e]/g, '_') || `attachment-${attachment.id}`;
     res.status(200);
-    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Type', preview ? String(attachment.mimeType).trim().toLowerCase() : 'application/octet-stream');
     res.setHeader('Content-Length', String(content.length));
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="${asciiFallback.replace(/"/g, "'")}"; filename*=UTF-8''${encodeURIComponent(attachment.filename)}`
+      `${preview ? 'inline' : 'attachment'}; filename="${asciiFallback.replace(/"/g, "'")}"; filename*=UTF-8''${encodeURIComponent(attachment.filename)}`
     );
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Cache-Control', 'private, no-store');

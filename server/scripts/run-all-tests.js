@@ -60,6 +60,8 @@ const SUITES = [
   'test-assignment-groups',
   'test-status-link',
   'test-resolution-confirm',
+  'test-error-handling',
+  'test-ingestion-watchdog',
   'test-e2e',
 ];
 

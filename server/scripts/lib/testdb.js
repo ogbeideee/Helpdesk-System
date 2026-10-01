@@ -235,6 +235,25 @@ function use(name) {
     process.env[key] = '';
   }
 
+  // The email relevance gate is the same hazard as outbound mail. server/.env
+  // may hold a real Groq key and INTAKE_RELEVANCE_MODE=auto_skip, which would
+  // make every new-ticket fixture attempt a live provider call — slow,
+  // non-deterministic and billed, and it would let a developer's key decide a
+  // test outcome. Clearing the mode depowers the whole gate (no call, no
+  // decision row); clearing the key is defence in depth. Suites that exercise
+  // triage set the mode in the database or inject their own config/fetch.
+  //
+  // INTAKE_TRIAGE_KILL_SWITCH is deliberately NOT cleared here: test-api.js
+  // sets it before calling use() and asserts the management API reports the
+  // environment stop.
+  for (const key of [
+    'GROQ_API_KEY', 'INTAKE_RELEVANCE_MODE', 'INTAKE_RELEVANCE_SKIP_THRESHOLD',
+    'INTAKE_RELEVANCE_REQUIRE_APPROVED_SENDER', 'INTAKE_RELEVANCE_APPROVED_SENDERS',
+    'INTAKE_RELEVANCE_SKIP_REASON_CODES',
+  ]) {
+    process.env[key] = '';
+  }
+
   migrateDeploy();
 
   const cleanup = () => {

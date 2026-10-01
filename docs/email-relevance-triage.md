@@ -13,7 +13,7 @@ remain deterministic application responsibilities.
 
 ```text
 normalize → deduplicate → resolve existing-ticket replies
-→ deterministic automated-mail screening
+→ deterministic screening (recall, ignored subjects/senders, automated headers)
 → Groq relevance triage
 → existing category classification
 → existing routing and assignment
