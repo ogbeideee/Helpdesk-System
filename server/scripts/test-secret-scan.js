@@ -246,6 +246,48 @@ check('I.18 no .docx is still tracked',
   require('node:child_process')
     .execFileSync('git', ['ls-files', '*.docx'], { cwd: REPO_ROOT, encoding: 'utf8' }).trim() === '');
 
+/* ---- J. forward-only vs the history sweep --------------------------- */
+console.log('\n--- J. forward-only rules and the history sweep ---');
+
+/*
+ * CI sweeps every commit in history. A rule that exists to stop a value going
+ * forward will fire on every commit that already contains it, and that is not
+ * hypothetical: the two production rules turned the entire history sweep red
+ * the day they were written, because the value they forbid is in the history by
+ * construction. The credential rules must keep sweeping history — a credential
+ * in history is a live exposure that has to be found and rotated — so the split
+ * has to be per-rule, and it has to be tested or someone "fixes" it by dropping
+ * the rules entirely.
+ */
+const FORWARD_ONLY = RULES.filter((r) => r.forwardOnly).map((r) => r.id);
+const CREDENTIAL_RULES = RULES.filter((r) => !r.forwardOnly).map((r) => r.id);
+
+check('J.1 both production rules are forward-only',
+  FORWARD_ONLY.includes('production-mailbox') && FORWARD_ONLY.includes('production-domain'));
+check('J.2 no credential rule is forward-only',
+  CREDENTIAL_RULES.includes('google-oauth-client-secret')
+  && CREDENTIAL_RULES.includes('aws-access-key-id')
+  && CREDENTIAL_RULES.includes('fly-api-token'));
+
+const domainSample = `GRAPH_SHARED_MAILBOX=${PRODUCTION_MAILBOX}`;
+
+check('J.3 a forward-only rule fires on the current tree',
+  scanText(domainSample, 'server/.env.example')
+    .some((f) => f.rule === 'production-mailbox'));
+check('J.4 it is silent over history, so the sweep can pass',
+  scanText(domainSample, 'server/.env.example', { historyOnly: true })
+    .every((f) => f.rule !== 'production-mailbox'));
+
+check('J.5 a real credential STILL fires over history',
+  scanText(`const CLIENT_SECRET = 'GOCSPX-${filler(28)}';`, 'server/scripts/x.js', { historyOnly: true })
+    .some((f) => f.rule === 'google-oauth-client-secret'));
+check('J.6 a DB URL with a password STILL fires over history',
+  scanText(`DATABASE_URL = 'postgresql://u:${filler(18)}@db.acme-corp.internal/app'`, 'x.js', { historyOnly: true })
+    .some((f) => f.rule === 'db-url-with-password'));
+check('J.7 the generic backstop STILL fires over history',
+  scanText(`const DB_PASSWORD = '${filler(20)}';`, 'server/src/x.js', { historyOnly: true })
+    .some((f) => f.rule === 'hardcoded-credential-assignment'));
+
 /*
  * The check that keeps this suite committable. GitHub push protection blocked
  * a push over a hand-typed Slack token in this very file - a token that was

@@ -455,6 +455,26 @@ Picked up the interrupted session and finished it. The suite count went 37 → 4
   already a public hostname, and anyone who cloned earlier keeps their copy
   regardless. This is a forward-only change.
 
+  **The first push broke CI, and the cause was the rule itself.** The Secret
+  scan workflow sweeps every commit in history, and a rule forbidding a value
+  that is already in the history fires on every one of those commits — so
+  writing the rules turned the entire history sweep red immediately, on all
+  five runs. A rule that cannot pass its own gate is a rule somebody deletes
+  under pressure. The two rules are now marked `forwardOnly`: the current tree
+  (`--all`) and the pre-commit hook still apply every rule, and only the
+  history sweep skips this pair. The credential rules keep sweeping history in
+  full, because a credential in history is a live exposure that has to be found
+  and rotated — `J.1`–`J.7` pin both halves of the split so it cannot be
+  "fixed" later by dropping the rules.
+
+  The same reasoning removed the two rules from `.gitleaks.toml`. gitleaks has
+  no forward-only scoping, and the project scanner runs in the same workflow
+  anyway, so putting them there only bought a permanently red signal on
+  unpublishable history. The gate is now reproduced locally
+  (`ci-gate.cjs` mirrors the workflow exactly: `--all`, then every commit
+  oldest-first, then the self-test) and reports **37 commits, 0 range
+  failures**.
+
 ## Completed This Session (2026-09-24)
 
 - **Live ticket queue controls.** The simulator is no longer exposed in the
@@ -700,6 +720,16 @@ Picked up the interrupted session and finished it. The suite count went 37 → 4
   assignments.** If an agent holds a high/critical ticket from a group they are
   removed from as a supporting member, the ticket stays with them. The
   assignment engine only gates at time of assignment.
+
+- **Live production bug, pre-existing and unrelated to this work.** `/api/health`
+  reports IMAP ingestion failing with `Unique constraint failed on the fields:
+  (graphMessageId)` at `services/ticketIntake.js:599`, timestamped 11:12Z. The
+  idempotency pre-check is not catching every duplicate, so a second delivery of
+  the same message reaches the insert and throws instead of returning the
+  existing ticket. Inbound email is not reliably becoming tickets while this
+  stands. It reproduces on the image that is currently deployed, so it is not
+  caused by anything in this session. **Not fixed — it needs its own
+  investigation and a regression test.**
 
 ## Last Verified
 

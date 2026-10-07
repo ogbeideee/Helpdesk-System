@@ -120,6 +120,20 @@ neither the scanner nor its test suite contains the value it forbids. That is
 also why `IGNORED_PATHS` does not need a new exemption — an exemption is a hole
 that quietly rots.
 
+They are **forward-only**, and that is deliberate rather than a convenience. CI
+sweeps every commit in history, and a rule forbidding a value that is already in
+the history fires on every one of those commits — permanently, because a value
+in published history cannot be unpublished. Writing the rules turned the whole
+history sweep red on the day it was done. So the current tree (and the
+pre-commit hook) is scanned with every rule, and the history sweep skips only
+the forward-only pair. The credential rules still sweep history in full, because
+a credential in history is a live exposure that has to be found and rotated;
+`J.1`–`J.7` in the scanner's suite pin both halves of that split.
+
+For the same reason these two rules are **not** in `.gitleaks.toml`. gitleaks
+has no equivalent of forward-only scoping, and the project scanner runs in the
+same workflow anyway.
+
 If you need the real values: `server/.env` (git-ignored) and the Fly secret
 store. `GRAPH_SHARED_MAILBOX` and `PORTAL_BASE_URL` are the two names that carry
 it.
