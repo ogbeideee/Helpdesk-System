@@ -29,7 +29,10 @@ function where(model, value) {
   return result;
 }
 function needsProjection(model, args) {
-  if (model === 'Agent') return true;
+  if (model === 'Agent') return !args.select || Boolean(args.select.teamId || args.select.team)
+    || [args.data, args.create, args.update].some(data => data && Object.hasOwn(data, 'teamId'))
+    || (Array.isArray(args.orderBy) ? args.orderBy : [args.orderBy]).some(order => order && Object.hasOwn(order, 'teamId'))
+    || JSON.stringify(args.where) !== JSON.stringify(where(model, args.where));
   for (const mode of ['include', 'select']) for (const [name, spec] of Object.entries(args[mode] || {})) {
     const field = models.get(model)?.fields.find(f => f.name === name);
     if (field?.kind === 'object' && spec && needsProjection(field.type, spec === true ? {} : spec)) return true;
@@ -51,13 +54,18 @@ function selection(model, args = {}) {
         ? selection(field.type, spec === true ? {} : spec) : spec;
     }
   }
-  if (model === 'Agent') {
+  if (model === 'Agent' && (!args.select || args.select.teamId || args.select.team)) {
     // Group selections share the canonical membership rows. Callers do not
     // filter this relation; supporting memberships are kept intact.
     const mode = result.select ? 'select' : 'include';
     result[mode] ||= {};
     const membershipSpec = result[mode].memberships;
-    result[mode].memberships = { ...(membershipSpec || {}), ...(membershipSpec?.select ? { select: { ...membershipSpec.select, isPrimary: true, teamId: true, team: true } } : { include: { ...(membershipSpec?.include || {}), team: true } }) };
+    const needsTeam = Boolean(args.include?.team || args.select?.team);
+    result[mode].memberships = membershipSpec
+      ? { ...membershipSpec, ...(membershipSpec.select
+        ? { select: { ...membershipSpec.select, isPrimary: true, teamId: true, ...(needsTeam ? { team: true } : {}) } }
+        : { include: { ...membershipSpec.include, ...(needsTeam ? { team: true } : {}) } }) }
+      : { where: { isPrimary: true }, select: { isPrimary: true, teamId: true, ...(needsTeam ? { team: true } : {}) } };
   }
   return result;
 }

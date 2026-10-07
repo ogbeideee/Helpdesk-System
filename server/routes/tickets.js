@@ -162,19 +162,18 @@ function serializeTicket(t, slaContext = {}) {
 // the configured working calendar. Two indexed queries on small tables.
 async function slaCtx(now = new Date(), policy = null) {
   const effectivePolicy = policy || await slaService.loadSlaPolicy();
+  const [holidays, window] = await Promise.all([
+    slaService.loadHolidaysBetween(now, new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000), prisma, effectivePolicy),
+    confirmationWindow(),
+  ]);
   return {
     now,
     calendar: effectivePolicy.calendar,
-    holidays: await slaService.loadHolidaysBetween(
-      now,
-      new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000),
-      prisma,
-      effectivePolicy
-    ),
+    holidays,
     // The requester confirmation window rides the same context, so every
     // serialized ticket in this request derives its auto-close deadline
     // from one settings read.
-    confirmationWindow: await confirmationWindow(),
+    confirmationWindow: window,
   };
 }
 
@@ -289,14 +288,13 @@ router.get('/', async (req, res) => {
     const take = Math.min(Number(req.query.limit) || 100, 200);
     const skip = Number(req.query.skip) || 0;
 
-    const list = await prisma.ticket.findMany({
+    const [list, ctx] = await Promise.all([prisma.ticket.findMany({
       where,
       orderBy: { createdAt: 'desc' },
       take,
       skip,
       include: LIST_INCLUDE,
-    });
-    const ctx = await slaCtx();
+    }), slaCtx()]);
     res.json(list.map((t) => serializeTicket(t, ctx)));
   } catch (err) {
     res.status(500).json({ error: err.message });

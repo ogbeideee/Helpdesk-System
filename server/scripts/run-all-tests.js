@@ -33,6 +33,7 @@ const SUITES = [
   'test-email-integration',
   'test-notification-layout',
   'test-operations',
+  'test-read-performance',
   'test-email-sources',
   'test-imap',
   'test-imap-oauth',

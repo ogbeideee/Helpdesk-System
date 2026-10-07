@@ -12,6 +12,7 @@ export function setToken(token) {
 async function request(path, options = {}) {
   const token = getToken();
   const res = await fetch(BASE + path, {
+    signal: AbortSignal.timeout(30000),
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
