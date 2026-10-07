@@ -268,6 +268,7 @@ async function assign(
   // low/moderate tier — the same `isSupportingTier()` gate the cross-team
   // fallback uses. A high or critical ticket never leaves its group on the
   // strength of a greeting.
+  base.addressedDecision = addressed ? { agent: addressed.agentName || null, match: addressed.tier || null, used: false, reason: addressed.reason || null } : null;
   if (addressed && Number.isInteger(addressed.agentId)) {
     const named = await client.agent.findFirst({
       where: { id: addressed.agentId, ...eligibilityBase },
@@ -289,6 +290,7 @@ async function assign(
         crossTeam: crossGroup,
         preferredAgentUsed: false,
         addressedAgentUsed: true,
+        addressedDecision: { ...base.addressedDecision, used: true, reason: 'Greeting preference accepted' },
         addressedName: addressed.matchedName || named.name,
         reason:
           `addressed by name in the message greeting ("${addressed.matchedName || named.name}" → ${named.name})` +
@@ -324,6 +326,7 @@ async function assign(
     } else {
       why = `at or above the workload cap (${cap})`;
     }
+    base.addressedDecision.reason = why;
     logger.warn(
       `[assignment] addressed agent "${addressed.matchedName || addressed.agentId}" not used — ${why}; ` +
         'falling back to normal routing',

@@ -60,6 +60,7 @@ app.use('/api/email-rules', require('./src/authMiddleware').requireAdmin, requir
 // Email relevance triage — administrator-only policy, monitoring and the
 // emergency auto-skip stop. The Groq key remains an environment secret.
 app.use('/api/email-triage', require('./routes/emailTriage'));
+app.use('/api/admin/operations', require('./routes/operations'));
 // Microsoft 365 integration — administrator-only configuration status and
 // credential verification. Never returns secrets or tokens.
 app.use('/api/microsoft-365', require('./src/authMiddleware').requireAdmin, require('./routes/microsoft365'));
@@ -130,7 +131,8 @@ app.get('/api/assignment-pools', require('./src/authMiddleware').requireAuth, as
 // Operational status for administrators. Deliberately contains no secrets:
 // no access token, no client secret, no subscription clientState, and no IMAP
 // username or password.
-app.get('/api/health', async (req, res) => {
+app.get('/api/health', (req, res) => res.json({ ok: true }));
+app.get('/api/admin/diagnostics', require('./src/authMiddleware').requireAdmin, async (req, res) => {
   const { graphConfig } = require('./src/graph/config');
   const { imapConfig } = require('./src/imap/config');
   const graphStatus = require('./src/graph/graphStatus');
@@ -314,6 +316,7 @@ async function bootStartupChecks() {
 }
 
 function startBackgroundJobs() {
+  require('./src/mailer').startDeliveryRetries();
   // One-time initial-administrator bootstrap. Inert as soon as any active
   // admin exists, so it can never mint a second one.
   require('./src/services/userService')
@@ -395,6 +398,7 @@ if (isStandalone) {
   });
 
   function shutdown(signal) {
+    require('./src/mailer').stopDeliveryRetries();
     console.log(`\n${signal} received — shutting down`);
     require('./src/graph/poller').stopPolling();
     require('./src/imap/poller').stopImapPoller();

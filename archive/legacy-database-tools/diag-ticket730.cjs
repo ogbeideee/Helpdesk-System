@@ -1,3 +1,4 @@
+throw new Error('Archived historical tool; use committed PostgreSQL migrations instead.');
 'use strict';
 // Read-only diagnosis of migrated ticket #730 (id 730). Never writes.
 const path = require('path');

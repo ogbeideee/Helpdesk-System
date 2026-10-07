@@ -10,6 +10,7 @@
 // an alternative transport.
 const { graphConfig } = require('./graph/config');
 const { smtpConfig, createSmtpTransport } = require('./smtp/config');
+const { decorateMail } = require('./email/notificationLayout');
 const {
   toRecipient,
   recipientsOf,
@@ -62,7 +63,7 @@ function renderDevNotification({ kind, to, mail }) {
     'Subject:',
     mail.subject,
     '',
-    ...String(mail.body || '').split('\r\n'),
+    '[Email content omitted from logs]',
     '='.repeat(60),
   ];
   return lines.join('\n');
@@ -90,13 +91,27 @@ function getDefaultTransport() {
 function createMailer(options = {}) {
   const logger = options.logger || console;
   const transport = options.transport || getDefaultTransport();
+  const durable = options.durable ?? (!options.transport && (graphConfig.enabled || smtpConfig.enabled));
+  const delivery = () => require('./services/emailDeliveryService');
+  const deliveryClient = options.client;
+  let retryTimer = null;
+  let retryBusy = false;
+  const retryPending = () => durable ? delivery().retryDue((payload, channel) => channel === 'broadcast'
+    ? transport.sendBroadcastMail(payload) : transport.sendMail(payload), deliveryClient) : Promise.resolve();
+  async function sendTracked(mail, kind = 'direct') {
+    const rendered = decorateMail(mail);
+    const send = (payload, channel) => channel === 'broadcast'
+      ? transport.sendBroadcastMail(payload) : transport.sendMail(payload);
+    if (!durable) { await send(rendered, kind); return true; }
+    const row = await delivery().enqueue(rendered, kind, deliveryClient);
+    return delivery().deliver(row, send, deliveryClient);
+  }
 
   async function sendMailSafe(mail) {
     try {
-      await transport.sendMail(mail);
-      return true;
+      return await sendTracked(mail);
     } catch (err) {
-      logger.error(`[mailer] send failed ("${mail.subject}"): ${err.message}`);
+      logger.error('[mailer] notification delivery failed; inspect administrator delivery status');
       return false;
     }
   }
@@ -112,10 +127,9 @@ function createMailer(options = {}) {
       return false;
     }
     try {
-      await transport.sendBroadcastMail(newTicketBroadcastMail(ticket));
-      return true;
+      return await sendTracked(newTicketBroadcastMail(ticket), 'broadcast');
     } catch (err) {
-      logger.error(`[mailer] broadcast failed for ${ticket.ticketNumber}: ${err.message}`);
+      logger.error('[mailer] broadcast delivery failed; inspect administrator delivery status');
       return false;
     }
   }
@@ -185,6 +199,18 @@ function createMailer(options = {}) {
 
   return {
     transport,
+    retryPending,
+    startDeliveryRetries() {
+      if (!durable || retryTimer) return;
+      retryTimer = setInterval(async () => {
+        if (retryBusy) return;
+        retryBusy = true;
+        try { await retryPending(); } catch { logger.error('[mailer] delivery retry failed'); }
+        finally { retryBusy = false; }
+      }, 30000);
+      retryTimer.unref();
+    },
+    stopDeliveryRetries() { if (retryTimer) clearInterval(retryTimer); retryTimer = null; },
     sendMailSafe,
     notifyNewTicketToDl,
     notifyRequesterAck,

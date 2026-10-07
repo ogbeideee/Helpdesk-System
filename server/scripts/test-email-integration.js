@@ -352,8 +352,9 @@ async function main() {
       passwordHash: bcrypt.hashSync(PASSWORD, 4),
     },
   });
-  await prisma.teamMembership.create({
-    data: { teamId: defaultTeam.id, agentId: leadAgent.id, isLead: true },
+  await prisma.teamMembership.update({
+    where: { agentId_teamId: { agentId: leadAgent.id, teamId: defaultTeam.id } },
+    data: { isLead: true },
   });
 
   // D1 intake of a brand-new message
@@ -587,7 +588,7 @@ async function main() {
     eq('E10 resolve succeeds', resolved2.status, 200);
     slice = await drain();
     eq('E11 exactly one requester mail for the resolution', emailsTo(slice, REQUESTER), 1);
-    check('E12 the resolution mail quotes the note', slice.includes('> Rebooted the probe.'));
+    check('E12 the resolution content stays out of logs', !slice.includes('Rebooted the probe.') && slice.includes('Resolved:'));
 
     // E13: the dead-transport path cannot crash a live request — the public
     // reply endpoint stays 201 even when the mailer's transport throws. The

@@ -1,3 +1,4 @@
+throw new Error('Archived historical tool; use committed PostgreSQL migrations instead.');
 'use strict';
 // ==========================================================================
 // migrate-sqlite-to-pg.cjs

@@ -328,7 +328,7 @@ function transportFor(env, client) {
       id: 1, ticketNumber: 'TK-9', shortDescription: 'x', body: 'y',
       requesterEmail: 'r@requester.test', state: 'NEW',
     }), false);
-  check('D10 and the operator is told why', errors.some((m) => m.includes('smtp down')), errors.join(' | '));
+  check('D10 and the operator is told why', errors.some((m) => m.includes('delivery failed')), errors.join(' | '));
 
   eq('D11 the module exports what the mailer needs',
     ['readSmtpEnv', 'logSmtpStatus', 'createSmtpTransport'].every((k) => typeof smtp[k] === 'function'), true);

@@ -46,6 +46,10 @@ function toIntakePayload(email) {
     // classifier/triage input, not a stored field. Null when the source could
     // not compute one.
     cleanBody: email.cleanBody || null,
+    // Who the message was actually addressed to. Never stored: the screening
+    // gate reads it to tell "addressed to the helpdesk" from "copied to it",
+    // and a header this module cannot see simply leaves the rule inert.
+    recipients: email.recipients || null,
     // Automated-mail signals, consumed by the intake screening gate.
     autoSubmitted: email.autoSubmitted || null,
     precedence: email.precedence || null,

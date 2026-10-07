@@ -59,6 +59,35 @@ function messageIdList(value) {
   return out;
 }
 
+/**
+ * The To/Cc/Bcc lists as plain lowercase addresses, in any shape a caller may
+ * hold them (`{email}` objects from the parser, bare strings from a test).
+ * Bounded, because a message can carry hundreds of recipients and the screening
+ * gate only ever asks whether ONE address is on a list.
+ */
+const MAX_RECIPIENTS = 100;
+
+function normalizeRecipients(value) {
+  if (!value || typeof value !== "object") return null;
+  const pick = (list) => {
+    const out = [];
+    for (const item of Array.isArray(list) ? list.slice(0, MAX_RECIPIENTS) : []) {
+      const raw = item && typeof item === "object" ? item.email : item;
+      const address = String(raw === null || raw === undefined ? "" : raw)
+        .trim()
+        .toLowerCase();
+      if (address) out.push(address);
+    }
+    return out;
+  };
+  const recipients = { to: pick(value.to), cc: pick(value.cc), bcc: pick(value.bcc) };
+  // No usable header at all: report the absence rather than three empty lists,
+  // so the screening rule can tell "not addressed anywhere" from "we cannot see
+  // the headers" and stays inert instead of guessing.
+  if (!recipients.to.length && !recipients.cc.length && !recipients.bcc.length) return null;
+  return recipients;
+}
+
 function normalizeMessage(payload = {}) {
   const internetMessageId =
     String(payload.internetMessageId || "")
@@ -83,6 +112,10 @@ function normalizeMessage(payload = {}) {
     // compute one (the email parser does; the portal and dev endpoints do
     // not). Only the classifier and relevance gate consume it — never stored.
     cleanBody: String(payload.cleanBody || ""),
+    // Who the message was addressed to, as the parser reported it. Read by the
+    // screening gate only (see intakeScreening.copiedInboxAddress) and never
+    // stored: it is a property of the message, not of the ticket.
+    recipients: normalizeRecipients(payload.recipients),
     hasAttachments: Boolean(
       payload.hasAttachments ||
       (Array.isArray(payload.attachments) && payload.attachments.length > 0),
@@ -363,7 +396,7 @@ async function defaultClassifier({ subject, body, cleanBody }) {
   return classify(`${subject}\n${cleanBody || body}`);
 }
 
-async function intakeEmailMessage(
+async function processEmailMessage(
   payload,
   {
     logger = console,
@@ -621,7 +654,7 @@ async function intakeEmailMessage(
   // security alerts, quarantine digests, bounces and noreply notifications
   // out of the queue (and stops the ack-to-noreply bounce loop at the root).
   // Definitive outcome, handled exactly like skipped_self by both channels.
-  const screening = await intakeScreening.screenMessage(msg);
+  const screening = await intakeScreening.screenMessage(msg, { client: prisma });
   if (screening) {
     // Attachment binaries were uploaded before thread resolution; remove
     // them best-effort so a screened message never orphans objects.
@@ -903,6 +936,30 @@ async function intakeEmailMessage(
   );
 
   return { status: "created", ticket, assignment };
+}
+
+// The existing audit trail records intake outcomes without retaining subject,
+// body, recipient headers or provider tokens. Audit failure never drops mail.
+async function intakeEmailMessage(payload, options = {}) {
+  const result = await processEmailMessage(payload, options);
+  if (result.status !== 'duplicate') {
+    try {
+      await auditService.record(prisma, {
+        action: `intake.${result.status}`, entityType: 'EmailIntake',
+        ticketId: result.ticket?.id || null,
+        entityLabel: result.ticket?.ticketNumber || 'Inbound email',
+        description: result.status.replace(/_/g, ' '),
+        metadata: {
+          channel: options.channel || 'unknown', outcome: result.status,
+          reason: result.reason || result.assignment?.reason || null,
+          greeting: result.assignment?.addressedDecision || null,
+          group: result.assignment?.groupName || null,
+          agent: result.assignment?.agent?.name || null,
+        },
+      });
+    } catch { (options.logger || console).warn('[intake] decision audit unavailable'); }
+  }
+  return result;
 }
 
 module.exports = {

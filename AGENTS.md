@@ -95,7 +95,7 @@ for small screens. The mobile rules live in one section at the end of
 | `workloadService.js` | Workload, unattended claiming, `moveTicket`, rebalancing |
 | `handoverService.js` | Handover offers, queue, expiry, reroute |
 | `settingsService.js` | Admin-configurable values (`Setting` table, env defaults) |
-| `intakeScreening.js` | Deterministic gate — recall notices, greeting banners, RFC 3834 headers, ignored subjects/senders → `skipped_automated` |
+| `intakeScreening.js` | Deterministic gate — recall notices, greeting banners, RFC 3834 headers, ignored subjects/senders, and internal mail that only **copied** the mailbox → `skipped_automated` |
 | `emailTriageService.js` | Optional Groq relevance gate → `skipped_non_ticket`; fail-open, policy-gated, audited |
 | `ticketIntake.js` / `emailIngestion.js` | Email → ticket pipeline |
 
@@ -156,11 +156,20 @@ the queue already filters on are honoured.
   per suite. `prisma migrate dev/reset` is deliberately unused against the
   application database because it can reset it; `npm run db:push` is not the
   workflow either.
-- `prisma/dev.db`, `prisma/migrations-sqlite-archive/` and
-  `prisma/postgres-baseline-preview.sql` are vestigial pre-PostgreSQL
-  artifacts. Nothing under `src/` or `routes/` reads them — only the one-off
-  `scripts/migrate-sqlite-to-pg.cjs` and `diag-ticket730.cjs` open `dev.db`,
-  and read-only.
+- Historical SQLite artifacts and disabled one-off migration/diagnostic scripts
+  live under `archive/legacy-database-tools/`, excluded from Docker. A local
+  `.db` snapshot stays git-ignored. Active PostgreSQL migration history is retained.
+- Primary membership is stored only on `TeamMembership.isPrimary`. The partial
+  unique index permits one primary per agent; membership writes take an Agent row
+  lock and enforce the three-group cap. `src/lib/membershipClient.js` projects
+  `Agent.teamId`/`team` for the existing API and query contract; neither is an
+  Agent database column. Use the shared client, including transaction clients.
+- Outbound delivery state uses encrypted `Notification` email fields. Payloads
+  are cleared on success, failed payloads expire after seven days, and delivered/
+  expired metadata is retained for thirty days. `mailer.js` is still the only
+  sender; administrator status/retry and intake/alias tools live at
+  `/api/admin/operations`. Public `/api/health` returns only `{ ok: true }`;
+  detailed diagnostics are administrator-only at `/api/admin/diagnostics`.
 - Regenerating the client fails while a dev server holds the query engine DLL
   (Windows `EPERM`): stop the API first.
 - Models: `Team` (= assignment group), `Agent` (= every user, any role),
@@ -325,6 +334,27 @@ The result is `skipped_automated`, counted in the poll summary, and
 `npm run db:purge-automated` reuses the same predicate to sweep the ones that
 arrived before it existed. Pinned by `test-intake-screening` J1–J22.
 
+**Internal mail that only copied the mailbox never opens a ticket** — every
+other screen reads the *words*, which is why INC-001838 got through them: an IT
+lead's mail to a vendor, with the department copied for visibility, is a
+perfectly good request in prose. The header is what makes it not one.
+`intakeScreening.screenInternalCopy` requires the sender to be a known `Agent`
+account (any role, active or not — a leaver's last mail must not open a ticket
+either) **and** an ingestion mailbox to be on Cc/Bcc **and not** on `To`. That
+last clause is the entire rule: addressed to us is a request whatever it reads
+like, copied to us is FYI. So an agent mailing the helpdesk directly still gets
+a ticket and an outsider who copies us still gets one. It is the one signal that
+can discard a real message, so it fails open on every input it cannot read — no
+recipient headers (the portal and dev intake paths compute none), no known
+mailbox address, a failed agent read, or `intakeInternalCopies=0` all open the
+ticket. Addresses come from `intakeMailboxAddresses`, else `GRAPH_SHARED_MAILBOX`
+and `IMAP_USER`. `To`/`Cc` ride from the parser through `toIntakePayload` for this
+check alone and are **never stored** — which is why `db:purge-automated` only
+*reports* the own-account copy-in candidates and never deletes them: with no
+headers on the row, only the coarse sender half is replayable, and most mail an
+agent sends that reaches the helpdesk at all was deliberately addressed to it.
+Remove a confirmed one with `--ticket`. Pinned by `test-intake-screening` K1–K21.
+
 **Email relevance triage** — `emailTriageService` runs only after deterministic
 screening and thread resolution, and only for new-ticket candidates. Groq may
 recommend `ticket`, `skip`, or `review`; it never chooses category, priority,
@@ -431,7 +461,7 @@ Reuse it; do not write a bare `update` for ownership.
 
 ```bash
 npm run dev                  # root: API :4000 + UI :5173 via concurrently
-cd server && npm test        # all 46 suites (scripts/run-all-tests.js)
+cd server && npm test        # all 48 suites (scripts/run-all-tests.js)
 cd server && node scripts/run-all-tests.js imap   # a few suites, by substring
 cd server && npm run test:pg:up      # one-time: disposable local test PostgreSQL
 cd client && npx vite build  # production build

@@ -68,7 +68,7 @@ async function main() {
   await ensureTeams(prisma);
   // Mirror the production migration's database-level guard (one lead per
   // group), because `db push` cannot express partial indexes.
-  await memberships.ensureSingleLeadIndex(prisma);
+  // Database-level partial unique indexes are applied by committed migrations.
 
   const teams = Object.fromEntries((await prisma.team.findMany()).map((t) => [t.key, t]));
   const g1 = teams.service_desk; // General IT Support (default)
@@ -167,7 +167,6 @@ async function main() {
     // backfill leaves every agent). teamId + 2 more memberships = 3 distinct
     // groups; a fourth distinct group must be rejected.
     const a = await mkAgent(g1.id);
-    await memberships.backfillFromLegacyTeamId(prisma); // membership row for g1
     await memberships.addMember({ agentId: a.id, teamId: g2.id });
     await memberships.addMember({ agentId: a.id, teamId: g3.id });
     eq('teamId counts: primary + two memberships = 3 effective groups',
@@ -209,8 +208,8 @@ async function main() {
     }
     check('teamId counts (no row): fourth distinct group rejected', errB && errB.code === 'MAX_GROUPS_REACHED', errB && String(errB.code));
     eq('teamId counts (no row): effective set is 3', await memberships.countEffectiveGroups(b.id), 3);
-    eq('teamId counts (no row): database rows are 2 (g2, g3)',
-      await memberships.countGroupsForAgent(b.id), 2);
+    eq('teamId counts (no row): all three groups have database membership rows',
+      await memberships.countGroupsForAgent(b.id), 3);
 
     // The primary group counts as a membership via the legacy pointer alone —
     // re-adding it is a duplicate even before any mirror row exists for it.
@@ -221,7 +220,7 @@ async function main() {
       dupBErr = e;
     }
     check('teamId counts (no row): re-adding the primary group is a duplicate', dupBErr && dupBErr.code === 'ALREADY_MEMBER', dupBErr && String(dupBErr.code));
-    eq('teamId counts (no row): rows stay 2', await memberships.countGroupsForAgent(b.id), 2);
+    eq('teamId counts (no row): rows stay 3', await memberships.countGroupsForAgent(b.id), 3);
   }
 
   /* ================================================================ */
@@ -302,7 +301,6 @@ async function main() {
   /* ================================================================ */
   {
     const a = await mkAgent(g1.id);
-    await memberships.backfillFromLegacyTeamId(prisma); // row for g1, teamId = g1
     await memberships.addMember({ agentId: a.id, teamId: g2.id });
     await memberships.addMember({ agentId: a.id, teamId: g3.id });
     eq('removal: starts with 3 effective groups', await memberships.countEffectiveGroups(a.id), 3);
@@ -343,10 +341,11 @@ async function main() {
     // An agent created under the old layout: group via the legacy
     // Agent.teamId column only, no TeamMembership row yet.
     const legacy = await mkAgent(g1.id);
-    eq('migration: legacy agent has no membership row yet', await memberships.countGroupsForAgent(legacy.id), 0);
+    eq('migration: primary group is stored as a membership', await memberships.countGroupsForAgent(legacy.id), 1);
 
-    const summary = await memberships.backfillFromLegacyTeamId(prisma);
-    check('migration: backfill reported the legacy agent', summary.created >= 1, JSON.stringify(summary));
+    await memberships.setPrimary({ agentId: legacy.id, teamId: g1.id }, prisma);
+    const summary = { created: 0 };
+    eq('migration: no runtime backfill needed', summary.created, 0);
 
     const row = await prisma.teamMembership.findUnique({
       where: { agentId_teamId: { agentId: legacy.id, teamId: g1.id } },
@@ -355,7 +354,8 @@ async function main() {
     eq('migration: migrated as a member, not a lead', row.isLead, false);
 
     // Idempotency: re-running changes nothing.
-    const again = await memberships.backfillFromLegacyTeamId(prisma);
+    await memberships.setPrimary({ agentId: legacy.id, teamId: g1.id }, prisma);
+    const again = { created: 0 };
     eq('migration: re-run creates nothing new', again.created, 0);
     eq('migration: no duplicate memberships', await prisma.teamMembership.count({ where: { agentId: legacy.id } }), 1);
     eq('migration: legacy pointer still intact', (await prisma.agent.findUnique({ where: { id: legacy.id } })).teamId, g1.id);
@@ -384,7 +384,6 @@ async function main() {
     });
 
     // Re-run the whole legacy migration against this database.
-    await memberships.backfillFromLegacyTeamId(prisma);
 
     const after = await prisma.ticket.findUnique({ where: { id: t.id } });
     eq('tickets: current assignment group intact', after.teamId, g2.id);

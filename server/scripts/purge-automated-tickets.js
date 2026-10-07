@@ -33,6 +33,8 @@ const {
   matchIgnoredSubject,
   isRecallSubject,
   matchBannerSubject,
+  defaultMailboxAddresses,
+  parseAddressEntries,
   parseSenderEntries,
   parseSubjectEntries,
   DEFAULT_IGNORED_SENDERS,
@@ -61,6 +63,36 @@ async function effectiveSubjectEntries() {
     return parseSubjectEntries(await settingsService.get('intakeIgnoredSubjects'));
   } catch {
     return DEFAULT_IGNORED_SUBJECTS;
+  }
+}
+
+/**
+ * Everything the "internal mail that only copied us" rule needs, or null when
+ * the rule is switched off.
+ *
+ * The catch is the important half, and it is a LIMITATION rather than a
+ * convenience: a Ticket row stores neither To/Cc nor Bcc, so the half of the
+ * rule that reads the headers cannot be replayed against a stored ticket. What
+ * survives is the part that is derivable — the sender is one of our own
+ * accounts. That is a SUPERSET of the rule's hits, so the dry run lists a few
+ * tickets the live gate would have kept, and every line below says so. Widening
+ * a cleanup is acceptable; deleting on the strength of a header nobody stored is
+ * not, which is why the confirmation stays with the human reading the list.
+ */
+async function internalCopyContext() {
+  try {
+    if (String(await settingsService.get('intakeInternalCopies') ?? '1').trim() === '0') {
+      return null;
+    }
+    const configured = parseAddressEntries(await settingsService.get('intakeMailboxAddresses'));
+    const mailboxes = configured.length ? configured : defaultMailboxAddresses();
+    if (!mailboxes.length) return null;
+    const agents = await prisma.agent.findMany({ select: { email: true } });
+    const staffSenders = agents.map((a) => a.email).filter(Boolean);
+    if (!staffSenders.length) return null;
+    return { mailboxAddresses: mailboxes, staffSenders };
+  } catch {
+    return null;
   }
 }
 
@@ -178,6 +210,39 @@ async function main() {
     );
   }
   if (!matched.length) console.log('  none — nothing to do');
+
+  // The "internal mail that only copied us" rule is REPORTED here, never swept.
+  //
+  // A Ticket row stores no To/Cc headers, so the rule cannot be replayed against
+  // stored data — only its sender half can. That half is far too coarse to delete
+  // on: most mail an agent sends that reaches the helpdesk at all was genuinely
+  // addressed to it. Listing these separately, and never in `ids`, keeps the
+  // deletion decision with the human who reads them, which is the only place it
+  // belongs. The exact removal is --ticket INC-001838 (or whichever), after the
+  // same look at the queue the rule would have made in the first place.
+  const copyContext = await internalCopyContext();
+  if (copyContext) {
+    const candidates = emailTickets.filter((t) =>
+      copyContext.staffSenders.includes(String(t.requesterEmail || '').toLowerCase()),
+    );
+    heading(
+      `Copy-in candidates from our own accounts (${candidates.length}) — REPORTED ONLY, never deleted here`,
+    );
+    for (const t of candidates) {
+      console.log(
+        `  ${t.ticketNumber}  [${t.state.padEnd(11)}] <${t.requesterEmail}>  ${t.shortDescription.slice(0, 60)}`,
+      );
+    }
+    if (candidates.length) {
+      console.log(
+        '\n  The live gate drops these only when the helpdesk mailbox is on Cc/Bcc and NOT on To,\n' +
+          '  and a Ticket row keeps no headers — so every line above is a CANDIDATE, and the great\n' +
+          '  majority are genuine tickets an agent addressed to the helpdesk on purpose.\n' +
+          '  Confirm the copy-ins against the mailbox, then remove them by number:\n' +
+          '    npm run db:purge-automated -- --ticket INC-001838 --apply',
+      );
+    }
+  }
 
   // Transparency: a matched ticket an agent has already worked on is still
   // junk mail, but the human deserves to see that it had activity.

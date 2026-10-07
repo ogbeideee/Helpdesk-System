@@ -86,6 +86,10 @@ function canonicalWorkingDays(value) {
  * a cycle start (120 calendar days), so a maximal configured target can still
  * freeze holiday-exact due instants.
  */
+// Mirrors ADDRESS_RE in intakeScreening.js. Duplicated rather than imported:
+// that module requires this one, so importing back would be a require cycle.
+const MAILBOX_ADDRESS_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 const DEFINITIONS = {
   handoverPendingLimit: {
     group: 'handover',
@@ -367,6 +371,55 @@ const DEFINITIONS = {
         }
       }
       return { ok: true, value: [...new Set(entries)].join(', ') };
+    },
+  },
+
+  // ---- Internal mail that only copied the mailbox (intakeScreening.js) ---
+  // An agent writes to somebody else and copies the department for visibility;
+  // the shared mailbox receives it, and without this the helpdesk files a
+  // ticket about a conversation it was shown but never addressed on
+  // (INC-001838). Read from the To/Cc headers, so "addressed to us" always
+  // wins and only the copied-internal case is dropped.
+  intakeInternalCopies: {
+    group: 'intake',
+    label: 'Ignore mail from our own accounts that only CCs the helpdesk (1 = yes, 0 = no)',
+    type: 'int',
+    min: 0,
+    max: 1,
+    env: 'INTAKE_INTERNAL_COPIES',
+    fallback: 1,
+    help:
+      'A message from one of your own accounts (any Agent row) that carries the helpdesk mailbox ' +
+      'on Cc/Bcc but NOT on To opens no ticket — the department was copied for visibility, not ' +
+      'asked. Addressed to the helpdesk directly it opens a ticket like any other request. ' +
+      'A requester outside your accounts is never affected. Set to 0 to keep filing those as tickets.',
+  },
+  intakeMailboxAddresses: {
+    group: 'intake',
+    label: 'Helpdesk mailbox addresses (comma separated)',
+    type: 'string',
+    env: 'INTAKE_MAILBOX_ADDRESSES',
+    fallback: '',
+    help:
+      'Optional. The addresses this installation ingests mail for, used to tell "addressed to us" ' +
+      'from "copied to us". Left empty it derives them from GRAPH_SHARED_MAILBOX and IMAP_USER. ' +
+      'With none known the rule is inert and nothing is suppressed.',
+    validate(value) {
+      // ADDRESS_RE / parseAddressEntries are duplicated rather than imported
+      // from intakeScreening.js — that module requires THIS one, so importing
+      // back would be a require cycle. Keep the two in sync.
+      const raw = String(value ?? '')
+        .split(',')
+        .map((e) => e.trim())
+        .filter(Boolean);
+      const kept = [];
+      for (const entry of raw) {
+        if (!MAILBOX_ADDRESS_RE.test(entry)) {
+          return { ok: false, error: `"${entry}" is not a single email address` };
+        }
+        kept.push(entry.toLowerCase());
+      }
+      return { ok: true, value: [...new Set(kept)].join(', ') };
     },
   },
 

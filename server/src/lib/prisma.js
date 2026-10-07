@@ -17,4 +17,4 @@ const { PrismaClient } = require('@prisma/client');
 // Single shared instance for the whole process. Never instantiate another
 // PrismaClient in the running app: a second pool would double connection use
 // against the session-pooler cap.
-module.exports = new PrismaClient();
+module.exports = require('./membershipClient').wrap(new PrismaClient());

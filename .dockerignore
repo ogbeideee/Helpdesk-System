@@ -9,3 +9,6 @@ server/prisma/dev.db
 *.md
 docs/
 backups/
+.freebuff/
+
+archive/

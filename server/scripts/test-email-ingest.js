@@ -409,8 +409,19 @@ async function main() {
       rawEmail({ id: 'contract', from: `c@${DOMAIN}`, name: 'C Tester', subject: 'Contract check', body: 'Body text.' })
     );
     const payload = toIntakePayload(normalized);
-    eq('contract: payload keys', Object.keys(payload).sort().join(','), 'autoSubmitted,body,cleanBody,conversationId,from,inReplyTo,internetMessageId,listId,listUnsubscribe,messageId,name,precedence,references,subject');
+    // `recipients` (To/Cc/Bcc) rides along for the screening gate: it tells
+    // "addressed to the helpdesk" from "copied to it". See
+    // intakeScreening.copiedInboxAddress.
+    eq('contract: payload keys', Object.keys(payload).sort().join(','), 'autoSubmitted,body,cleanBody,conversationId,from,inReplyTo,internetMessageId,listId,listUnsubscribe,messageId,name,precedence,recipients,references,subject');
     check('contract: mapper adds no ticket fields', !('category' in payload) && !('priority' in payload) && !('state' in payload));
+    check(
+      'contract: recipients come from the parser, never invented',
+      'recipients' in payload
+        && payload.recipients !== null
+        && typeof payload.recipients === 'object'
+        && Array.isArray(payload.recipients.to)
+        && Array.isArray(payload.recipients.cc),
+    );
 
     // Ingesting an already-normalized email works without re-parsing.
     const direct = await ingestNormalizedEmail(normalized, { logger: quiet });

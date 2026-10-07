@@ -31,10 +31,9 @@
 // THE POOL
 // --------
 // For each active assignment group, the pool is every staff agent whose
-// effective membership covers that group: a TeamMembership row (the source of
-// truth for multi-group) OR the legacy primary-group pointer Agent.teamId,
-// which the membership service keeps in sync and which the assignment engine
-// still reads. The maximum-membership rule (MAX_GROUPS_PER_AGENT) is enforced
+// effective membership covers that group: a canonical TeamMembership row.
+// The Agent.teamId compatibility field is derived from its primary membership.
+// The maximum-membership rule (MAX_GROUPS_PER_AGENT) is enforced
 // where memberships change, so a pool can never contain an agent who is over
 // the limit — this module only reads.
 const prisma = require('../lib/prisma');

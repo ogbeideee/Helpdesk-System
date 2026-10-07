@@ -1,3 +1,4 @@
+throw new Error('Archived historical tool; use committed PostgreSQL migrations instead.');
 // One-time data migration: Agent.teamId (single assignment group) -> the
 // TeamMembership join table, so the multi-group model can take over without
 // losing anyone's existing group.

@@ -1,23 +1,7 @@
-// Multi-group membership for Assignment Groups (the Team table).
-//
-// The TeamMembership join table is the source of truth for "who belongs to
-// which assignment group, and who leads it". The legacy single-column
-// `Agent.teamId` is kept in sync here during the transition phase because
-// routing/workload still read it; the next phase flips readers over to this
-// table and drops the column.
-//
-// Business rules:
-//   - an agent belongs to at most MAX_GROUPS_PER_AGENT groups
-//   - an agent may lead several groups at once (lead status is per-membership)
-//   - a group has exactly one lead; promoting a new lead demotes the old one
-//   - only an existing member can become a group's lead
-//   - leading a group does NOT grant the ADMIN role
-//
-// Enforcement: max-3 cannot be expressed as a table constraint in SQLite,
-// so it is enforced here (and only here). The one-lead-per-group rule is
-// additionally guarded in the database by the partial unique index
-// `TeamMembership_single_lead` created by the migration (and re-created by
-// `ensureSingleLeadIndex` for databases updated via `prisma db push`).
+// TeamMembership is the only stored group membership, including primary and
+// supporting status. Agent teamId/team are derived DTO compatibility fields.
+// Agent row locks serialize membership changes; partial unique indexes protect
+// one primary per agent and one lead per group. Maximum three groups per agent.
 const prisma = require('../lib/prisma');
 const auditService = require('./auditService');
 
@@ -40,23 +24,10 @@ async function countGroupsForAgent(agentId, client = prisma) {
   return client.teamMembership.count({ where: { agentId } });
 }
 
-/**
- * The agent's effective group set: the union of its legacy primary-group
- * pointer (Agent.teamId) and its TeamMembership rows, deduplicated.
- *
- * During the transition phase Agent.teamId is always mirrored by a membership
- * row (the migration backfills it and every write below keeps it in sync), so
- * this is normally identical to the membership rows. The union guard keeps the
- * max-groups rule correct even on a half-migrated database, and guarantees the
- * primary pointer is never counted twice.
- */
+/** The canonical assignment-group ids for an agent. */
 async function getEffectiveGroupIds(agentId, client = prisma) {
-  const agent = await client.agent.findUnique({ where: { id: agentId }, select: { teamId: true } });
-  if (!agent) return [];
   const rows = await client.teamMembership.findMany({ where: { agentId }, select: { teamId: true } });
-  const ids = new Set(rows.map((r) => r.teamId));
-  if (agent.teamId !== null) ids.add(agent.teamId);
-  return [...ids];
+  return rows.map(row => row.teamId);
 }
 
 /** Number of distinct groups in the agent's effective group set. */
@@ -104,56 +75,24 @@ async function groupLead(teamId, client = prisma) {
  *   - the (agent, group) pair must not already exist
  *   - an agent belongs to at most MAX_GROUPS_PER_AGENT groups
  *   - if arriving as a lead, the existing lead of the group is demoted first
- *   - while the legacy Agent.teamId still exists, a group-less agent's
- *     primary-group pointer is set to this group so routing/workload keep
- *     working during the transition.
+ *   - the first membership becomes primary.
  *
  * Throws GroupMembershipError with code NOT_FOUND | ALREADY_MEMBER | MAX_GROUPS_REACHED.
  */
 async function addMember({ agentId, teamId, isLead = false, actor = null }, client = prisma) {
   return client.$transaction(async (tx) => {
-    const agent = await tx.agent.findUnique({
-      where: { id: agentId },
-      select: { id: true, teamId: true, name: true, email: true },
-    });
+    await lockAgent(agentId, tx);
+    const agent = await tx.agent.findUnique({ where: { id: agentId }, select: { id: true, name: true, email: true } });
     if (!agent) throw notFound('agent');
     const team = await tx.team.findUnique({ where: { id: teamId }, select: { id: true, name: true, key: true } });
     if (!team) throw notFound('group');
-    // The primary group (Agent.teamId) already counts as a membership: it is
-    // represented by the legacy pointer itself, so re-adding it — even before its
-    // mirror TeamMembership row exists — is a duplicate,never an extra group.
-
-    if (
-      agent.teamId === teamId ||
-      await tx.teamMembership.findUnique({ where: { agentId_teamId: { agentId, teamId } }, select: { id: true } })
-    ) {
-      throw new GroupMembershipError('ALREADY_MEMBER', 'the agent is already a member of that assignment group');
-    }
-    // Effective (deduplicated) group count: the membership rows plus the
-    // legacy primary pointer Agent.teamId. The backfill and the pointer sync
-    // below normally mean teamId already has a membership row, so this equals
-    // the row count; the union guard makes the rule correct even on a
-    // half-migrated database and never counts the primary group twice.
-    const count = await tx.teamMembership.count({ where: { agentId } });
-    const primaryHasRow =
-      agent.teamId === null ||
-      Boolean(
-        await tx.teamMembership.findUnique({
-          where: { agentId_teamId: { agentId, teamId: agent.teamId } },
-          select: { id: true },
-        })
-      );
-    const effectiveCount = count + (primaryHasRow ? 0 : 1);
-    if (effectiveCount >= MAX_GROUPS_PER_AGENT) {
-      throw new GroupMembershipError(
-        'MAX_GROUPS_REACHED',
-        `an agent can belong to at most ${MAX_GROUPS_PER_AGENT} assignment groups`
-      );
-    }
+    if (await isMember(agentId, teamId, tx)) throw new GroupMembershipError('ALREADY_MEMBER', 'the agent is already a member of that assignment group');
+    const count = await countGroupsForAgent(agentId, tx);
+    if (count >= MAX_GROUPS_PER_AGENT) throw new GroupMembershipError('MAX_GROUPS_REACHED', `an agent can belong to at most ${MAX_GROUPS_PER_AGENT} assignment groups`);
     if (isLead) {
       await tx.teamMembership.updateMany({ where: { teamId, isLead: true }, data: { isLead: false } });
     }
-    const row = await tx.teamMembership.create({ data: { agentId, teamId, isLead } });
+    const row = await tx.teamMembership.create({ data: { agentId, teamId, isLead, isPrimary: count === 0 } });
     await auditService.record(tx, {
       action: 'group.member_added',
       entityType: 'Team',
@@ -164,10 +103,6 @@ async function addMember({ agentId, teamId, isLead = false, actor = null }, clie
       description: `${agent.name} added to assignment group ${team.name}${isLead ? ' as lead' : ''}`,
       metadata: { agentId, key: team.key },
     });
-    if (agent.teamId === null) {
-      // Transition only: keep the legacy primary-group pointer usable.
-      await tx.agent.update({ where: { id: agentId }, data: { teamId } });
-    }
     return row;
   });
 }
@@ -225,6 +160,7 @@ async function setLead({ agentId, teamId, isLead = true, actor = null }, client 
  */
 async function removeMember({ agentId, teamId, actor = null }, client = prisma) {
   return client.$transaction(async (tx) => {
+    await lockAgent(agentId, tx);
     const row = await tx.teamMembership.findUnique({
       where: { agentId_teamId: { agentId, teamId } },
       include: { agent: { select: { name: true, email: true } }, team: { select: { name: true, key: true } } },
@@ -247,72 +183,12 @@ async function removeMember({ agentId, teamId, actor = null }, client = prisma) 
       description: `${row.agent.name} removed from assignment group ${row.team.name}`,
       metadata: { agentId, key: row.team.key },
     });
-    // Transition only: repoint the legacy primary-group pointer when it aimed
-    // at the group being left.
-    const agent = await tx.agent.findUnique({ where: { id: agentId }, select: { teamId: true } });
-    if (agent && agent.teamId === teamId) {
-      const left = await tx.teamMembership.findMany({
-        where: { agentId },
-        orderBy: { id: 'asc' },
-        take: 1,
-        select: { teamId: true },
-      });
-      await tx.agent.update({ where: { id: agentId }, data: { teamId: left.length ? left[0].teamId : null } });
+    if (row.isPrimary) {
+      const next = await tx.teamMembership.findFirst({ where: { agentId }, orderBy: { id: 'asc' } });
+      if (next) await tx.teamMembership.update({ where: { id: next.id }, data: { isPrimary: true } });
     }
     return row;
   });
-}
-
-/**
- * Database-level guard for "one lead per group": a partial unique index.
- *
- * Prisma cannot express partial indexes for SQLite, so this is created by the
- * migration for migrated databases, and re-created here for databases updated
- * via `prisma db push` (which does not know the index, and would otherwise not
- * have it). Idempotent.
- */
-async function ensureSingleLeadIndex(client = prisma) {
-  // `isLead` is BOOLEAN on Postgres but a 0/1 INTEGER on SQLite, so compare to
-  // the boolean literal `true` — valid in both dialects. (Prisma maps the model
-  // field to Postgres BOOLEAN / SQLite INTEGER.)
-  await client.$executeRawUnsafe(
-    'CREATE UNIQUE INDEX IF NOT EXISTS "TeamMembership_single_lead" ON "TeamMembership"("teamId") WHERE "isLead" = true'
-  );
-}
-
-/**
- * Migrate the legacy single-group layout: every agent with a non-null
- * Agent.teamId gets exactly one TeamMembership row for that group.
- *
- * The legacy schema stores no lead information, so all migrated rows start as
- * plain members (isLead = false); leads are appointed in the next phase.
- *
- * Idempotent: existing (agentId, teamId) pairs are never duplicated, never
- * deleted and never rewritten. No user, group, ticket or ticket assignment
- * group is touched. Returns a tally.
- */
-async function backfillFromLegacyTeamId(client = prisma) {
-  const agents = await client.agent.findMany({
-    where: { teamId: { not: null } },
-    select: { id: true, teamId: true },
-  });
-  let created = 0;
-  let existing = 0;
-  for (const a of agents) {
-    const dup = await client.teamMembership.findUnique({
-      where: { agentId_teamId: { agentId: a.id, teamId: a.teamId } },
-      select: { id: true },
-    });
-    if (dup) {
-      existing += 1;
-      continue;
-    }
-    await client.teamMembership.create({
-      data: { agentId: a.id, teamId: a.teamId, isLead: false },
-    });
-    created += 1;
-  }
-  return { total: agents.length, created, existing };
 }
 
 /**
@@ -321,16 +197,41 @@ async function backfillFromLegacyTeamId(client = prisma) {
  * TeamMembership) but their primary group (Agent.teamId) is a different team.
  */
 async function isSupportingMember(agentId, teamId, client = prisma) {
-  const agent = await client.agent.findUnique({
-    where: { id: agentId },
-    select: { teamId: true },
-  });
-  if (!agent || agent.teamId === null || agent.teamId === teamId) return false;
-  return isMember(agentId, teamId, client);
+  const membership = await client.teamMembership.findUnique({ where: { agentId_teamId: { agentId, teamId } } });
+  return Boolean(membership && !membership.isPrimary);
+}
+
+async function lockAgent(agentId, client) {
+  await client.$queryRaw`SELECT "id" FROM "Agent" WHERE "id" = ${agentId} FOR UPDATE`;
+}
+
+// Called by the Agent DTO adapter inside the caller's transaction. There is no
+// primary-group scalar on Agent: the membership row owns this decision.
+async function setPrimary({ agentId, teamId }, client = prisma) {
+  await lockAgent(agentId, client);
+  const rows = await client.teamMembership.findMany({ where: { agentId }, orderBy: { id: 'asc' } });
+  const current = rows.find(row => row.isPrimary);
+  if (current?.teamId === teamId) return;
+  if (teamId === null) {
+    if (current?.isLead) throw new GroupMembershipError('LEAD_REMOVAL_FORBIDDEN', 'Demote the group lead before clearing their primary group');
+    if (current) await client.teamMembership.delete({ where: { id: current.id } });
+    const next = rows.find(row => row.id !== current?.id);
+    if (next) await client.teamMembership.update({ where: { id: next.id }, data: { isPrimary: true } });
+    return;
+  }
+  const existing = rows.find(row => row.teamId === teamId);
+  if (!existing && current) {
+    if (current.isLead) throw new GroupMembershipError('LEAD_REMOVAL_FORBIDDEN', 'Demote the group lead before replacing their primary group');
+    await client.teamMembership.delete({ where: { id: current.id } });
+  } else if (!existing && rows.length >= MAX_GROUPS_PER_AGENT) throw new GroupMembershipError('MAX_GROUPS_REACHED', 'Remove a membership before adding another primary group');
+  await client.teamMembership.updateMany({ where: { agentId, isPrimary: true }, data: { isPrimary: false } });
+  if (existing) await client.teamMembership.update({ where: { id: existing.id }, data: { isPrimary: true } });
+  else await client.teamMembership.create({ data: { agentId, teamId, isPrimary: true } });
 }
 
 module.exports = {
   MAX_GROUPS_PER_AGENT,
+  setPrimary,
   GroupMembershipError,
   countGroupsForAgent,
   getEffectiveGroupIds,
@@ -342,7 +243,5 @@ module.exports = {
   addMember,
   setLead,
   removeMember,
-  ensureSingleLeadIndex,
-  backfillFromLegacyTeamId,
   isSupportingMember,
 };

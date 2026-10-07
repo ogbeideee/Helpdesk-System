@@ -13,6 +13,8 @@
      H. the relevance gate honours permitted subjects
      I. recalled mail, and the administrator ignored-subject list
      J. greeting banners (birthdays, farewells, thanks) open no ticket
+     K. internal mail that only COPIED the mailbox opens no ticket, while the
+        same mail addressed to the helpdesk still does
 
    Usage: node scripts/test-intake-screening.js  (from server/) */
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
@@ -88,8 +90,19 @@ async function cleanup() {
   await prisma.ticketSlaCycle.deleteMany({ where: { ticketId: { in: ids } } });
   await prisma.ticket.deleteMany({ where: { id: { in: ids } } });
   await prisma.setting.deleteMany({
-    where: { key: { in: ['intakeIgnoredSenders', 'intakeIgnoredSubjects'] } },
+    where: {
+      key: {
+        in: [
+          'intakeIgnoredSenders',
+          'intakeIgnoredSubjects',
+          'intakeInternalCopies',
+          'intakeMailboxAddresses',
+        ],
+      },
+    },
   });
+  // The accounts group K creates (its emails carry MARK, so they are findable).
+  await prisma.agent.deleteMany({ where: { email: { contains: MARK } } });
 }
 
 
@@ -581,6 +594,196 @@ async function main() {
       { logger: quiet, mailer: captureMailer() }
     );
     eq('J22 a permitted subject beats the banner', induction.status, 'created');
+  }
+
+  console.log('\n--- K. internal mail that only copied the mailbox ---');
+  {
+    // INC-001838: an IT lead mails a vendor contact about a downed link and
+    // copies the department for visibility. The shared mailbox receives it, and
+    // without this signal the helpdesk files a ticket about a conversation it
+    // was shown but never addressed on.
+    const MAILBOX = `helpdesk@${DOMAIN}`;
+    const lead = await prisma.agent.create({
+      data: {
+        email: `lead.${MARK}@${DOMAIN}`,
+        name: 'Lead Tester',
+        passwordHash: 'x',
+        role: 'admin',
+        skillLevel: 1,
+      },
+    });
+    const vendor = `vendor@${DOMAIN}.co`; // deliberately NOT an account
+    const copiedMsg = {
+      requesterEmail: lead.email,
+      subject: 'V.I. Station OFFLINE | NO INTERNET',
+      recipients: {
+        to: [{ email: vendor }],
+        cc: [
+          { name: 'MRS IT DEPARTMENT', email: `dept@${DOMAIN}` },
+          { name: 'Helpdesk Platform', email: MAILBOX },
+        ],
+        bcc: [],
+      },
+    };
+    const ctx = { mailboxAddresses: [MAILBOX], staffSenders: [lead.email] };
+
+    // The header rule itself.
+    eq('K1 an agent copy in is the copied mailbox',
+      screening.copiedInboxAddress(copiedMsg, ctx), MAILBOX);
+    eq('K2 addressed to us directly is not a copy',
+      screening.copiedInboxAddress(
+        { ...copiedMsg, recipients: { to: [{ email: MAILBOX }], cc: [], bcc: [] } }, ctx), null);
+    eq('K3 To wins even when it is also on Cc',
+      screening.copiedInboxAddress(
+        { ...copiedMsg, recipients: { to: [{ email: MAILBOX }, { email: vendor }], cc: [{ email: MAILBOX }], bcc: [] } },
+        ctx), null);
+    eq('K4 a Bcc-only copy counts',
+      screening.copiedInboxAddress(
+        { ...copiedMsg, recipients: { to: [{ email: vendor }], cc: [], bcc: [{ email: MAILBOX }] } }, ctx),
+      MAILBOX);
+    eq('K5 the display-name header form still reads',
+      screening.copiedInboxAddress(
+        { ...copiedMsg, recipients: { to: ['vendor@x.co'], cc: [`Helpdesk Platform <${MAILBOX}>`], bcc: [] } },
+        ctx), MAILBOX);
+
+    // The guards. Every one of these must fail OPEN.
+    eq('K6 an outsider who copies us is somebody asking',
+      screening.copiedInboxAddress({ ...copiedMsg, requesterEmail: `someone@${DOMAIN}` }, ctx), null);
+    eq('K7 no recipient headers is no evidence',
+      screening.copiedInboxAddress({ ...copiedMsg, recipients: null }, ctx), null);
+    eq('K8 three empty lists are no evidence either',
+      screening.copiedInboxAddress(
+        { ...copiedMsg, recipients: { to: [], cc: [], bcc: [] } }, ctx), null);
+    eq('K9 no known mailbox address makes the rule inert',
+      screening.copiedInboxAddress(copiedMsg, { mailboxAddresses: [], staffSenders: [lead.email] }), null);
+    eq('K10 no known account makes it inert',
+      screening.copiedInboxAddress(copiedMsg, { mailboxAddresses: [MAILBOX], staffSenders: [] }), null);
+    eq('K11 a copy that never reaches us says nothing',
+      screening.copiedInboxAddress(
+        { ...copiedMsg, recipients: { to: [{ email: vendor }], cc: [{ email: `dept@${DOMAIN}` }], bcc: [] } },
+        ctx), null);
+    eq('K12 the mailbox list drops anything that is not an address',
+      screening.parseAddressEntries(`a@${DOMAIN}, nope, @bad, B@${DOMAIN}`).join(','),
+      `a@${DOMAIN},b@${DOMAIN}`);
+
+    // End to end through the real parser and the real intake path.
+    const outbound = parseEmail({
+      messageId: `${MARK}internal-copy`,
+      from: lead.email,
+      to: vendor,
+      cc: `MRS IT DEPARTMENT <dept@${DOMAIN}>, Helpdesk Platform <${MAILBOX}>`,
+      subject: 'V.I. Station OFFLINE | NO INTERNET',
+      body: 'Good afternoon.\n\nKindly be informed of an outage since yesterday.',
+    });
+    eq('K13 the parser carries the recipient headers', outbound.recipients.cc.length, 2);
+
+    await settingsService.update({ intakeMailboxAddresses: MAILBOX });
+    const mailer = captureMailer();
+    const skipped = await intakeEmailMessage(
+      intakePayload({
+        from: lead.email,
+        subject: outbound.subject,
+        body: outbound.body,
+        cleanBody: outbound.cleanBody,
+        recipients: outbound.recipients,
+      }),
+      { logger: quiet, mailer }
+    );
+    eq('K14 the copied internal mail opens no ticket', skipped.status, 'skipped_automated');
+    check('K15 and it says why', /copied to this mailbox only/.test(skipped.reason || ''), skipped.reason);
+    check('K16 and it notifies nobody', mailer.calls.length === 0, mailer.calls.join(','));
+
+    // The same message addressed to the helpdesk is a request, and stays one.
+    const direct = parseEmail({
+      messageId: `${MARK}internal-direct`,
+      from: lead.email,
+      to: `Helpdesk Platform <${MAILBOX}>`,
+      subject: 'The V.I. station link is down',
+      body: 'The V.I. station link is down and the monitor never came back.',
+    });
+    const kept = await intakeEmailMessage(
+      intakePayload({
+        from: lead.email,
+        subject: direct.subject,
+        body: direct.body,
+        cleanBody: direct.cleanBody,
+        recipients: direct.recipients,
+      }),
+      { logger: quiet, mailer: captureMailer() }
+    );
+    eq('K17 addressed to the helpdesk it still opens a ticket', kept.status, 'created');
+
+    // An outsider copying us is untouched — the rule is about OUR accounts.
+    const outsider = parseEmail({
+      messageId: `${MARK}outsider-copy`,
+      from: `station.manager@${DOMAIN}`,
+      to: 'vendor@elsewhere.co',
+      cc: `Helpdesk Platform <${MAILBOX}>`,
+      subject: 'Our link is down again',
+      body: 'Our link has been down since this morning and we need it restored.',
+    });
+    const outsiderResult = await intakeEmailMessage(
+      intakePayload({
+        from: `station.manager@${DOMAIN}`,
+        subject: outsider.subject,
+        body: outsider.body,
+        cleanBody: outsider.cleanBody,
+        recipients: outsider.recipients,
+      }),
+      { logger: quiet, mailer: captureMailer() }
+    );
+    eq('K18 an outsider who copies us still opens a ticket', outsiderResult.status, 'created');
+
+    // Switched off, the same copied mail files a ticket again.
+    await settingsService.update({ intakeInternalCopies: '0' });
+    const offMsg = parseEmail({
+      messageId: `${MARK}internal-copy-off`,
+      from: lead.email,
+      to: vendor,
+      cc: `Helpdesk Platform <${MAILBOX}>`,
+      subject: 'Another outage to note',
+      body: 'Another outage to note for the record.',
+    });
+    const whenOff = await intakeEmailMessage(
+      intakePayload({
+        from: lead.email,
+        subject: offMsg.subject,
+        body: offMsg.body,
+        cleanBody: offMsg.cleanBody,
+        recipients: offMsg.recipients,
+      }),
+      { logger: quiet, mailer: captureMailer() }
+    );
+    eq('K19 the setting turns the rule off', whenOff.status, 'created');
+
+    // A permitted subject outranks it, like every other rule below step 1.
+    await settingsService.update({ intakeInternalCopies: '1' });
+    const permitted = await intakeEmailMessage(
+      intakePayload({
+        from: lead.email,
+        subject: 'NEW EMPLOYEE INDUCTION PLAN - MARCH',
+        recipients: { to: [{ email: vendor }], cc: [{ email: MAILBOX }], bcc: [] },
+      }),
+      { logger: quiet, mailer: captureMailer() }
+    );
+    eq('K20 a permitted subject beats the copy rule', permitted.status, 'created');
+
+    // With no mailbox address configured the rule is inert rather than wrong.
+    await settingsService.update({ intakeMailboxAddresses: '' });
+    const noMailbox = await intakeEmailMessage(
+      intakePayload({
+        from: lead.email,
+        subject: 'Outage with no mailbox configured',
+        body: 'The link is down and nothing is known about the inbox.',
+        recipients: { to: [{ email: vendor }], cc: [{ email: MAILBOX }], bcc: [] },
+      }),
+      { logger: quiet, mailer: captureMailer() }
+    );
+    // testdb.js clears the ingestion env, so with the setting empty there is no
+    // known mailbox address and the rule must be inert: the ticket opens.
+    eq('K21 with no mailbox address the rule is inert, never wrong', noMailbox.status, 'created');
+
+    await prisma.agent.delete({ where: { id: lead.id } });
   }
 
   await cleanup();

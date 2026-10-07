@@ -31,6 +31,8 @@ const SUITES = [
   'test-workload',
   'test-handover',
   'test-email-integration',
+  'test-notification-layout',
+  'test-operations',
   'test-email-sources',
   'test-imap',
   'test-imap-oauth',

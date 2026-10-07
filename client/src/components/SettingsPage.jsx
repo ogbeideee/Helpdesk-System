@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { api } from '../api.js';
 import { Avatar, Field, useToast } from './ui.jsx';
 import EmailTriageSettings from './EmailTriageSettings.jsx';
+import OperationsSettings from './OperationsSettings.jsx';
 
 /**
  * Self-service account settings, reached from the account menu in the header.
@@ -178,6 +179,7 @@ export default function SettingsPage({ me, onUpdated }) {
       </section>
 
       {me.role === 'admin' && <EmailTriageSettings />}
+      {me.role === 'admin' && <OperationsSettings />}
 
       {toastNode}
     </div>

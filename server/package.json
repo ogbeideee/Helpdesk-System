@@ -6,12 +6,9 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "db:push": "prisma db push",
     "db:generate": "prisma generate",
     "db:deploy": "prisma migrate deploy",
     "db:init": "node scripts/init-db.js",
-    "db:migrate-v2": "node scripts/migrate-v2.js",
-    "db:migrate-assignment-groups": "node scripts/migrate-assignment-groups.js",
     "seed:demo": "node scripts/seed-demo.js",
     "db:purge-demo": "node scripts/purge-demo-data.js",
     "db:purge-automated": "node scripts/purge-automated-tickets.js",
@@ -71,7 +68,9 @@
     "bench:ai": "node scripts/ai-benchmark.js",
     "bench:ai:triage": "node scripts/ai-triage-benchmark.js",
     "test:ai-benchmark": "node scripts/test-ai-benchmark.js",
-    "bench:ai:viz": "node scripts/visualize-ai-benchmark.js"
+    "bench:ai:viz": "node scripts/visualize-ai-benchmark.js",
+    "db:backup": "node scripts/backup-database.cjs",
+    "db:rehearse-recovery": "node scripts/rehearse-recovery.cjs"
   },
   "dependencies": {
     "@azure/msal-node": "^3.2.0",

@@ -348,7 +348,13 @@ async function main() {
       await new Promise((r) => setTimeout(r, 250));
     }
     eq('F1 the server comes up with IMAP configured', healthy, true);
-    const health = await (await fetch(`${BASE}/api/health`)).json();
+    const publicHealth = await (await fetch(`${BASE}/api/health`)).json();
+    check('public health publishes only liveness', publicHealth.ok === true && Object.keys(publicHealth).length === 1);
+    const healthAdmin = await prisma.agent.create({ data: { name: 'Health administrator', email: 'health-admin@sources.test', role: 'admin' } });
+    const healthToken = require('../src/authMiddleware').signToken(healthAdmin);
+    const diagnostics = () => fetch(`${BASE}/api/admin/diagnostics`, { headers: { Authorization: `Bearer ${healthToken}` } });
+    const health = await (await diagnostics()).json();
+
     eq('F2 health reports IMAP enabled', health.integration.imap.enabled, true);
     eq('F3 the connection target is visible', health.integration.imap.host, '127.0.0.1');
     const body = JSON.stringify(health);
@@ -365,7 +371,7 @@ async function main() {
     const deadline = Date.now() + 20000;
     while (true) {
       await new Promise((r) => setTimeout(r, 500));
-      afterFailure = await (await fetch(`${BASE}/api/health`)).json();
+      afterFailure = await (await diagnostics()).json();
       if ((afterFailure.integration.imap && afterFailure.integration.imap.lastError) || Date.now() > deadline) break;
     }
     eq('F7 the server survives a failed IMAP poll', afterFailure.ok, true);
@@ -379,7 +385,7 @@ async function main() {
     // deployment's own domain. Both are reported as set/unset booleans, and an
     // administrator still reads the real values from GET /api/microsoft-365
     // (behind requireAdmin).
-    const configured = await (await fetch(`${BASE}/api/health`)).json();
+    const configured = await (await diagnostics()).json();
     check('F10 the public health response omits the shared mailbox address',
       !JSON.stringify(configured).includes('shared-mailbox@sources.test'));
     check('F11 the public health response omits the public base URL and its domain',

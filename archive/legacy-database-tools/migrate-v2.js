@@ -1,3 +1,4 @@
+throw new Error('Archived historical tool; use committed PostgreSQL migrations instead.');
 // One-time data migration for the v2 workflow model:
 //   - priority "medium"  -> "moderate"
 //   - state ASSIGNED     -> NEW        (routed but not started)

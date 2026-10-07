@@ -212,10 +212,10 @@ async function markAsRead(messageId) {
   );
 }
 
-async function sendBroadcastMail({ subject, body }) {
+async function sendBroadcastMail({ subject, body, html }) {
   const message = {
     subject,
-    body: { contentType: 'Text', content: body },
+    body: { contentType: html ? 'HTML' : 'Text', content: html || body },
     toRecipients: [{ emailAddress: { address: graphConfig.broadcastDl } }],
   };
   return withResilience(() =>
@@ -227,10 +227,10 @@ async function sendBroadcastMail({ subject, body }) {
 }
 
 // Generic send-as-shared-mailbox (requester acks, assignments, status updates).
-async function sendMail({ subject, body, toRecipients, ccRecipients }) {
+async function sendMail({ subject, body, html, toRecipients, ccRecipients }) {
   const message = {
     subject,
-    body: { contentType: 'Text', content: body },
+    body: { contentType: html ? 'HTML' : 'Text', content: html || body },
     toRecipients,
     ...(ccRecipients ? { ccRecipients } : {}),
   };

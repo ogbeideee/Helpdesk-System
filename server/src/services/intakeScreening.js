@@ -8,20 +8,26 @@
 // received a requester acknowledgement addressed to a noreply mailbox, whose
 // bounce arrived back and became ANOTHER ticket.
 //
-// Five deterministic signals, no LLM, consistent with the routing rules. They
+// Six deterministic signals, no LLM, consistent with the routing rules. They
 // are applied in this order, and the first one to match wins:
 //
 //   1. A permitted subject (isPermittedSubject) OPENS a ticket — the induction
 //      notices the helpdesk is copied on deliberately. Checked first, so no
 //      rule below can ever suppress them.
 //
-//   2. A recalled message. Microsoft marks a recall with the message class
+//   2. Internal mail that merely COPIED this mailbox (screenInternalCopy). One
+//      of the team writes to somebody else, copies the department for
+//      visibility, and the shared mailbox receives it — so the helpdesk parses
+//      its own people's outbound mail and opens a ticket about a conversation
+//      it was only shown. Read from the To/Cc headers, not from the words.
+//
+//   3. A recalled message. Microsoft marks a recall with the message class
 //      IPM.Outlook.Recall and the subject "Recall: <original subject>"; neither
 //      ingestion channel carries the class, so the subject prefix is the signal.
 //      A recall is not a request, and it looks like the original human sender —
 //      so a sender-based rule could never separate it from their real mail.
 //
-//   3. A greeting banner — a birthday notice, a farewell, a thank-you. A notice
+//   4. A greeting banner — a birthday notice, a farewell, a thank-you. A notice
 //      whose whole purpose is to greet somebody is not an IT request, and it
 //      arrives on a schedule nobody configured in the ignored-subject list, so
 //      its SHAPE is screened here: the subject must open with a known banner,
@@ -29,14 +35,14 @@
 //      (matchBannerSubject). "Happy birthday — please reset Ngozi's password"
 //      stays a ticket.
 //
-//   4. Auto-generated headers (RFC 3834 and de-facto bulk markers):
+//   5. Auto-generated headers (RFC 3834 and de-facto bulk markers):
 //        Auto-Submitted: <anything but "no">
 //        Precedence: bulk | list | junk
 //        List-Id / List-Unsubscribe present
 //      Adapters carry them on the normalized email; the parser transports
 //      them; only this module interprets them.
 //
-//   5. Two administrator lists, matched against what the sender actually wrote:
+//   6. Two administrator lists, matched against what the sender actually wrote:
 //      a. An ignored-subject list (`intakeIgnoredSubjects` setting, env
 //         INTAKE_IGNORED_SUBJECTS). Case-insensitive, spacing-insensitive
 //         SUBSTRING of the subject — so "independence day" catches
@@ -162,6 +168,125 @@ function matchIgnoredSubject(subject, entries) {
 }
 
 const BULK_PRECEDENCE = new Set(['bulk', 'list', 'junk']);
+
+// ---------------------------------------------------------------------------
+// Internal mail that only COPIED this mailbox.
+//
+// The problem this closes is not spam, it is the helpdesk reading its own
+// people's mail. An IT lead mails a station manager about a downed link and
+// copies the department for visibility; the shared mailbox receives it, so
+// intake sees a human sender, a real-looking subject and words that read like
+// a request — and files a ticket against a conversation the helpdesk was shown
+// but never addressed on. INC-001838 was exactly that: a "V.I. Station OFFLINE"
+// mail from an agent, addressed to a vendor contact, helpdesk in Cc.
+//
+// The evidence is a HEADER, not a judgement about the words, which is what
+// makes it deterministic and checkable by eye:
+//
+//   - the sender is one of our own accounts (an Agent row — any role, active or
+//     not, because a leaver's last mail still must not open a ticket);
+//   - a mailbox this installation ingests from appears on Cc or Bcc;
+//   - and that same mailbox does NOT appear on To.
+//
+// The last clause is the whole rule. Addressed to us = a request, whatever it
+// looks like; copied to us = FYI. So an agent emailing the helpdesk directly
+// still opens a ticket, a requester who CCs us still opens a ticket, and only
+// the copied-internal case is dropped.
+//
+// Fail-open everywhere, deliberately, because this is the one signal that can
+// drop a real message:
+//   - no recipient headers at all (the portal and dev intake paths compute
+//     none) -> no evidence, no skip;
+//   - no configured ingestion address -> the rule is inert;
+//   - an agent-table read failure -> inert;
+//   - off via `intakeInternalCopies`.
+// And the sender must be a KNOWN account: an outsider who copies the helpdesk
+// is somebody asking, and nothing about it is speculative.
+// ---------------------------------------------------------------------------
+
+/** Enough of an address to compare one, without pretending to validate it. */
+const ADDRESS_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * The addresses this installation ingests mail for, when nobody has said
+ * otherwise. Both are, by construction, an account the helpdesk reads FROM —
+ * never a guess about which mailbox is "the" one.
+ */
+function defaultMailboxAddresses() {
+  return [process.env.GRAPH_SHARED_MAILBOX, process.env.IMAP_USER]
+    .map((value) => String(value || '').trim().toLowerCase())
+    .filter((value) => ADDRESS_RE.test(value));
+}
+
+/**
+ * Pull the address out of anything a caller may hold a recipient as: an object
+ * from the parser (`{email}`), a bare address, or the raw display-name form a
+ * header carries ("Helpdesk Platform <ithelpdesk@example.com>"). The parser
+ * already splits those, but this rule must not depend on which caller reached
+ * it — a display name that failed to split would silently read as "not us".
+ */
+function addressOf(item) {
+  if (item === null || item === undefined) return '';
+  const raw =
+    item && typeof item === 'object' ? item.email || item.address || item.mailbox : item;
+  const text = String(raw).trim();
+  const angled = /<([^>]+)>\s*$/.exec(text);
+  return (angled ? angled[1] : text).trim().toLowerCase();
+}
+
+/** Any list shape the parser emits, normalized to bare addresses. */
+function addressList(list) {
+  const out = [];
+  for (const item of Array.isArray(list) ? list : []) {
+    const value = addressOf(item);
+    if (value) out.push(value);
+  }
+  return [...new Set(out)];
+}
+
+/**
+ * Comma-separated address list -> lowercase addresses, keeping only entries
+ * that look like addresses. A typo must narrow the rule, never widen it.
+ */
+function parseAddressEntries(value) {
+  return addressList(
+    String(value === null || value === undefined ? '' : value)
+      .split(',')
+      .map((entry) => entry.trim()),
+  ).filter((entry) => ADDRESS_RE.test(entry));
+}
+
+/**
+ * The ingestion address this message only copied, or null.
+ *
+ * Pure, so the intake gate and `db:purge-automated` answer from one rule.
+ *
+ * @param {{requesterEmail?: string, recipients?: {to?: any[], cc?: any[], bcc?: any[]}}} msg
+ * @param {{mailboxAddresses?: string[], staffSenders?: string[]}} context
+ * @returns {string|null} the copied mailbox address, or null to let the ticket open
+ */
+function copiedInboxAddress(msg, context = {}) {
+  const mailboxes = addressList(context.mailboxAddresses).filter((a) => ADDRESS_RE.test(a));
+  if (!mailboxes.length) return null;
+
+  const senders = new Set(addressList(context.staffSenders));
+  if (!senders.size) return null;
+  const sender = String((msg && msg.requesterEmail) || '').trim().toLowerCase();
+  if (!sender || !senders.has(sender)) return null;
+
+  // No recipient headers means no evidence at all. The portal and dev intake
+  // paths never compute them, so this stays inert there rather than guessing.
+  const recipients = msg && msg.recipients;
+  if (!recipients) return null;
+
+  const to = addressList(recipients.to);
+  const copied = [...addressList(recipients.cc), ...addressList(recipients.bcc)];
+  const mailbox = mailboxes.find((candidate) => copied.includes(candidate));
+  if (!mailbox) return null;
+  // Addressed to us directly is a request, however internal the sender is.
+  if (to.includes(mailbox)) return null;
+  return mailbox;
+}
 
 // ---------------------------------------------------------------------------
 // Greeting banners — celebrations, condolences, thanks.
@@ -350,13 +475,68 @@ function screenHeaders(msg) {
 }
 
 /**
+ * Screen internal mail that only copied this mailbox. Returns a short reason
+ * string when the message was copied in, null otherwise.
+ *
+ * Separate from screenMessage because it is the only signal that reads the
+ * database for something other than settings (our own accounts), and because
+ * the caller may inject either half of the context.
+ *
+ * @param {object} msg normalized intake message
+ * @param {{ client?: object, staffSenders?: string[], mailboxAddresses?: string[],
+ *           settings?: object }} [options]
+ * @returns {Promise<string|null>}
+ */
+async function screenInternalCopy(msg, options = {}) {
+  // Injected context short-circuits both reads (tests, and the purge script,
+  // which already holds the agent list).
+  let settings = options.settings;
+  if (!settings && !Array.isArray(options.staffSenders) && !Array.isArray(options.mailboxAddresses)) {
+    try {
+      settings = await settingsService.getAll(options.client, 'intake');
+    } catch {
+      return null; // fail open — a configuration problem never drops mail
+    }
+  }
+  settings = settings || {};
+
+  // Off, and the whole signal is inert. An installation that copies the
+  // department onto everything it wants a ticket for says so here.
+  const enabled = settings.intakeInternalCopies;
+  if (enabled !== undefined && String(enabled).trim() === '0') return null;
+
+  let mailboxes = Array.isArray(options.mailboxAddresses)
+    ? parseAddressEntries(options.mailboxAddresses)
+    : parseAddressEntries(settings.intakeMailboxAddresses);
+  if (!mailboxes.length) mailboxes = defaultMailboxAddresses();
+  if (!mailboxes.length) return null;
+
+  let senders = options.staffSenders;
+  if (!Array.isArray(senders)) {
+    try {
+      const rows = await (options.client || require('../lib/prisma')).agent.findMany({
+        select: { email: true },
+      });
+      senders = rows.map((row) => row.email);
+    } catch {
+      return null; // fail open — never drop mail because a read failed
+    }
+  }
+
+  const mailbox = copiedInboxAddress(msg, { mailboxAddresses: mailboxes, staffSenders: senders });
+  return mailbox ? `copied to this mailbox only (${mailbox} on Cc/Bcc, not on To)` : null;
+}
+
+/**
  * Screen one normalized intake message.
  *
  * @param {{ requesterEmail: string, subject?: string|null, autoSubmitted?: string|null,
- *           precedence?: string|null, listId?: string|null, listUnsubscribe?: string|null }} msg
- * @param {{ ignoredSubjects?: string[], ignoredSenders?: string[], client?: object }} [options]
+ *           precedence?: string|null, listId?: string|null, listUnsubscribe?: string|null,
+ *           cleanBody?: string|null, recipients?: {to?: any[], cc?: any[], bcc?: any[]}|null }} msg
+ * @param {{ ignoredSubjects?: string[], ignoredSenders?: string[], client?: object,
+ *           staffSenders?: string[], mailboxAddresses?: string[] }} [options]
  *        ignoredSubjects / ignoredSenders bypass the settings lookup (tests);
- *        client is an optional Prisma transaction/client for the settings read.
+ *        client is an optional Prisma transaction/client for every read here.
  * @returns {Promise<null | { reason: string }>} null = the message may open a ticket
  */
 async function screenMessage(msg, options = {}) {
@@ -366,11 +546,17 @@ async function screenMessage(msg, options = {}) {
   // no laptop. Nothing below may override it.
   if (isPermittedSubject(msg && msg.subject)) return null;
 
-  // 2) A recalled message is not a request. Deterministic, so the relevance
+  // 2) Internal mail that only copied this mailbox. Read from the To/Cc
+  // headers, so it needs no judgement about the words: addressed to us is a
+  // request, copied to us is FYI.
+  const copyHit = await screenInternalCopy(msg, options);
+  if (copyHit) return { reason: copyHit };
+
+  // 3) A recalled message is not a request. Deterministic, so the relevance
   // model never has to judge it and never gets a vote.
   if (isRecallSubject(msg && msg.subject)) return { reason: 'recalled message' };
 
-  // 3) A greeting banner — a birthday notice, a farewell, a thank-you — is not
+  // 4) A greeting banner — a birthday notice, a farewell, a thank-you — is not
   // a request. Shape-based and deterministic, so the relevance model never has
   // to judge it and never gets a vote.
   const bannerHit = matchBannerSubject(msg && msg.subject, msg && msg.cleanBody);
@@ -380,11 +566,11 @@ async function screenMessage(msg, options = {}) {
     };
   }
 
-  // 4) Automated-mail headers (RFC 3834 + bulk markers).
+  // 5) Automated-mail headers (RFC 3834 + bulk markers).
   const headerHit = screenHeaders(msg);
   if (headerHit) return { reason: headerHit };
 
-  // 5) Administrator lists. Both are read in one settings pass; an injected list
+  // 6) Administrator lists. Both are read in one settings pass; an injected list
   // bypasses the read (tests). A settings failure fails open onto the built-in
   // lists — never block inbound mail on a configuration problem.
   let subjectEntries;
@@ -411,6 +597,7 @@ async function screenMessage(msg, options = {}) {
 }
 
 module.exports = {
+  ADDRESS_RE,
   DEFAULT_IGNORED_SENDERS,
   DEFAULT_IGNORED_SUBJECTS,
   GREETING_BANNERS,
@@ -419,15 +606,21 @@ module.exports = {
   RECALL_SUBJECT_RE,
   REQUEST_WORDS,
   SUBJECT_PREFIX_RE,
+  addressList,
+  addressOf,
+  copiedInboxAddress,
+  defaultMailboxAddresses,
   hasRequestWord,
   isPermittedSubject,
   isRecallSubject,
   matchBannerSubject,
+  parseAddressEntries,
   parseSenderEntries,
   parseSubjectEntries,
   matchIgnoredSender,
   matchIgnoredSubject,
   normalizeSubject,
   screenHeaders,
+  screenInternalCopy,
   screenMessage,
 };

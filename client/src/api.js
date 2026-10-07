@@ -34,6 +34,11 @@ const body = (payload) => ({ method: 'POST', body: JSON.stringify(payload) });
 const patch = (payload) => ({ method: 'PATCH', body: JSON.stringify(payload) });
 
 export const api = {
+  operations: () => request('/admin/operations'),
+  updateIntakeSettings: payload => request('/admin/operations/settings', patch(payload)),
+  previewGreeting: greeting => request('/admin/operations/greeting-preview', body({ greeting })),
+  retryDelivery: id => request(`/admin/operations/deliveries/${id}/retry`, body({})),
+  diagnostics: () => request('/admin/diagnostics'),
   // ---- auth ----
   async login(email, password) {
     const data = await request('/auth/login', body({ email, password }));

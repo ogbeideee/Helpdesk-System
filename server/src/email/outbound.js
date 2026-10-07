@@ -72,22 +72,8 @@ function htmlEscape(text) {
  * formatting is worse than a mail that never had any. A plain-text alternative
  * is always sent alongside, so a client that refuses the HTML still reads well.
  */
-function htmlShell(inner) {
-  return `<!doctype html>
-<html>
-<body style="margin:0;padding:0;background:#f4f5f7;">
-  <div style="max-width:560px;margin:0 auto;padding:24px 12px;
-              font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
-              font-size:15px;line-height:1.55;color:#1f2430;">
-    ${inner}
-    <div style="margin-top:28px;padding-top:14px;border-top:1px solid #dfe3e8;
-                color:#6b7280;font-size:12px;line-height:1.5;">
-      <div style="color:#4b5563;font-weight:600;">IT Helpdesk &mdash; TicketDesk</div>
-      <div>Reply directly to this email to add information to the ticket.</div>
-    </div>
-  </div>
-</body>
-</html>`;
+function htmlShell(inner, options) {
+  return require('./notificationLayout').notificationShell(inner, options);
 }
 
 /** A bolded `Label: value` fact, the shape the requester mails read as data. */
@@ -193,7 +179,7 @@ function ticketAcknowledgementMail(ticket) {
       ${htmlFact('Subject:', ticket.shortDescription)}
     </div>
     <p style="margin:0;">You will receive updates as we work on it. To add information,
-       simply reply to this email &mdash; your message is attached to the ticket.</p>`);
+       simply reply to this email &mdash; your message is attached to the ticket.</p>`, { title: 'We received your request', ticketNumber: ticket.ticketNumber });
   return {
     subject: ticketSubject(ticket, 'We received your request'),
     body: [
@@ -312,7 +298,7 @@ function statusUpdateMail(ticket, context = {}) {
        (<strong>${htmlEscape(ticket.shortDescription)}</strong>) status changed:</p>
     <p style="margin:0 0 16px;">${previousState ? `${htmlEscape(stateLabel(previousState))} &rarr; ` : ''}${htmlEscape(stateLabel(ticket.state))}.</p>
     ${resolutionHtml}
-    ${closingHtml}`);
+    ${closingHtml}`, { title: resolved ? 'Your ticket is resolved' : `Status update: ${stateLabel(ticket.state)}`, ticketNumber: ticket.ticketNumber });
   return {
     subject,
     body: body.join('\r\n'),
@@ -341,7 +327,7 @@ function agentReplyMail({ ticket, agentName, body }) {
   const html = htmlShell(`
     <p style="margin:0 0 14px;font-size:16px;font-weight:600;">${htmlEscape(greeting(ticket.requesterName))}</p>
     <p style="margin:0 0 12px;"><strong>${htmlEscape(agentName)}</strong> from the IT Helpdesk wrote:</p>
-    <div style="margin:0 0 6px;padding:12px 0 12px 2px;">${quotedHtml}</div>`);
+    <div style="margin:0 0 6px;padding:12px 0 12px 2px;">${quotedHtml}</div>`, { title: 'New message about your request', ticketNumber: ticket.ticketNumber });
   return {
     subject,
     body: [

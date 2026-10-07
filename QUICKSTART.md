@@ -98,3 +98,5 @@ handling.
 | Every environment variable explained | `server/.env.example` |
 | Current status, decisions and known issues | `docs/PROJECT_STATE.md` |
 | Change history | `docs/CHANGELOG.md` |
+
+For administrator email delivery, intake/alias tools and safe database backup/recovery commands, see [Operations and recovery](docs/operations-and-recovery.md).

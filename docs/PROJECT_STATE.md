@@ -7,13 +7,78 @@ _Last updated: 2026-10-07_
 
 ## Current Phase
 
-A greeting reaches the person it names: "Dear Bash," is Bashir's ticket, not the
-quietest agent's, and a birthday or farewell notice no longer opens a ticket at
-all. (Before that: a message that names its recipient reaches them — "Dear
-Dare, …" offers the ticket to Dare before any routing rule's preferred agent —
-and intake screening is deterministic about the mail that is *not* a request.)
+The helpdesk no longer files tickets about its own people's mail. A message from
+one of your accounts that only *copied* the helpdesk mailbox opens no ticket,
+because the department was shown a conversation, not asked into it. (Before
+that: a greeting reaches the person it names — "Dear Bash," is Bashir's ticket,
+not the quietest agent's — and a birthday or farewell notice opens no ticket at
+all.)
 
 ## Completed
+
+- **Delivery, intake administration and recovery improvements verified locally
+  (2026-10-07).** Notifications now retain encrypted pending mail with bounded
+  retries and administrator retry controls. The administrator settings panel
+  exposes intake outcomes, explicit greeting aliases and a greeting tester.
+  Seven agreed aliases were saved live. Primary assignment groups now derive
+  from canonical memberships; committed migrations replace the legacy column.
+  Rich diagnostics require administrator authentication; public health is
+  liveness only. Unsafe database shortcuts were removed and obsolete SQLite
+  artifacts and repair tools were archived and disabled. A private production
+  backup passed restoration, migration and assignment-preservation checks in
+  disposable local PostgreSQL. Provider backup retention remains unverified.
+  All **48/48 server suites**, client checks and the production build passed.
+  These application/database changes are **not deployed**: stop the old single
+  instance, apply the migrations and deploy the matching image together. See
+  `operations-and-recovery.md` for recovery and rollout requirements.
+
+- **All email alerts styled and deployed (2026-10-07).** Shared inline-styled,
+  table-based layout covers assignments, new-ticket broadcasts, requester replies
+  and reopens, acknowledgements, status/resolution updates, public agent replies,
+  ownership/handover updates, SLA warnings/breaches, reports, and ingestion alerts.
+  Navy branding, explicit ticket identifiers, structured facts, amber approaching
+  breach and red breach headings. SMTP retains the original text alternative;
+  Graph sends HTML when available. Requester HTML preserves the confirmation
+  link; user text is escaped. Operational reports/alarms carry no ticket-reply
+  instruction. Added the pure `test-notification-layout` suite to the full runner.
+  All **47/47 server suites**, all client checks, production build, tracked and
+  new-file secret scans passed. Fly **release 46** deployed the tested image
+  `deployment-01M4BTMJT9TNXHM4ZEZ36WMACY`; one machine running, public health
+  healthy, IMAP polling active with no error. Layout checks also passed inside
+  the deployed image using mock transport (no real emails sent). Existing inbox
+  messages retain their original layout; actual Outlook rendering is still to
+  be observed on a newly delivered alert. `.freebuff/` is excluded from Docker.
+
+- **Internal mail that only copied the helpdesk opens no ticket (2026-10-07).**
+  INC-001838 was the plain shape of it: an IT lead mailed a station manager's
+  vendor about a downed V.I. link, copied the department for visibility, and the
+  shared mailbox received it. Intake saw a real sender, an alarming subject and
+  words that read like a request, and filed a ticket about a conversation the
+  helpdesk was shown but never addressed on — which then took an agent, a
+  workload slot and an SLA. Six earlier screens existed and none could see it,
+  because every one of them reads the *words*, and this message's words are a
+  perfectly good request; what makes it not one is a header. So the new signal
+  (`intakeScreening.screenInternalCopy`, checked second, after the permitted
+  subjects and before the recall/banner rules) reads the headers instead: the
+  sender must be a known `Agent` account — any role, active or not, since a
+  leaver's last mail must not open a ticket either — **and** a mailbox this
+  installation ingests from must be on Cc/Bcc **and not** on `To`. That last
+  clause is the whole rule: addressed to us is a request whatever it looks like,
+  copied to us is FYI, so an agent emailing the helpdesk directly still gets a
+  ticket, an outsider who copies us still gets a ticket, and only the
+  copied-internal case is dropped. It is the one signal here that can discard a
+  real message, so it fails open at every step — no recipient headers (the
+  portal and dev intake paths compute none), no configured mailbox address, an
+  agent-table read failure, or `intakeInternalCopies=0` all mean "no evidence,
+  open the ticket". `intakeMailboxAddresses` (`INTAKE_MAILBOX_ADDRESSES`)
+  overrides the addresses, which otherwise come from `GRAPH_SHARED_MAILBOX` and
+  `IMAP_USER`. `To`/`Cc` now travel from the parser through the intake payload
+  (`toIntakePayload.recipients`) purely for this check and are never stored.
+  `db:purge-automated` **reports** the own-account copy-in candidates and never
+  deletes them: a `Ticket` row stores no headers, so the rule cannot be replayed
+  against stored data and only its coarse sender half could be — far too broad to
+  delete on, since most mail an agent sends that reaches the helpdesk at all was
+  addressed to it deliberately. Pinned by `test-intake-screening` K1–K21.
 
 - **The greeting resolves, and a greeting banner never opens a ticket
   (2026-10-07).** Two live problems, one shared cause. (1) The intake read asked
@@ -692,7 +757,7 @@ Picked up the interrupted session and finished it. The suite count went 37 → 4
 
 ### Remaining work items
 1. Run browser checks (jsdom harness; no checked-in harness currently exists)
-2. Remove `Agent.teamId` legacy transition column (requires full reader flip)
+2. Verify the primary-membership migration before production deployment (implemented 2026-10-07).
 
 ## Known Issues
 
@@ -710,8 +775,8 @@ Picked up the interrupted session and finished it. The suite count went 37 → 4
 - **The dashboard KPI cards carry no trend line.** _Accepted, not a defect._
 - **The Agents table scrolls horizontally at ~1440px.** _Accepted, not a defect._
 - **Microsoft Graph has never run against live credentials.**
-- **Background workers run in every server process.** Safe but wasteful with
-  >1 instance.
+- **Background workers remain single-instance by design.** More than one
+  server process can duplicate polls; the live deployment has one machine.
 - **Schema changes must ship as committed migrations.** `prisma migrate dev` /
   `reset` cannot be used against the application database — they can reset it.
   Apply `server/prisma/migrations/` with `npm run db:deploy`.
@@ -721,15 +786,9 @@ Picked up the interrupted session and finished it. The suite count went 37 → 4
   removed from as a supporting member, the ticket stays with them. The
   assignment engine only gates at time of assignment.
 
-- **Live production bug, pre-existing and unrelated to this work.** `/api/health`
-  reports IMAP ingestion failing with `Unique constraint failed on the fields:
-  (graphMessageId)` at `services/ticketIntake.js:599`, timestamped 11:12Z. The
-  idempotency pre-check is not catching every duplicate, so a second delivery of
-  the same message reaches the insert and throws instead of returning the
-  existing ticket. Inbound email is not reliably becoming tickets while this
-  stands. It reproduces on the image that is currently deployed, so it is not
-  caused by anything in this session. **Not fixed — it needs its own
-  investigation and a regression test.**
+- The earlier duplicate-message write failure is fixed in intake: unique
+  identity conflicts resolve to the existing ticket/comment instead of throwing.
+  The previous production health error is historical, not a current incident.
 
 ## Last Verified
 

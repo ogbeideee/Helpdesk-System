@@ -21,7 +21,6 @@ model Team {
   isDefault    Boolean          @default(false)
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @default(now()) @updatedAt
-  agents       Agent[]
   memberships  TeamMembership[]
   tickets      Ticket[]         @relation("TicketCurrentGroup")
   originated   Ticket[]         @relation("TicketOriginGroup")
@@ -38,17 +37,14 @@ model Team {
 // Leading a group does not make the account an ADMIN.
 //
 // Business rules enforced in src/services/groupMembershipService.js:
-//   - at most MAX_GROUPS_PER_AGENT memberships per agent (SQLite cannot
-//     express this as a table constraint)
+//   - at most MAX_GROUPS_PER_AGENT memberships per agent (serialized by an Agent row lock)
 //   - a group has exactly one lead — additionally guarded by the partial
 //     unique index `TeamMembership_single_lead` created in the migration
 //     (one row with isLead = 1 per team)
 //   - only an existing member can be a group's lead
 //
-// The legacy single-column `Agent.teamId` is retained for the transition
-// phase because routing and workload still read it. Every path that writes
-// memberships keeps it in sync; the next phase flips readers over to this
-// table and drops the column.
+// Primary status is stored on the membership itself. A partial unique index
+// permits one primary per agent. Agent.teamId/team are derived DTO fields only.
 model TeamMembership {
   id        Int      @id @default(autoincrement())
   agentId   Int
@@ -57,6 +53,7 @@ model TeamMembership {
   team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
   // Lead status belongs to the user↔group relationship.
   isLead    Boolean  @default(false)
+  isPrimary Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
 
@@ -126,11 +123,7 @@ model Agent {
   // Currently accepting new assignments. Distinct from isActive: an agent on
   // leave stays active (can sign in) but unavailable (gets no new tickets).
   isAvailable             Boolean           @default(true)
-  // Transition field: the agent's primary assignment group. Routing and
-  // workload still read this; the membership join table (TeamMembership) is
-  // the source of truth for multi-group membership. See TeamMembership.
-  teamId                  Int?
-  team                    Team?             @relation(fields: [teamId], references: [id])
+  // All primary/supporting group membership is stored on TeamMembership.
   memberships             TeamMembership[]
   skillLevel              Int               @default(1) // 1 = junior, 2 = standard, 3 = senior
   lastAssignedAt          DateTime?
@@ -432,8 +425,8 @@ model Attachment {
 // their tickets.
 model Notification {
   id        Int       @id @default(autoincrement())
-  agentId   Int
-  agent     Agent     @relation("AgentNotifications", fields: [agentId], references: [id], onDelete: Cascade)
+  agentId   Int?
+  agent     Agent?    @relation("AgentNotifications", fields: [agentId], references: [id], onDelete: Cascade)
   ticketId  Int?
   ticket    Ticket?   @relation(fields: [ticketId], references: [id], onDelete: SetNull)
   // ticket_taken | ticket_reassigned | ticket_rebalanced | availability_forced
@@ -442,6 +435,18 @@ model Notification {
   body      String?
   readAt    DateTime?
   createdAt DateTime  @default(now())
+  // Encrypted outbound delivery state. These rows have no agentId and do not
+  // appear in the in-app feed; mailer.js remains the only sender.
+  emailPayload String?
+  emailKind String?
+  emailStatus String?
+  emailAttempts Int @default(0)
+  emailNextAttemptAt DateTime?
+  emailLeaseUntil DateTime?
+  emailDeliveredAt DateTime?
+  emailError String?
+
+  @@index([emailStatus, emailNextAttemptAt])
 
   @@index([agentId, readAt])
   @@index([ticketId])

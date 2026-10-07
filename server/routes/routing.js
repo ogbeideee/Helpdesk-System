@@ -148,7 +148,7 @@ router.get('/groups', async (req, res) => {
   try {
     const groups = await prisma.team.findMany({
       orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
-      include: { _count: { select: { agents: true, routingRules: true } } },
+      include: { _count: { select: { memberships: { where: { isPrimary: true } }, routingRules: true } } },
     });
     res.json({
       groups: groups.map((g) => ({
@@ -158,7 +158,7 @@ router.get('/groups', async (req, res) => {
         description: g.description,
         isActive: g.isActive,
         isDefault: g.isDefault,
-        agentCount: g._count.agents,
+        agentCount: g._count.memberships,
         ruleCount: g._count.routingRules,
         createdAt: g.createdAt,
         updatedAt: g.updatedAt,
