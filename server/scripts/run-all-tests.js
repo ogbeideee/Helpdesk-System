@@ -37,6 +37,7 @@ const SUITES = [
   'test-smtp',
   'test-email-rules',
   'test-intake-screening',
+  'test-addressed-routing',
   'test-email-triage',
   'test-email-triage-intake',
   'test-classifier-seam',

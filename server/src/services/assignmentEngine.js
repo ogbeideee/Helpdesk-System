@@ -10,6 +10,12 @@
 //      and a minimum skill level.
 //   3. If no rule matches, the group is the configured default —
 //      "General IT Support" (Team.isDefault).
+//   3a. An agent ADDRESSED BY NAME in the message greeting takes the ticket
+//      first, ahead of the rule's preferred agent (step 4) — see
+//      services/addressedRecipient.js. They still pass the same eligibility
+//      gate (active, available, staff role, skilled enough, under the cap), and
+//      a greeting never changes the ticket's assignment GROUP: someone working
+//      across groups is permitted only for the low/moderate tier.
 //   4. Preferred agent is used when they are active, available, in the chosen
 //      group, sufficiently skilled and under the workload cap.
 //   5. Otherwise the best agent in that group: lowest open workload, ties
@@ -209,7 +215,7 @@ async function decide({ category, priority, text, subject, forceTeamId }, client
  *     candidatesConsidered, crossTeam, reason, awaitingAssignment }
  */
 async function assign(
-  { category, priority, text, subject, forceTeamId, excludeAgentIds = [] },
+  { category, priority, text, subject, forceTeamId, excludeAgentIds = [], addressed = null },
   client = prisma,
   logger = console
 ) {
@@ -230,6 +236,10 @@ async function assign(
     groupName,
     teamId: team ? team.id : null,
     minSkillLevel,
+    // Always present, on every path, so a caller never has to test for the key:
+    // false when the ticket went through the normal routing search.
+    addressedAgentUsed: false,
+    addressedName: null,
   };
 
   const eligibilityBase = {
@@ -242,7 +252,85 @@ async function assign(
     ...(excludeAgentIds.length ? { id: { notIn: excludeAgentIds } } : {}),
   };
 
-  /* ---- 1. preferred agent named by the rule ------------------------ */
+  /* ---- 1. agent addressed by the message's greeting ------------------ */
+  // The sender wrote "Dear Dare," — that is a direct request for one person,
+  // and it outranks both the routing rule's preferred agent and the
+  // lowest-workload search below.
+  //
+  // It does NOT outrank eligibility. The same gate the preferred agent passes
+  // applies here: active, available, a staff role, and under the workload cap.
+  // The skill bar still applies too — a greeting is not a qualification.
+  //
+  // The GROUP is left exactly as the routing rule decided it, for the same
+  // reason the cross-team fallback leaves it unchanged: the ticket belongs to
+  // its assignment group whoever works it. When the addressed agent is not in
+  // that group they are pulled in cross-group, which is permitted only for the
+  // low/moderate tier — the same `isSupportingTier()` gate the cross-team
+  // fallback uses. A high or critical ticket never leaves its group on the
+  // strength of a greeting.
+  if (addressed && Number.isInteger(addressed.agentId)) {
+    const named = await client.agent.findFirst({
+      where: { id: addressed.agentId, ...eligibilityBase },
+      include: WORKLOAD_COUNT,
+    });
+
+    let crossGroupBlocked = false;
+    if (named && team && named.teamId !== team.id && !isSupportingTier(priority, config)) {
+      crossGroupBlocked = true;
+    }
+
+    if (named && !crossGroupBlocked && named._count.assignedTickets < cap) {
+      await client.agent.update({ where: { id: named.id }, data: { lastAssignedAt: new Date() } });
+      const crossGroup = Boolean(team) && named.teamId !== team.id;
+      return {
+        ...base,
+        agent: named,
+        candidatesConsidered: 1,
+        crossTeam: crossGroup,
+        preferredAgentUsed: false,
+        addressedAgentUsed: true,
+        addressedName: addressed.matchedName || named.name,
+        reason:
+          `addressed by name in the message greeting ("${addressed.matchedName || named.name}" → ${named.name})` +
+          (crossGroup ? `, working across groups (group ${groupName || 'triage'} unchanged)` : ''),
+        awaitingAssignment: false,
+      };
+    }
+    // Not usable — say why once, then fall through to the normal search. The
+    // message still becomes a ticket; it just is not handed to the person it
+    // names, and the audit trail says exactly why.
+    let why;
+    if (!named) {
+      // The gate query filters on eligibility, so a null here means "did not
+      // pass it" or "is gone". One extra read distinguishes them, because
+      // "on leave" and "no longer works here" are different answers to give.
+      const existing = await client.agent.findUnique({
+        where: { id: addressed.agentId },
+        select: { isActive: true, isAvailable: true, role: true, skillLevel: true },
+      });
+      if (!existing) {
+        why = 'account no longer exists';
+      } else if (!existing.isActive) {
+        why = 'account is deactivated';
+      } else if (!existing.isAvailable) {
+        why = 'currently unavailable';
+      } else if (!STAFF_ROLES.includes(existing.role)) {
+        why = 'not a helpdesk agent';
+      } else {
+        why = `below the group skill bar (needs level ${minSkillLevel})`;
+      }
+    } else if (crossGroupBlocked) {
+      why = `outside ${groupName || 'triage'} and not eligible for ${priority} priority`;
+    } else {
+      why = `at or above the workload cap (${cap})`;
+    }
+    logger.warn(
+      `[assignment] addressed agent "${addressed.matchedName || addressed.agentId}" not used — ${why}; ` +
+        'falling back to normal routing',
+    );
+  }
+
+  /* ---- 2. preferred agent named by the rule ------------------------ */
   if (rule && rule.preferredAgentId) {
     const preferred = await client.agent.findFirst({
       where: { id: rule.preferredAgentId, ...eligibilityBase },

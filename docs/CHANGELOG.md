@@ -2,6 +2,59 @@
 
 Major implementation milestones only — not individual code edits.
 
+## 2026-10-07
+
+- **The greeting reaches the person it names — and a birthday notice is not a
+  ticket.** Two problems the org hit in production, one of them a silent
+  failure of the 2026-10-05 feature. `ticketIntake.resolveAddressed` asked the
+  database for `{ id, name }` while `addressedRecipient` ranks candidates by
+  `role`, `isActive` and `isAvailable`, so every account looked like a
+  non-staff record, the candidate list came back empty, and the greeting
+  resolved to nobody — "Dear Bash," went to whichever agent the routing rule
+  preferred. The read now selects the columns the match reads (plus `email`,
+  which alias targets point at), and a column the caller did not describe is
+  **unstated** rather than a rejection, so a caller can no longer silence the
+  feature by omission. The tiers gained a **leading fragment** ("Bash" in
+  "Bashir") beside the trailing one — exact → suffix → prefix → interior,
+  ambiguity still resolving to nobody — and the new
+  `intakeAddressedAliases` (env `INTAKE_ADDRESSED_ALIASES`) lets an
+  administrator pin a nickname the derived tiers cannot separate ("yemi" also
+  ends "Adeyemi") as `bash = Bashir Oladipo`. An alias is checked first and
+  matched against every account: it says who the message was written **for**,
+  and the assignment engine still decides who may take the work.
+- **A greeting banner never opens a ticket.** HR's birthday flyer became a
+  ticket (twice) because nothing had configured it away and the relevance gate
+  may legitimately never vote on it — an unapproved sender, or the flyer's
+  attachment, vetoes an auto-skip. `intakeScreening.matchBannerSubject` now
+  screens the message **shape**, deterministically and with no configuration:
+  the subject, after peeling a `Re:`/`Fw:`/`Fwd:` chain, must open with a known
+  banner, carry at most `MAX_BANNER_TAIL_WORDS` words after it, and contain no
+  request word in the subject or in the sender's own words — `cleanBody` only,
+  because the corporate footer an HR notice carries says "please contact us" and
+  a footer is not a request. "Happy birthday — kindly reset my password"
+  therefore still opens a ticket. `db:purge-automated` reuses the same
+  predicate, so the tickets that predate the rule can be swept with a dry run
+  first.
+
+## 2026-10-05
+
+- **A greeting names the agent.** A request that opens "Dear Dare, …" is offered
+  to Dare before the routing rule's preferred agent, via the new pure
+  `services/addressedRecipient.js` and `assignmentEngine.assign({ addressed })`.
+  The salutation is read only from `cleanBody` — the sender's own opening line,
+  with quoted history and the signature already stripped — so a trailing
+  "Dear Yemi," sign-off cannot redirect a ticket, and the feature is inert on
+  the intake paths that compute no `cleanBody`. It is a **hint, not an
+  authority**: the engine's existing gate still decides (active, available,
+  staff role, skilled enough, under the workload cap), and the skill bar still
+  applies. It never changes the ticket's **group** — someone pulled in from
+  another group is admitted only for the low/moderate tier, the same
+  `supportingMaxPriority` gate as the cross-team fallback. With no nickname
+  column, the name match is derived and ranked (exact name part → trailing
+  syllable → interior fragment) and **ambiguity resolves to nobody**; every
+  failure mode falls open to ordinary routing. `intakeAddressedRouting`
+  (`INTAKE_ADDRESSED_ROUTING`, default on) switches it off.
+
 ## 2026-10-01
 
 - **A recall or a standing announcement never opens a ticket — no model

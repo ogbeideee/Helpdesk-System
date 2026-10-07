@@ -1,6 +1,7 @@
 // Remove tickets that were opened by automated or standing mail the intake gate
 // now screens out (Google security alerts, quarantine digests, noreply
-// notifications, bounces, recalled messages, holiday/announcement notices, ...).
+// notifications, bounces, recalled messages, greeting banners — birthdays,
+// farewells, thanks — holiday/announcement notices, ...).
 //
 //   npm run db:purge-automated                      -> report what WOULD be removed (dry run)
 //   npm run db:purge-automated -- --apply           -> actually remove it
@@ -31,6 +32,7 @@ const {
   matchIgnoredSender,
   matchIgnoredSubject,
   isRecallSubject,
+  matchBannerSubject,
   parseSenderEntries,
   parseSubjectEntries,
   DEFAULT_IGNORED_SENDERS,
@@ -156,6 +158,11 @@ async function main() {
         const senderHit = matchIgnoredSender(t.requesterEmail, entries);
         if (senderHit) return { ...t, matchedBy: `sender "${senderHit}"` };
         if (isRecallSubject(t.shortDescription)) return { ...t, matchedBy: 'recall subject (built-in)' };
+        // Greeting banners (birthdays, farewells, thanks) — subject only: the
+        // per-message `cleanBody` the intake gate also consults is not stored,
+        // and a human reviews every match in the dry run anyway.
+        const bannerHit = matchBannerSubject(t.shortDescription);
+        if (bannerHit) return { ...t, matchedBy: `greeting announcement (${bannerHit.label})` };
         const subjectHit = matchIgnoredSubject(t.shortDescription, subjectList);
         if (subjectHit) return { ...t, matchedBy: `subject "${subjectHit}"` };
         return { ...t, matchedBy: null };

@@ -147,12 +147,47 @@ Bestaf/MRS-style block under "Regards," does not. Classification, routing and
 the relevance gate read `cleanBody`; nothing is deleted from `body`, which is
 what the ticket and the audit trail keep.
 
+## Addressing the named agent
+
+`services/addressedRecipient.js` reads the salutation and resolves it to an
+agent, so a request that opens "Dear Dare, ..." is offered to Dare. It reads
+**`cleanBody`, first block only, known greeting openers only** — which is what
+makes a trailing "Dear Yemi," sign-off unreachable, on top of the signature
+stripping above. "Dear all/IT/Sir/Colleagues" addresses nobody.
+
+The match is derived from `Agent.name` (there is no nickname column) and ranked,
+strongest first: an **exact** name part, a **suffix** fragment ("Yemi" in
+"Ibiyemi"), a **prefix** fragment ("Bash" in "Bashir"), then a loose interior
+fragment. **Ambiguity resolves to nobody** — several matching agents mean normal
+routing, because a wrong assignment is worse than a quiet one.
+
+Candidates for those derived tiers are narrowed to agents the caller described
+as active, available and staff. An **undescribed** agent is kept: a missing
+`role`/`isActive`/`isAvailable` is "unstated", never "not staff". Reading a
+missing column as a rejection is how the feature goes quietly inert — the intake
+query used to select only `id` and `name`, every candidate looked like a
+non-staff account, and no greeting ever resolved. The intake read now selects the
+columns the match (and the alias targets) actually read.
+
+When the derived tiers cannot separate a nickname, an administrator can pin it:
+`intakeAddressedAliases` (env `INTAKE_ADDRESSED_ALIASES`) takes entries of the
+form `nickname = agent name or sign-in address` — `yemi = Ibiyemi Aboyewa`
+settles the greeting even when a colleague's name also ends in it. The alias list
+is consulted **first**, and it is matched against every account, because it says
+who the message was **written for**; whether that person may take the work stays
+the engine's call. An entry naming nobody, or several people, falls back to
+ordinary routing, and a stale entry is reported in the reason string.
+
+The result is only a hint. `assignmentEngine` applies its own eligibility gate
+(availability, role, skill, workload cap) and never lets a greeting change the
+ticket's assignment group.
+
 ## Deterministic intake screening
 
 Before any model sees a message, `services/intakeScreening.js` decides whether a
 **new** mail may open a ticket at all. It is deterministic — no LLM — and runs
 after dedupe and thread resolution, so a reply on an existing ticket is never
-blocked. Four signals, first match wins:
+blocked. Five signals, first match wins:
 
 1. **A permitted subject opens a ticket.** An induction notice is the schedule
    for the account-creation work that follows, so it is kept however the mail is
@@ -162,9 +197,17 @@ blocked. Four signals, first match wins:
    neither ingestion channel carries the class, so the subject prefix is the
    signal. A recall notice arrives looking like the original human sender, so no
    sender-based rule could separate it from their real mail.
-3. **Automated-mail headers**: `Auto-Submitted` (anything but `no`),
+3. **A greeting banner is suppressed** (a birthday notice, a farewell, a
+   thank-you). `matchBannerSubject` requires the subject — after peeling a
+   `Re:`/`Fw:`/`Fwd:` chain — to **open** with a known banner, to carry at most
+   `MAX_BANNER_TAIL_WORDS` words after it, and to contain no request word in the
+   subject **or in the sender's own words** (`cleanBody` only: the corporate
+   footer an HR flyer carries says "please contact us", and a footer is not a
+   request). "Happy birthday — kindly reset my password" therefore stays a
+   ticket. This is the shape rule; the next one is the per-organisation list.
+4. **Automated-mail headers**: `Auto-Submitted` (anything but `no`),
    `Precedence: bulk|list|junk`, `List-Id`, `List-Unsubscribe`.
-4. **Two administrator lists**, matched against what the sender actually wrote:
+5. **Two administrator lists**, matched against what the sender actually wrote:
    - *ignored subjects* (`intakeIgnoredSubjects`, env `INTAKE_IGNORED_SUBJECTS`)
      — a case- and spacing-insensitive substring of the subject. This is the
      deterministic answer to a standing announcement that is not an IT request
@@ -176,8 +219,8 @@ blocked. Four signals, first match wins:
 A screened message is `skipped_automated`, gets no acknowledgement, and is never
 retried. A settings read failure fails open onto the built-in lists, so a
 configuration problem can never block inbound mail. `db:purge-automated` reuses
-these exact rules to remove tickets that predate them (and takes `--subject` for
-a one-off cleanup).
+these exact rules — banners included — to remove tickets that predate them (and
+takes `--subject` for a one-off cleanup).
 
 ## Development endpoint
 

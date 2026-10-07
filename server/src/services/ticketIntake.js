@@ -3,7 +3,12 @@
 // Used by POST /api/tickets/from-email today and designed to back the future
 // Microsoft Graph ingestion without changing business logic:
 //   validate -> dedupe -> thread -> screen -> relevance triage
-//            -> classify -> number -> route -> assign -> audit
+//            -> classify -> number -> resolve addressee -> route -> assign -> audit
+//
+// The addressed-agent hint (services/addressedRecipient.js) is computed here
+// from the sender's own greeting and handed to the assignment engine, which
+// applies its own eligibility gate to it. Intake decides who the message was
+// WRITTEN FOR; the engine decides who may take the work. Neither decides both.
 //
 // No real email is sent from here; notifications go through the isolated
 // notification service which logs them in development mode.
@@ -15,6 +20,8 @@ const slaService = require("../slaService");
 const assignmentEngine = require("./assignmentEngine");
 const intakeScreening = require("./intakeScreening");
 const emailTriageService = require("./emailTriageService");
+const addressedRecipient = require("./addressedRecipient");
+const settingsService = require("./settingsService");
 const notificationService = require("../mailer");
 const auditService = require("./auditService");
 const {
@@ -246,10 +253,94 @@ async function resolveRaceWinner(identityFilter) {
  * any attachment vetoes auto-skip.
  */
 /**
+ * Read the greeting and resolve it to an agent, if the message names one.
+ *
+ * Three deliberate guards, all about evidence rather than enthusiasm:
+ *
+ *   - `cleanBody` is required. The parser strips quoted history and signatures
+ *     to produce it, so the greeting we read is the sender's own opening line.
+ *     The portal and dev intake paths do not compute one; scanning the raw body
+ *     there would match "Dear X," inside quoted history, so the feature stays
+ *     off for them rather than guessing.
+ *   - The `intakeAddressedRouting` setting can switch the whole thing off, so
+ *     an installation that finds the matching too eager can turn it away
+ *     without a deploy.
+ *   - The `intakeAddressedAliases` setting lets an administrator pin a nickname
+ *     the derived match cannot separate ("yemi" is also the end of "Adeyemi").
+ *     An alias is checked first and is matched against every account, because it
+ *     says who the message was written FOR; the engine still decides who may
+ *     take the work and records why it refused.
+ *
+ * Fail-open throughout: a settings read error, a database error or an
+ * unresolved name all yield no hint, and the message routes normally.
+ *
+ * @returns {{agentId:number|null, matchedName:string|null, matchType:string|null,
+ *   tier:string|null, reason:string}}
+ */
+async function resolveAddressed(msg, client = prisma) {
+  const none = {
+    agentId: null,
+    matchedName: null,
+    matchType: null,
+    reason: "no agent addressed by name",
+  };
+
+  if (!msg.cleanBody || !msg.cleanBody.trim()) {
+    return { ...none, reason: "no clean body to read a greeting from" };
+  }
+
+  // Read the greeting before touching the database. Most messages carry no
+  // salutation at all, and those should cost nothing beyond a regex.
+  const extracted = addressedRecipient.extractAddressee(msg.cleanBody);
+  if (!extracted) return none;
+
+  let enabled = true;
+  let aliases = "";
+  try {
+    const all = await settingsService.getAll(client, "intake");
+    enabled = String(all.intakeAddressedRouting ?? "1").trim() !== "0";
+    aliases = all.intakeAddressedAliases || "";
+  } catch {
+    // Fail open to the built-in default (on), matching how intakeScreening
+    // degrades. A configuration problem must not silently stop addressing.
+    enabled = true;
+  }
+  if (!enabled) return { ...none, reason: "addressing by greeting is switched off" };
+
+  // Every account that could be named, active or not: the engine's gate is the
+  // authority on who may take work, and it needs the rejected candidates too so
+  // it can say "he is on leave" rather than "nobody was found".
+  //
+  // These columns are not optional. The matcher narrows a *derived* guess to
+  // people who could take the work (role, isActive, isAvailable) and an
+  // administrator's alias points at an email, so leaving one out does not make
+  // the read cheaper — it makes every candidate look like a non-staff account
+  // and the greeting silently resolve to nobody.
+  let agents;
+  try {
+    agents = await client.agent.findMany({
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        isActive: true,
+        isAvailable: true,
+      },
+    });
+  } catch {
+    return { ...none, reason: "agent list unavailable" };
+  }
+
+  return addressedRecipient.resolveAddressee(extracted, agents, { aliases });
+}
+
+/**
  * The default rule evaluator: the admin-configurable email parsing rules,
  * loaded from the database. Injectable via options.ruleEvaluator so tests can
  * drive specific rule sets without touching the table.
  */
+
 async function defaultRuleEvaluator({ subject, body }) {
   const { evaluateForMessage } = require("./emailParsingRuleService");
   return evaluateForMessage({ subject, body }, prisma);
@@ -638,6 +729,16 @@ async function intakeEmailMessage(
   // explicitly: a keyword the sender wrote in the subject outranks body-only
   // matches (see routingService's precedence).
   const routingText = `${msg.subject}\n${msg.cleanBody || msg.body}`;
+
+  // An agent named in the greeting is offered the ticket ahead of the rule's
+  // preferred agent, but still through the engine's own eligibility gate. Pure
+  // read of the sender's own words; it never chooses the group, the category
+  // or the priority.
+  const addressed = await resolveAddressed(msg, prisma);
+  if (addressed.agentId) {
+    logger.log(`[intake] ${addressed.reason}`);
+  }
+
   const assignment = await assignmentEngine.assign(
     {
       category,
@@ -645,6 +746,9 @@ async function intakeEmailMessage(
       subject: msg.subject,
       text: routingText,
       ...(forceTeamId ? { forceTeamId } : {}),
+      ...(addressed.agentId
+        ? { addressed: { agentId: addressed.agentId, matchedName: addressed.matchedName } }
+        : {}),
     },
     prisma,
     logger,
@@ -669,7 +773,6 @@ async function intakeEmailMessage(
           (assignment.crossTeam ? " from another team (group unchanged)" : "") +
           `: ${assignment.reason}`
         : `Routed to ${assignment.groupName || "triage"} via ${ruleNote} — awaiting assignment (${assignment.reason})`;
-
       return tx.ticket
         .create({
           data: {
@@ -728,6 +831,12 @@ async function intakeEmailMessage(
               // never names, keys or storage details).
               ...(plan.accepted.length
                 ? { attachments: plan.accepted.length }
+                : {}),
+              // Assigned because the sender addressed somebody by name. The
+              // greeting is a fact about the message, so it belongs in the
+              // trail — the agent's identity is already on the ticket.
+              ...(assignment.addressedAgentUsed
+                ? { addressedByName: assignment.addressedName }
                 : {}),
               // Decorative inline images (signature logos and the like) are
               // deliberately not stored; the count is part of the trail.
@@ -800,5 +909,6 @@ module.exports = {
   intakeEmailMessage,
   IntakeValidationError,
   normalizeMessage,
+  resolveAddressed,
   validate,
 };

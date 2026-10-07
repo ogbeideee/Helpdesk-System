@@ -90,11 +90,12 @@ for small screens. The mobile rules live in one section at the end of
 | `assignmentPolicy.js` | Who may assign what, to whom (`checkTarget`, `listCandidates`) |
 | `assignmentEngine.js` | Picks the agent: `decide()` → group + skill, `assign()` → agent |
 | `routingService.js` | Keyword rule matching and precedence |
+| `addressedRecipient.js` | Reads the greeting ("Dear Dare,") and resolves it to an agent |
 | `defaultRoutingRules.js` | The starter rules (incl. `Software (Advanced)`), seeded when none exist |
 | `workloadService.js` | Workload, unattended claiming, `moveTicket`, rebalancing |
 | `handoverService.js` | Handover offers, queue, expiry, reroute |
 | `settingsService.js` | Admin-configurable values (`Setting` table, env defaults) |
-| `intakeScreening.js` | Deterministic gate — recall notices, RFC 3834 headers, ignored subjects/senders → `skipped_automated` |
+| `intakeScreening.js` | Deterministic gate — recall notices, greeting banners, RFC 3834 headers, ignored subjects/senders → `skipped_automated` |
 | `emailTriageService.js` | Optional Groq relevance gate → `skipped_non_ticket`; fail-open, policy-gated, audited |
 | `ticketIntake.js` / `emailIngestion.js` | Email → ticket pipeline |
 
@@ -215,6 +216,51 @@ lower id. Classification and routing read only the sender's own words (quoted
 history and the signature are stripped first). Matching is deterministic and
 punctuation/case-insensitive. **No LLM anywhere in routing or parsing.**
 
+**Addressing by name** — when a message opens "Dear Dare, …" the ticket is
+offered to that agent *before* the routing rule's preferred agent
+(`addressedRecipient.js` → `assignmentEngine.assign({ addressed })`). It is a
+hint, never an authority:
+
+- Intake decides only **who the message was written for**; the engine decides
+  **who may take the work**. The hint passes the engine's ordinary gate —
+  active, available, a staff role, skilled enough, under the workload cap — and
+  the skill bar applies, because a greeting is not a qualification.
+- A greeting **never changes the assignment group**. The rule that routed the
+  ticket still owns it; someone working across groups is permitted only for the
+  low/moderate tier, the same `supportingMaxPriority` gate the cross-team
+  fallback uses, so a high or critical ticket never leaves its group this way.
+- The greeting is read from **`cleanBody` only** (first block, known openers
+  only), so a trailing "Dear Yemi," sign-off and a quoted "Dear X," can never
+  redirect a ticket. The portal and dev intake paths compute no `cleanBody`, so
+  the feature is inert there rather than guessing.
+- Matching is deterministic and derived from `Agent.name` (there is no nickname
+  column). Tiers, strongest first: an **exact** name part; a **suffix**
+  fragment ("Yemi" in "Ibiyemi"); a **prefix** fragment ("Bash" in "Bashir");
+  then a loose interior fragment. A tier holding more than one candidate
+  resolves to **nobody**.
+- An agent the caller never described is **not** disqualified: a missing `role`,
+  `isActive` or `isAvailable` means "unstated", never "not staff". Reading a
+  missing column as a rejection empties the candidate list and makes the whole
+  feature inert without a word, so the intake read selects `role`, `isActive`,
+  `isAvailable` and `email` alongside `id`/`name` — and a suite check drives the
+  real query, not an injected list.
+- `intakeAddressedAliases` (env `INTAKE_ADDRESSED_ALIASES`, default empty) pins
+  a nickname to one person for the names the derived tiers cannot separate
+  ("yemi" also ends "Adeyemi"): `bash = Bashir Oladipo`, right-hand side an
+  agent's name or sign-in address. Checked **first**, and matched against every
+  account — it states who the message was written for, and the engine still
+  decides who may take the work, recording why it refused. An entry naming
+  nobody, or several people, falls back to ordinary routing.
+- Nothing matched, several matched, no `cleanBody`, or a settings error all mean
+  ordinary routing — never a wrong assignment and never a dropped ticket.
+- `intakeAddressedRouting` (env `INTAKE_ADDRESSED_ROUTING`, default on) switches
+  it off. Audited as `addressedByName` in the `ticket.created` metadata.
+
+Pinned by `test-addressed-routing` A1–A17, B1–B18, C1–C5, D1–D13, E1–E5,
+F1–F2, G1–G5, H1–H2, I1–I40, J1–J5 — J runs the real intake pipeline, so the
+query, the matcher, the alias list and the engine are covered together rather
+than in pieces.
+
 **Skill requirement** — the minimum skill a ticket needs is the bar of the
 routing rule that governs it *inside the group that owns it*, plus the priority
 boost (`high` +1, `critical` +2, capped at 3) — never a per-category figure.
@@ -264,6 +310,20 @@ everything) via `src/attachmentCacheSweeper.js`.
 SVG and HTML included, always with `nosniff`. The client never decides this:
 `serializeAttachment` sets a `previewable` flag and the ticket screen renders an
 image only when the server said so, through an authenticated blob URL.
+
+**Greeting banners never open a ticket** — a notice whose whole purpose is to
+greet somebody (HR's birthday flyer, a farewell, a thank-you) is screened out
+deterministically, with no configuration and no model vote.
+`intakeScreening.matchBannerSubject` requires the subject — after peeling a
+`Re:`/`Fw:`/`Fwd:` chain — to **open** with a known banner, to carry at most
+`MAX_BANNER_TAIL_WORDS` words after it, and to contain no request word in the
+subject **or in the sender's own words**. Only `cleanBody` is read from the body
+half: the corporate footer HR attaches says "please contact us", and a footer is
+not a request. "Happy birthday — kindly reset my password" therefore stays a
+ticket. A permitted subject (an induction plan) is checked first and still wins.
+The result is `skipped_automated`, counted in the poll summary, and
+`npm run db:purge-automated` reuses the same predicate to sweep the ones that
+arrived before it existed. Pinned by `test-intake-screening` J1–J22.
 
 **Email relevance triage** — `emailTriageService` runs only after deterministic
 screening and thread resolution, and only for new-ticket candidates. Groq may
@@ -367,7 +427,7 @@ Reuse it; do not write a bare `update` for ownership.
 
 ```bash
 npm run dev                  # root: API :4000 + UI :5173 via concurrently
-cd server && npm test        # all 45 suites (scripts/run-all-tests.js)
+cd server && npm test        # all 46 suites (scripts/run-all-tests.js)
 cd server && node scripts/run-all-tests.js imap   # a few suites, by substring
 cd server && npm run test:pg:up      # one-time: disposable local test PostgreSQL
 cd client && npx vite build  # production build

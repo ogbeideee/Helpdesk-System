@@ -12,6 +12,7 @@
      G. permitted subjects (induction notices) survive every gate
      H. the relevance gate honours permitted subjects
      I. recalled mail, and the administrator ignored-subject list
+     J. greeting banners (birthdays, farewells, thanks) open no ticket
 
    Usage: node scripts/test-intake-screening.js  (from server/) */
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
@@ -463,6 +464,123 @@ async function main() {
       { logger: quiet, mailer: captureMailer() }
     );
     eq('I16 defaults return when the override is removed', backToDefault.status, 'created');
+  }
+
+  /* ---- J. greeting banners --------------------------------------------- */
+  console.log('\n--- J. greeting banners open no ticket ---');
+  {
+    // The shape the org actually receives: HR's monthly birthday notice, with
+    // the audience after the banner and nothing else in the subject.
+    eq('J1 a birthday notice is a banner',
+      (screening.matchBannerSubject('HAPPY BIRTHDAY GCEO') || {}).label, 'birthday greeting');
+    eq('J2 and the audience is kept for the log',
+      (screening.matchBannerSubject('HAPPY BIRTHDAY GCEO') || {}).tail, 'gceo');
+    eq('J3 a forwarded notice is still one',
+      (screening.matchBannerSubject('FW: Happy birthday!') || {}).label, 'birthday greeting');
+    eq('J4 a reply to one too',
+      (screening.matchBannerSubject('RE: HAPPY BIRTHDAY CHIEF') || {}).label, 'birthday greeting');
+    eq('J5 congratulations counts',
+      (screening.matchBannerSubject('Congratulations Nigeria') || {}).label, 'congratulations');
+    eq('J6 a farewell note counts',
+      (screening.matchBannerSubject('Farewell to our Head of IT') || {}).label, 'farewell note');
+    eq('J7 a thank-you note counts',
+      (screening.matchBannerSubject('Thank you') || {}).label, 'thank-you note');
+    eq('J8 a new-month greeting counts',
+      (screening.matchBannerSubject('Happy new month') || {}).label, 'new-month greeting');
+
+    // A request is never suppressed because it happens to open politely.
+    eq('J9 a request after the banner is not a banner',
+      screening.matchBannerSubject('Happy birthday - kindly reset my password'), null);
+    eq('J10 nor is one that asks for somebody else',
+      screening.matchBannerSubject('Congratulations - please add the new staff to the DL'), null);
+    eq('J11 a sentence after the banner is not one',
+      screening.matchBannerSubject('Happy birthday wishes to all the staff of the Lagos office this month'), null);
+    eq('J12 an ordinary request is untouched',
+      screening.matchBannerSubject('My laptop will not start'), null);
+    eq('J13 a banner word mid-subject proves nothing',
+      screening.matchBannerSubject('Re: laptop for the birthday party'), null);
+    eq('J14 an empty subject is not a banner', screening.matchBannerSubject(''), null);
+    eq('J15 a null subject is not a banner', screening.matchBannerSubject(null), null);
+
+    // The sender's own words can outrank a banner subject — a forwarded flyer
+    // with a request written under it is work. The corporate footer that an HR
+    // notice carries is signature, not cleanBody, so it never vetoes one.
+    eq('J16 a request body defeats the banner',
+      screening.matchBannerSubject('HAPPY BIRTHDAY GCEO', 'Please add her to the staff DL.'), null);
+    eq('J17 a polite body defeats it too',
+      screening.matchBannerSubject('Happy birthday', 'Kindly include me in the group.'), null);
+    eq('J18 an empty clean body does not',
+      (screening.matchBannerSubject('HAPPY BIRTHDAY GCEO', '') || {}).label, 'birthday greeting');
+
+    // End to end, with no configuration at all, through the same parser the
+    // ingestion channels use — so `cleanBody` is the real one, with the
+    // corporate footer already stripped into the signature. The birthday notice
+    // opens no ticket and sends nothing to the requester.
+    const mailer = captureMailer();
+    const notice = parseEmail({
+      messageId: `${MARK}birthday-notice`,
+      from: `hrsharedservices@${DOMAIN}`,
+      subject: 'HAPPY BIRTHDAY GCEO',
+      body: [
+        'Dear All,',
+        '',
+        'Management wishes our GCEO a happy birthday today.',
+        '',
+        'Kind Regards,',
+        '',
+        'Human Resources Department',
+        '',
+        'This email is sent on behalf of the company. If you are not the intended recipient, please contact us immediately and delete all copies of this message.',
+      ].join('\n'),
+    });
+    const birthday = await intakeEmailMessage(
+      intakePayload({
+        from: `hrsharedservices@${DOMAIN}`,
+        subject: notice.subject,
+        body: notice.body,
+        cleanBody: notice.cleanBody,
+      }),
+      { logger: quiet, mailer }
+    );
+    eq('J19 a birthday notice creates no ticket', birthday.status, 'skipped_automated');
+    check('J20 and it is not acknowledged to the sender', mailer.calls.length === 0, mailer.calls.join(','));
+
+    // The same subject with a real request written in the sender's own words
+    // still opens a ticket: the greeting is the subject, the work is the
+    // sentence under it.
+    const forwarded = parseEmail({
+      messageId: `${MARK}fwd-birthday-notice`,
+      from: `user@${DOMAIN}`,
+      subject: 'FWD: HAPPY BIRTHDAY GCEO',
+      body: [
+        'Please add the new MD to the all-staff DL as well.',
+        '',
+        'Kind Regards,',
+        '',
+        'HR Shared Services',
+        '',
+        '> HAPPY BIRTHDAY GCEO',
+      ].join('\n'),
+    });
+    const forward = await intakeEmailMessage(
+      intakePayload({
+        from: `user@${DOMAIN}`,
+        subject: forwarded.subject,
+        body: forwarded.body,
+        cleanBody: forwarded.cleanBody,
+      }),
+      { logger: quiet, mailer: captureMailer() }
+    );
+    eq('J21 a request under a banner subject is still a ticket', forward.status, 'created');
+
+    // A celebration the administrator wants kept is one settings line away:
+    // the ignored-subject list cannot un-ignore a banner, so this documents the
+    // opposite direction — a permitted subject still wins.
+    const induction = await intakeEmailMessage(
+      intakePayload({ from: `hr@${DOMAIN}`, subject: 'HAPPY BIRTHDAY - NEW EMPLOYEE INDUCTION PLAN' }),
+      { logger: quiet, mailer: captureMailer() }
+    );
+    eq('J22 a permitted subject beats the banner', induction.status, 'created');
   }
 
   await cleanup();

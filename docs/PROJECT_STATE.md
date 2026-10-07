@@ -3,18 +3,77 @@
 Current checkpoint. Update this at the end of every task.
 Architecture and conventions live in `../CLAUDE.md`.
 
-_Last updated: 2026-10-01_
+_Last updated: 2026-10-07_
 
 ## Current Phase
 
-Intake screening is now deterministic about the mail that is *not* a request:
-recalled messages and administrator-named subjects never open a ticket, and that
-happens before the optional relevance gate is consulted. (Before that:
-attachment bytes as a **cache, not the record** — the source message in the
-shared mailbox is the archive, a view re-reads it on a miss, images open on the
-ticket, and everything else stays an inert download.)
+A greeting reaches the person it names: "Dear Bash," is Bashir's ticket, not the
+quietest agent's, and a birthday or farewell notice no longer opens a ticket at
+all. (Before that: a message that names its recipient reaches them — "Dear
+Dare, …" offers the ticket to Dare before any routing rule's preferred agent —
+and intake screening is deterministic about the mail that is *not* a request.)
 
 ## Completed
+
+- **The greeting resolves, and a greeting banner never opens a ticket
+  (2026-10-07).** Two live problems, one shared cause. (1) The intake read asked
+  the database for `{ id, name }` and nothing else, while
+  `addressedRecipient` ranks candidates by `role`, `isActive` and `isAvailable`;
+  every account therefore looked like a non-staff record, the candidate list
+  came back empty, and the greeting resolved to nobody, so "Dear Bash"
+  (INC-001836) went to whoever the routing rule preferred. The feature's own
+  suite was failing 15 checks that had never been run. Three corrections in the
+  same seam: the intake read selects the columns the match reads (plus `email`,
+  which alias targets point at); a column the caller did not describe is now
+  **unstated**, never a rejection, so no caller can silence the feature by
+  omission; and the tiers gained a **leading fragment** ("Bash" in "Bashir")
+  beside the trailing one — exact → suffix → prefix → interior, ambiguity still
+  resolving to nobody. `intakeAddressedAliases` (env
+  `INTAKE_ADDRESSED_ALIASES`) lets an administrator pin a nickname the derived
+  tiers cannot separate ("yemi" also ends "Adeyemi") as
+  `bash = Bashir Oladipo`; it is checked first and matched against every
+  account, because it states who the message was written for — the engine still
+  decides who may take the work and records why it refused. (2) HR's birthday
+  notice became a ticket (INC-001831, INC-001835): nothing had configured it
+  away, and the relevance gate may legitimately never vote on it (an unapproved
+  sender, or the flyer's attachment, vetoes a skip).
+  `intakeScreening.matchBannerSubject` now screens the message **shape** — the
+  subject must open with a known banner after peeling a `Re:`/`Fw:` chain, carry
+  at most `MAX_BANNER_TAIL_WORDS` words after it, and contain no request word in
+  the subject or in the sender's own words (`cleanBody`; the corporate footer an
+  HR notice carries is signature, which is why the veto never reads the raw
+  body). "Happy birthday — kindly reset my password" still opens a ticket.
+  `db:purge-automated` reuses the same predicate, and a dry run against the live
+  database matched exactly the two birthday tickets and nothing else. Pinned by
+  `test-addressed-routing` I1–I40 / J1–J5 (J runs the real intake pipeline) and
+  `test-intake-screening` J1–J22.
+
+- **A greeting names the agent — "Dear Dare," is Dare's ticket (2026-10-05).**
+  An employee who needs one person wrote their name in the first line, and the
+  ticket went to whoever happened to be quietest. New pure
+  `services/addressedRecipient.js` reads the salutation from **`cleanBody`**
+  only — the sender's own words, with quoted history and the signature already
+  stripped — and resolves it against `Agent.name`. The division of labour is the
+  point: intake decides only *who the message was written for*, and
+  `assignmentEngine.assign({ addressed })` decides *who may take the work*
+  through the gate it already owned (active, available, staff role, skilled
+  enough, under the workload cap), ahead of the rule's preferred agent. A
+  greeting is therefore never a qualification and never changes the **group**:
+  the routing rule still owns the ticket, and someone pulled in from another
+  group is admitted only for the low/moderate tier, the same
+  `supportingMaxPriority` gate the cross-team fallback uses, so a high or
+  critical ticket never leaves its group this way. Because there is no nickname
+  column, the match is derived and ranked — an exact name part, then a trailing
+  syllable ("Yemi" in "Ibiyemi"), then an interior fragment — and **ambiguity
+  resolves to nobody**. Reading is strict for the same reason: only the first
+  block, only known openers, never "Dear all/IT/Sir", so a trailing "Dear Yemi,"
+  sign-off or a quoted "Dear X," cannot redirect a ticket. Every failure mode —
+  no match, several matches, no `cleanBody`, a settings error — falls open to
+  ordinary routing: never a wrong assignment, never a dropped ticket.
+  `intakeAddressedRouting` (env `INTAKE_ADDRESSED_ROUTING`, default on) switches
+  it off; `addressedByName` rides the `ticket.created` audit metadata. Pinned by
+  the new `test-addressed-routing` — which was failing 15 checks on the day it
+  was written; the 2026-10-07 entry above is that correction.
 
 - **Deterministic recall and subject screening — a recall or a standing
   announcement never opens a ticket (2026-10-01).** Two messages reached the

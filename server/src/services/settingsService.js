@@ -370,6 +370,76 @@ const DEFINITIONS = {
     },
   },
 
+  // ---- Addressing by name (see services/addressedRecipient.js) ----------
+  // When a message opens "Dear Dare, …" the ticket goes to Dare, provided the
+  // assignment engine's own eligibility gate accepts them (active, available,
+  // skilled enough, under the workload cap). Turn this off to route every
+  // inbound message by keyword rules alone.
+  intakeAddressedRouting: {
+    group: 'intake',
+    label: 'Assign by the name in the greeting (1 = yes, 0 = no)',
+    type: 'int',
+    min: 0,
+    max: 1,
+    env: 'INTAKE_ADDRESSED_ROUTING',
+    fallback: 1,
+    help:
+      'When a request opens "Dear <name>," that agent is offered the ticket first. ' +
+      'Availability, skill and workload still apply, and a greeting never changes the ' +
+      'ticket\'s assignment group. An ambiguous or unmatched greeting falls back to normal routing.',
+  },
+
+  // The nicknames the derived match cannot separate. "yemi" also ends
+  // "Adeyemi", and no rule can know which of the two the sender meant; typed
+  // here, an administrator answers once and every greeting opens the same way.
+  intakeAddressedAliases: {
+    group: 'intake',
+    label: 'Greeting nicknames ("nickname = agent", comma separated)',
+    type: 'string',
+    env: 'INTAKE_ADDRESSED_ALIASES',
+    fallback: '',
+    help:
+      'Optional. Each entry pins a nickname written in a greeting to one person, e.g. ' +
+      '"bash = Bashir Oladipo, yemi = y.aboyewa@example.com". The right-hand side is the agent\'s ' +
+      'name as stored or their sign-in address. Checked before the built-in name match; it never ' +
+      'overrides availability, the skill bar or the workload cap, and an entry that names nobody — ' +
+      'or more than one person — falls back to ordinary routing.',
+    validate(value) {
+      const entries = [];
+      const seen = new Set();
+      for (const chunk of String(value ?? '').split(/[,;\n]+/)) {
+        const text = chunk.trim();
+        if (!text) continue;
+        const at = text.indexOf('=');
+        const nickname = at > 0 ? text.slice(0, at).trim().toLowerCase() : '';
+        const target = at > 0 ? text.slice(at + 1).trim() : '';
+        if (!nickname || !target) {
+          return {
+            ok: false,
+            error: `Greeting nickname "${text.slice(0, 40)}" must read "nickname = agent name or email"`,
+          };
+        }
+        if (nickname.length > 40 || /\s/.test(nickname)) {
+          return { ok: false, error: `Greeting nickname "${nickname}" must be one word of at most 40 characters` };
+        }
+        if (target.length > 120) {
+          return { ok: false, error: `Greeting nickname "${nickname}" names an agent in more than 120 characters` };
+        }
+        if (seen.has(nickname)) {
+          return { ok: false, error: `Greeting nickname "${nickname}" is listed twice` };
+        }
+        seen.add(nickname);
+        entries.push(`${nickname} = ${target}`);
+      }
+      if (entries.length > 200) {
+        return { ok: false, error: 'Greeting nicknames accepts at most 200 entries' };
+      }
+      // Canonical stored form; an empty list is allowed and simply leaves the
+      // match derived from Agent.name.
+      return { ok: true, value: entries.join(', ') };
+    },
+  },
+
   // ---- Email relevance triage (Groq; see emailTriageService.js) ---------
   intakeRelevanceMode: {
     group: 'intake',
