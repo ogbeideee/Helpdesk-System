@@ -16,6 +16,25 @@ all.)
 
 ## Completed
 
+- **Loading regression fixed and deployed (2026-10-07), Fly release 48.**
+  Release 47 projected memberships even for scalar-only agent selections and
+  added relation round trips to authentication and queue reads. The adapter now
+  loads only requested primary-group data, and Prisma relation joins retrieve
+  nested records in one database read. The declared pool limit previously had
+  no effect; it now sets the connection URL limit explicitly (maximum ten).
+  Dashboard breakdowns share one aggregate; independent queue/calendar reads
+  run concurrently. Client requests time out after thirty seconds instead of
+  showing an indefinite loading state. The 48 existing server suites and the
+  new read-performance suite passed, plus final API/SLA dashboard checks, client
+  checks, build and secret scan. The new test pins five SELECTs maximum for a
+  100-ticket queue, seven for the dashboard and mixed-state count correctness.
+  Image `deployment-01M4BZ77CW9H5QFQ9PR27ZFND8` is running on the single machine.
+  Before: sequential live dashboard 3.2s and queue 4.4s. After: three rounds of
+  five concurrent authenticated page requests completed in 1.4–2.3s per request.
+  These are API timings, not a guarantee for every user's network. Public health
+  and private diagnostics passed; IMAP running with no reported error. No data
+  migration or ticket mutation was required for this correction.
+
 - **Delivery, intake administration and recovery improvements verified locally
   (2026-10-07).** Notifications now retain encrypted pending mail with bounded
   retries and administrator retry controls. The administrator settings panel
