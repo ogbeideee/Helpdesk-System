@@ -1,4 +1,5 @@
 import React from 'react';
+import { isChunkLoadError } from '../chunkRecovery.js';
 
 /**
  * Catches render-time errors anywhere below it.
@@ -24,6 +25,10 @@ export default class ErrorBoundary extends React.Component {
   }
 
   handleReset = () => {
+    if (isChunkLoadError(this.state.error)) {
+      window.location.reload();
+      return;
+    }
     this.setState({ error: null });
     if (this.props.onReset) this.props.onReset();
   };
@@ -31,22 +36,23 @@ export default class ErrorBoundary extends React.Component {
   render() {
     const { error } = this.state;
     if (!error) return this.props.children;
+    const chunkError = isChunkLoadError(error);
 
     return (
       <div className="page">
         <div className="callout callout-error" role="alert">
-          <strong>Something went wrong displaying this page.</strong>
+          <strong>{chunkError ? 'This page needs a fresh version of the helpdesk.' : 'Something went wrong displaying this page.'}</strong>
           <div className="muted" style={{ marginTop: 6 }}>
-            {error.message || String(error)}
+            {chunkError ? 'Reload the page to continue. Your sign-in will be kept.' : error.message || String(error)}
           </div>
         </div>
         <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
           <button className="btn btn-primary" onClick={this.handleReset}>
-            Try again
+            {chunkError ? 'Reload page' : 'Try again'}
           </button>
-          <button className="btn btn-ghost" onClick={() => window.location.reload()}>
+          {!chunkError && <button className="btn btn-ghost" onClick={() => window.location.reload()}>
             Reload page
-          </button>
+          </button>}
         </div>
       </div>
     );

@@ -245,8 +245,15 @@ app.use(express.static(path.join(__dirname, '..', 'client', 'dist'), {
     }
   },
 }));
+// Missing versioned assets must never receive the SPA HTML fallback. Browsers
+// need a real failure so stale lazy imports can recover after a deployment.
+app.use('/assets', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.status(404).end();
+});
 app.get('*', (req, res, next) => {
   if (req.path.startsWith('/api/')) return next();
+  res.setHeader('Cache-Control', 'no-cache');
   res.sendFile(path.join(__dirname, '..', 'client', 'dist', 'index.html'));
 });
 

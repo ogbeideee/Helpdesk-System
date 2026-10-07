@@ -32,6 +32,13 @@ async function main() {
   const base = `http://127.0.0.1:${server.address().port}/api`;
   const headers = { Authorization: `Bearer ${signToken(agent)}` };
   try {
+    const missingAsset = await fetch(base.replace('/api', '') + '/assets/retired-page.js');
+    assert.equal(missingAsset.status, 404);
+    assert.equal(missingAsset.headers.get('cache-control'), 'no-store');
+    assert.equal(await missingAsset.text(), '');
+    const entry = await fetch(base.replace('/api', '') + '/');
+    assert.equal(entry.status, 200);
+    assert.equal(entry.headers.get('cache-control'), 'no-cache');
     queries = [];
     const response = await fetch(base + '/tickets?limit=100', { headers });
     assert.equal(response.status, 200);
