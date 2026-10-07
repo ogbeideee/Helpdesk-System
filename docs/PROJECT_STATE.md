@@ -16,6 +16,19 @@ all.)
 
 ## Completed
 
+- **Stale page imports recover after deployment (2026-10-07), release 49.**
+  An already-open browser referenced a retired Handovers chunk. The SPA
+  fallback incorrectly answered the missing JavaScript request with HTML 200.
+  Missing `/assets` files now return 404/no-store; entry HTML revalidates even
+  through the fallback. Vite preload failures trigger one refresh of the current
+  route, guarded in session storage for sixty seconds to prevent loops. The
+  error boundary gives a friendly reload action if recovery cannot proceed;
+  retry no longer repeats React's cached rejected import. Existing open clients
+  need one manual refresh to acquire this recovery code. Client checks/build,
+  chunk recovery checks, API/read-performance tests and secret scan passed.
+  Live Handovers JavaScript returns 200 with JavaScript content type, retired
+  assets return 404, authenticated handover inbox passes, and IMAP is healthy.
+
 - **Loading regression fixed and deployed (2026-10-07), Fly release 48.**
   Release 47 projected memberships even for scalar-only agent selections and
   added relation round trips to authentication and queue reads. The adapter now
