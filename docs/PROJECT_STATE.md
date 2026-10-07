@@ -28,9 +28,14 @@ all.)
   backup passed restoration, migration and assignment-preservation checks in
   disposable local PostgreSQL. Provider backup retention remains unverified.
   All **48/48 server suites**, client checks and the production build passed.
-  These application/database changes are **not deployed**: stop the old single
-  instance, apply the migrations and deploy the matching image together. See
-  `operations-and-recovery.md` for recovery and rollout requirements.
+  Deployed as Fly **release 47**, image
+  `deployment-01M4BYH12QVV2CA2EDJRCSGN87`. A fresh private backup passed recovery
+  rehearsal before rollout. The single old machine was stopped for both
+  migrations, then the matching image started. Public liveness, authenticated
+  operations/diagnostics, assignment groups and tickets passed live checks;
+  unauthenticated diagnostics returned 401. IMAP polling is running with a
+  successful poll and no reported error. See `operations-and-recovery.md` for
+  recovery and rollout requirements.
 
 - **All email alerts styled and deployed (2026-10-07).** Shared inline-styled,
   table-based layout covers assignments, new-ticket broadcasts, requester replies
