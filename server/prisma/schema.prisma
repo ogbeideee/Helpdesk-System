@@ -136,6 +136,7 @@ model Agent {
   updatedAt               DateTime          @default(now()) @updatedAt
   assignedTickets         Ticket[]
   comments                Comment[]
+  conversationReads       TicketConversationRead[]
   auditEvents             UserAuditLog[]    @relation("UserAuditSubject")
   preferredForRules       RoutingRule[]     @relation("RoutingPreferredAgent")
   notifications           Notification[]    @relation("AgentNotifications")
@@ -300,6 +301,7 @@ model Ticket {
   auditLogs           TicketAuditLog[]
   auditEvents         AuditEvent[]      @relation("TicketAuditEvents")
   comments            Comment[]
+  conversationReads   TicketConversationRead[]
   attachments         Attachment[]   @relation("TicketAttachments")
   notifications       Notification[]
   handovers           HandoverRequest[]
@@ -348,10 +350,23 @@ model Comment {
   // RFC 5322 Message-ID (angle brackets stripped) — the cross-source identity
   // for replies, matched against In-Reply-To/References chains.
   internetMessageId String?  @unique
+  threadingMetadata String?
+  linkedAt       DateTime @default(now())
   attachments    Attachment[] @relation("CommentAttachments")
   createdAt      DateTime @default(now())
 
   @@index([ticketId])
+  @@index([ticketId, linkedAt])
+}
+
+model TicketConversationRead {
+  ticketId Int
+  agentId Int
+  lastReadAt DateTime
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  @@id([ticketId, agentId])
+  @@index([agentId])
 }
 
 // Microsoft Graph change-notification subscription state. Persisted so a
