@@ -722,10 +722,15 @@ model TicketSlaEvent {
   @@index([cycleId])
 }
 
+// Individual session revocations persist only token digests, never tokens.
+model RevokedSession {
+  tokenHash String @id
+  expiresAt DateTime
+  @@index([expiresAt])
+}
+
 // Public holidays that pause SLA time (approved calendar: Nigerian public
-// holidays). Data rows, not code, so the calendar can be maintained without a
-// deployment. `date` is a calendar day (PostgreSQL DATE, interpreted in
-// Africa/Lagos) on which no working time accrues.
+// holidays). `date` is a calendar day in Africa/Lagos.
 model SlaHoliday {
   id        Int      @id @default(autoincrement())
   date      DateTime @unique @db.Date
