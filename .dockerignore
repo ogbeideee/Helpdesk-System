@@ -1,8 +1,12 @@
 node_modules
 .env
 .env.*
+**/.env
+**/.env.*
 !.env.example
 !.env.test.example
+!**/.env.example
+!**/.env.test.example
 server/prisma/dev.db
 .git
 .gitignore
@@ -10,5 +14,17 @@ server/prisma/dev.db
 docs/
 backups/
 .freebuff/
+.scratch/
 
 archive/
+
+# The Dockerfile does `COPY . .`, so anything not listed here ends up inside the
+# production image. These are local working files, not application code.
+.workbuddy-ai/
+.seecode/
+diagrams/
+*.docx
+SQLite-to-Supabase-Migration-Inspection-Report.txt
+# Built by the image itself (see the `npm run build` step); copying the local
+# copy in first only risks shipping a stale bundle.
+client/dist/

@@ -218,12 +218,15 @@ then exits with code 0 (all pass) or 1 (any fail).
 | [`QUICKSTART.md`](QUICKSTART.md) | the short path: requirements, setup, first sign-in, tests |
 | [`docs/users-and-roles.md`](docs/users-and-roles.md) | roles, permissions, the initial administrator, the audit trail |
 | [`docs/ticket-lifecycle.md`](docs/ticket-lifecycle.md) | the state machine, who may do what, reassignment |
+| [`docs/ticket-conversations.md`](docs/ticket-conversations.md) | email threads, unread replies, message history and audited thread corrections |
+| [`docs/weekly-reports.md`](docs/weekly-reports.md) | personal activity counters, weekly report preview and formatted Excel export |
 | [`docs/assignment-groups-and-routing.md`](docs/assignment-groups-and-routing.md) | groups, multi-group membership, routing rules and precedence |
 | [`docs/workload-and-rebalancing.md`](docs/workload-and-rebalancing.md) | workload, unattended claiming, availability, rebalancing |
 | [`docs/handovers.md`](docs/handovers.md) | handover offers, the pending queue, expiry, cancellation |
 | [`docs/email-parsing.md`](docs/email-parsing.md) | the deterministic email-to-ticket pipeline |
 | [`docs/email-relevance-triage.md`](docs/email-relevance-triage.md) | Groq relevance filtering, safety policy, monitoring and admin controls |
 | [`docs/microsoft-graph.md`](docs/microsoft-graph.md) | Graph ingestion, polling, webhooks and the optional direct mailbox source |
+| [`docs/power-automate.md`](docs/power-automate.md) | Power Automate MIME intake, shared-mailbox sending gateway and staged cutover |
 | [`docs/operations-and-recovery.md`](docs/operations-and-recovery.md) | email delivery/retries, intake decisions, greeting aliases, private diagnostics and recovery |
 | [`docs/credential-rotation.md`](docs/credential-rotation.md) | every credential, how to rotate it, and the secret-scanning controls |
 | [`AGENTS.md`](AGENTS.md) | architecture and conventions, for contributors |

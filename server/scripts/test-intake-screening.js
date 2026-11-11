@@ -96,6 +96,7 @@ async function cleanup() {
           'intakeIgnoredSenders',
           'intakeIgnoredSubjects',
           'intakeInternalCopies',
+          'intakeInternalDomains',
           'intakeMailboxAddresses',
         ],
       },
@@ -514,6 +515,14 @@ async function main() {
       screening.matchBannerSubject('Re: laptop for the birthday party'), null);
     eq('J14 an empty subject is not a banner', screening.matchBannerSubject(''), null);
     eq('J15 a null subject is not a banner', screening.matchBannerSubject(null), null);
+    eq('J23 independence celebration with country and age is screened',
+      screening.matchBannerSubject('NIGERIA@66 HAPPY INDEPENDENCE!', '')?.label, 'independence greeting');
+    eq('J24 forwarded independence greeting is screened',
+      screening.matchBannerSubject('FW: Happy Independence Day', '')?.label, 'independence greeting');
+    eq('J25 independence subject with a request stays a ticket',
+      screening.matchBannerSubject('Happy Independence Day - reset my password', ''), null);
+    eq('J26 independence body with a request stays a ticket',
+      screening.matchBannerSubject('NIGERIA@66 HAPPY INDEPENDENCE!', 'Please restore access.'), null);
 
     // The sender's own words can outrank a banner subject — a forwarded flyer
     // with a request written under it is work. The corporate footer that an HR
@@ -734,6 +743,20 @@ async function main() {
     );
     eq('K18 an outsider who copies us still opens a ticket', outsiderResult.status, 'created');
 
+    await settingsService.update({ intakeInternalDomains: DOMAIN.toUpperCase() });
+    const domainCopy = await intakeEmailMessage(intakePayload({
+      from: `unregistered@${DOMAIN}`, recipients: outsider.recipients,
+    }), { logger: quiet, mailer: captureMailer() });
+    eq('K22 unregistered employee copy is screened by configured domain', domainCopy.status, 'skipped_automated');
+    const domainCtx = { ...ctx, internalDomains: [DOMAIN] };
+    eq('K23 external domain remains accepted', screening.copiedInboxAddress({ ...copiedMsg, requesterEmail: 'vendor@external.example' }, domainCtx), null);
+    eq('K24 similar suffix is not an internal domain', screening.copiedInboxAddress({ ...copiedMsg, requesterEmail: `person@other${DOMAIN}` }, domainCtx), null);
+    eq('K25 direct to any configured alias beats copied alias', screening.copiedInboxAddress({ ...copiedMsg, recipients: { to: ['alias@example.com'], cc: [MAILBOX] } }, { ...domainCtx, mailboxAddresses: [MAILBOX, 'alias@example.com'] }), null);
+    const domainDirect = await intakeEmailMessage(intakePayload({ from: `unregistered@${DOMAIN}`, recipients: { to: [MAILBOX], cc: [] } }), { logger: quiet, mailer: captureMailer() });
+    eq('K26 unregistered employee direct request is accepted', domainDirect.status, 'created');
+    check('K27 domain setting rejects addresses', settingsService.DEFINITIONS.intakeInternalDomains.validate('person@example.com').ok === false);
+    await settingsService.update({ intakeInternalDomains: '' });
+
     // Switched off, the same copied mail files a ticket again.
     await settingsService.update({ intakeInternalCopies: '0' });
     const offMsg = parseEmail({
@@ -784,6 +807,45 @@ async function main() {
     eq('K21 with no mailbox address the rule is inert, never wrong', noMailbox.status, 'created');
 
     await prisma.agent.delete({ where: { id: lead.id } });
+  }
+
+  console.log('\n--- L. health awareness announcements ---');
+  {
+    const subject = 'EBOLA OUTBREAK: AWARENESS SESSION';
+    const body = [
+      'Dear Colleagues,',
+      'Our HMO provider has organized an awareness session to educate employees on Ebola,',
+      'its mode of transmission, preventive measures, and the necessary safety precautions to minimize the risk of infection.',
+      'The session will provide valuable information on recognizing potential symptoms, maintaining proper hygiene, and understanding the recommended steps to take in the event of suspected exposure.',
+      'All employees are encouraged to participate in this session to safeguard their health and well-being.',
+      'Please find the session details below:',
+    ].join('\n\n');
+    const matches = screening.isHealthAwarenessAnnouncement;
+    check('L1 screenshot announcement matches', matches(subject, body));
+    check('L2 forwarded subject matches', matches(`FW: RE: ${subject}`, body));
+    eq('L3 missing clean body fails open', matches(subject), false);
+    eq('L4 subject alone proves nothing', matches(subject, 'Dear Colleagues, a session.'), false);
+    eq('L5 generic IT awareness is not screened', matches('Cybersecurity awareness session', body), false);
+    for (const request of ['Please set up the projector.', 'We need a meeting link.', 'Unable to join the session.', 'Kindly assist with audio.', 'The laptop is broken.']) {
+      eq(`L6 request preserved: ${request}`, matches(subject, `${body}\n${request}`), false);
+    }
+    eq('L7 subject request preserved', matches(`${subject} - IT support request`, body), false);
+    const mailer = captureMailer();
+    const result = await intakeEmailMessage(intakePayload({ subject, body, cleanBody: body }), { logger: quiet, mailer });
+    eq('L8 announcement opens no ticket', result.status, 'skipped_automated');
+    eq('L9 announcement sends no notifications', mailer.calls.length, 0);
+    const permitted = await screening.screenMessage({ subject: `${subject} - induction plan`, cleanBody: body });
+    eq('L10 permitted notice still wins', permitted, null);
+    const original = await intakeEmailMessage(intakePayload({
+      subject, body: `${body}\nPlease set up the projector.`,
+      cleanBody: `${body}\nPlease set up the projector.`,
+      internetMessageId: `${MARK}health-session-request`,
+    }), { logger: quiet, mailer: captureMailer() });
+    eq('L11 actual IT work still creates a ticket', original.status, 'created');
+    const reply = await intakeEmailMessage(intakePayload({
+      subject, body, cleanBody: body, inReplyTo: `${MARK}health-session-request`,
+    }), { logger: quiet, mailer: captureMailer() });
+    eq('L12 existing-ticket reply bypasses announcement screening', reply.status, 'comment_added');
   }
 
   await cleanup();

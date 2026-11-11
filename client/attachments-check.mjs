@@ -81,8 +81,8 @@ eq('B15 a null attachment has no tooltip', attachmentTitle(null), null);
 import { readFileSync } from 'node:fs';
 const src = readFileSync(new URL('./src/attachmentView.js', import.meta.url), 'utf8');
 
-check('C1 the download is authenticated with the session token',
-  /Authorization:\s*`Bearer \$\{getToken\(\)\}`/.test(src));
+check('C1 the download uses the shared cookie/bearer authentication helper',
+  /headers:\s*authHeaders\(\)/.test(src));
 check('C2 the response is fetched as a blob, never navigated to',
   /res\.blob\(\)/.test(src) && !/window\.open|location\.href\s*=\s*blob/.test(src));
 check('C3 the object URL is revoked after the click',
@@ -111,7 +111,7 @@ eq('D5 a payload from before the flag existed does not preview',
   canPreviewInline({ mimeType: 'image/png', size: 10 }), false);
 eq('D6 a null attachment does not preview', canPreviewInline(null), false);
 check('D7 the preview is fetched with the same authenticated call as the download',
-  (src.match(/Authorization:\s*`Bearer \$\{getToken\(\)\}`/g) || []).length === 2);
+  (src.match(/headers:\s*authHeaders\(\)/g) || []).length === 2);
 
 /* The object URL for a preview belongs to whoever opened it: the component must
    revoke it, or every preview leaks a blob for the life of the tab. */

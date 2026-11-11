@@ -1,24 +1,34 @@
+import { createReadCache } from './readCache.js';
+import { queuePath } from './ticketQueueView.js';
+import { mutationInvalidates } from './readInvalidation.js';
 const BASE = '/api';
 const TOKEN_KEY = 'td_token';
+const COOKIE_SESSION = 'cookie-session';
+export function authHeaders() {
+  const token = getToken();
+  return token && !token.startsWith(COOKIE_SESSION) ? { Authorization: `Bearer ${token}` } : {};
+}
 
 export function getToken() {
   return localStorage.getItem(TOKEN_KEY);
 }
 export function setToken(token) {
+  reads.clear();
   if (token) localStorage.setItem(TOKEN_KEY, token);
   else localStorage.removeItem(TOKEN_KEY);
 }
 
-async function request(path, options = {}) {
+async function networkRequest(path, options = {}) {
   const token = getToken();
   const res = await fetch(BASE + path, {
     signal: AbortSignal.timeout(30000),
     headers: {
       'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...authHeaders(),
     },
     ...options,
   });
+  if (token !== getToken()) throw new Error('Session changed');
   if (res.status === 401 && !path.startsWith('/auth/login')) {
     setToken(null);
     window.location.reload();
@@ -28,13 +38,63 @@ async function request(path, options = {}) {
     const data = await res.json().catch(() => ({}));
     throw new Error(data.error || data.errors?.join(', ') || `Request failed (${res.status})`);
   }
-  return res.json();
+  const data = await res.json();
+  if (options.method && options.method !== 'GET') reads.invalidate(mutationInvalidates(path));
+  return data;
+}
+
+const emit = (name, detail) => window.dispatchEvent(new CustomEvent(name, { detail }));
+const reads = createReadCache({
+  fetcher: (path) => networkRequest(path),
+  onUpdate: (path) => emit('td:read-updated', { path }),
+  onStatus: (status) => emit('td:read-status', status),
+});
+if (typeof window !== 'undefined') window.addEventListener('td:changed', () => {
+  emit('td:refresh-page');
+});
+if (typeof window !== 'undefined') window.addEventListener('storage', (event) => {
+  if (event.key === TOKEN_KEY) { reads.clear(); window.location.reload(); }
+});
+let readToken;
+function syncSession() {
+  const token = getToken();
+  if (token !== readToken) { reads.clear(); readToken = token; }
+}
+export function peekRead(path) { if (typeof localStorage === 'undefined') return null; syncSession(); return reads.peek(path); }
+export function refreshPageReads() { reads.age(); emit('td:refresh-page'); }
+function request(path, options = {}) {
+  syncSession();
+  // Public confirmations, session validation and assignment decisions always
+  // consult the server. Cache only authenticated display data.
+  const cached = !options.method && getToken() && !/^\/(auth|public)\//.test(path)
+    && !/assignment-candidates|availability\/preview|notifications|\/tickets\?.*q=/.test(path);
+  return cached ? reads.read(path) : networkRequest(path, options);
 }
 
 const body = (payload) => ({ method: 'POST', body: JSON.stringify(payload) });
 const patch = (payload) => ({ method: 'PATCH', body: JSON.stringify(payload) });
 
 export const api = {
+  weeklyReport: week => request(`/weekly-reports?week=${encodeURIComponent(week)}`),
+  saveWeeklyReport: ({data,...payload}) => {
+    const {generated,...inputs}=data;
+    return request('/weekly-reports', {method:'PUT',body:JSON.stringify({...payload,data:inputs})});
+  },
+  saveWeeklyActivity: payload => request('/weekly-reports/activities', body(payload)),
+  saveWeeklyPreferences: payload => request('/weekly-reports/preferences',{method:'PUT',body:JSON.stringify(payload)}),
+  generateWeeklyReport: payload => request('/weekly-reports/generate', body(payload)),
+  editWeeklyDraft: payload => request('/weekly-reports/draft', {method:'PUT',body:JSON.stringify(payload)}),
+  previousWeeklyReport: week => request(`/weekly-reports/previous?week=${encodeURIComponent(week)}`),
+  uploadWeeklyReference: file => networkRequest('/weekly-reports/reference',{method:'POST',headers:{'Content-Type':'application/octet-stream',...authHeaders()},body:file}),
+  clearWeeklyReference: () => request('/weekly-reports/reference',{method:'DELETE'}),
+  async exportWeeklyReport(week) {
+    const res = await fetch(`${BASE}/weekly-reports/export?week=${encodeURIComponent(week)}`, {headers:authHeaders()});
+    if (!res.ok) throw new Error((await res.json().catch(()=>({}))).error || 'Export failed');
+    const url = URL.createObjectURL(await res.blob());
+    const filename = res.headers.get('content-disposition')?.match(/filename="([\w.-]+)"/)?.[1];
+    const link = document.createElement('a'); link.href=url; link.download=filename || `${week}_WEEKLY_REPORT.xlsx`; link.click();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+  },
   operations: () => request('/admin/operations'),
   updateIntakeSettings: payload => request('/admin/operations/settings', patch(payload)),
   previewGreeting: greeting => request('/admin/operations/greeting-preview', body({ greeting })),
@@ -42,14 +102,24 @@ export const api = {
   diagnostics: () => request('/admin/diagnostics'),
   // ---- auth ----
   async login(email, password) {
-    const data = await request('/auth/login', body({ email, password }));
-    setToken(data.token);
+    const data = await request('/auth/login', body({ email, password, session: 'cookie' }));
+    setToken(data.session === 'cookie' ? `${COOKIE_SESSION}:${crypto.randomUUID()}` : data.token);
     return data.agent;
   },
-  logout() {
+  async logout() {
+    await networkRequest('/auth/logout', body({}));
+    // Drafts belong to this browser tab/account and must not survive sign-out.
+    try { Object.keys(sessionStorage).filter(key => key.startsWith('td_draft:')).forEach(key => sessionStorage.removeItem(key)); } catch { /* storage blocked */ }
     setToken(null);
   },
-  me: () => request('/auth/me'),
+  async me() {
+    const agent = await request('/auth/me');
+    if (getToken() && !getToken().startsWith(COOKIE_SESSION)) {
+      await networkRequest('/auth/session', body({}));
+      setToken(`${COOKIE_SESSION}:${crypto.randomUUID()}`);
+    }
+    return agent;
+  },
   updateProfile: (payload) => request('/profile', patch(payload)),
   changePassword: (payload) => request('/profile/password', body(payload)),
 
@@ -64,16 +134,20 @@ export const api = {
   groups: () => request('/assignment-groups'),
   assignmentPools: () => request('/assignment-pools'),
   dashboard: () => request('/dashboard'),
+  people: () => request('/tickets/people'),
+  ticketQueue: (params = {}) => request(queuePath(params)),
   stats: () => request('/stats'),
 
   // ---- tickets ----
   listTickets: (params = {}) => {
     const qs = new URLSearchParams(
-      Object.entries(params).filter(([, v]) => v !== '' && v !== undefined && v !== null)
+      Object.entries({ summary: '1', ...params }).filter(([, v]) => v !== '' && v !== undefined && v !== null)
     ).toString();
     return request(`/tickets${qs ? `?${qs}` : ''}`);
   },
-  getTicket: (id) => request(`/tickets/${id}`),
+  getTicket: (id, allHistory = false) => request(`/tickets/${id}${allHistory ? '' : '?history=recent'}`),
+  markConversationRead: (id, through) => request(`/tickets/${id}/conversation/read`, { method: 'POST', body: JSON.stringify({ through }) }),
+  moveThreadReply: (id, commentId, data) => request(`/tickets/${id}/conversation/${commentId}/move`, { method: 'POST', body: JSON.stringify(data) }),
   createTicket: (payload) => request('/tickets', body(payload)),
   updateTicket: (id, payload) => request(`/tickets/${id}`, patch(payload)),
   deleteTicket: (id) => request(`/tickets/${id}`, { method: 'DELETE' }),
@@ -138,6 +212,7 @@ export const api = {
   deleteRoutingRule: (id) => request(`/routing/rules/${id}`, { method: 'DELETE' }),
   updateAssignmentGroup: (id, payload) => request(`/routing/groups/${id}`, patch(payload)),
   createAssignmentGroup: (payload) => request('/routing/groups', body(payload)),
+  deleteAssignmentGroup: (id) => request(`/routing/groups/${id}`, { method: 'DELETE' }),
   routingAudit: () => request('/routing/audit'),
   previewRouting: (payload) => request('/routing/preview', body(payload)),
 

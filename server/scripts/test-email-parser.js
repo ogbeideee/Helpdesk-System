@@ -8,6 +8,7 @@
 
 const {
   parseEmail,
+  separateQuotedContent,
   tryParseEmail,
   EmailParseError,
   htmlToPlainText,
@@ -814,7 +815,7 @@ function eq(name, actual, expected) {
     'body',
   ].join('\r\n');
   const dupParsed = parseEmail(await imapAdapter({ uid: 2, source: Buffer.from(dupHeaders, 'utf8') }));
-  eq('M3 duplicate headers resolve deterministically (mailparser keeps the last)', dupParsed.messageId, 'dup-2@company.com');
+  eq('M3 duplicate headers resolve deterministically (mailparser keeps the first)', dupParsed.messageId, 'dup-1@company.com');
   eq('M3b the resolution is stable across re-parses',
     (await imapAdapter({ uid: 9, source: Buffer.from(dupHeaders, 'utf8') })).messageId, dupParsed.messageId);
 
@@ -852,6 +853,43 @@ function eq(name, actual, expected) {
   eq('M7 encoded ISO subject decodes', latinParsed.subject, 'anexo firmado');
 }
 
+  // Outlook omits an explicit Original Message marker and often inserts blank
+  // lines between headers. Keep the sender's signature out of both prose and
+  // historical headers while retaining the complete source message.
+  const outlookBody = [
+    'Please update the account.', '', 'Kind regards,', '',
+    'IT Help Desk Portal – Please mail', 'helpdesk@example.com for',
+    'quick resolution of all IT issues.', '', 'Rita Example', '',
+    'IT Infrastructure', '', 'Example Technologies Ltd.', '',
+    '2, Island Port Road, Lagos', '', 'Tel: +234(906)', '238-6898', '',
+    'Email: rita@example.com', '',
+    'This email is sent on behalf of Example Technologies, a Company registered',
+    'in Nigeria. The contents of this e-mail are confidential.', '',
+    'From: Rita Example <rita@example.com>', '',
+    'Sent: Thursday, 8 October 2026 12:37', '',
+    'To: Requester <requester@example.com>', '',
+    'Cc: Team <team@example.com>;', 'Other <other@example.com>', '',
+    'Subject: Account changes', '', 'Please update these accounts.', '',
+    'From: Requester <requester@example.com>', 'Date: Wednesday',
+    'To: Rita <rita@example.com>', 'Subject: Original request', '', 'Earlier request.',
+  ].join('\n');
+  const outlook = parseEmail({ messageId: 'outlook-headers', from: 'rita@example.com', subject: 'Re: Account changes', body: outlookBody });
+  eq('O1 complete Outlook headers separate history without a divider', outlook.cleanBody, 'Please update the account.');
+  check('O2 portal banner and legal footer stay in signature', outlook.signature?.startsWith('Kind regards,') && outlook.signature.includes('IT Help Desk Portal') && outlook.signature.includes('confidential.'));
+  eq('O3 full original Outlook body is preserved', outlook.body, outlookBody);
+  const { splitOutlookTrail } = require('../src/email/outlookTrail');
+  const trail = splitOutlookTrail(outlook.quotedText);
+  eq('O4 two historical messages get separate dividers', trail.length, 2);
+  eq('O5 wrapped Cc addresses are kept with header', trail[0].headers.cc, 'Team <team@example.com>; Other <other@example.com>');
+  eq('O6 original historical body is preserved', trail[1].body, 'Earlier request.');
+  const plainHeaders = 'From: this workstation\nTo: the printer\nPlease reconnect it.';
+  eq('O7 incomplete header-like request stays readable', parseEmail({ messageId: 'header-prose', from: 'a@example.com', subject: 's', body: plainHeaders }).cleanBody, plainHeaders);
+  const signedTrail = parseEmail({ messageId: 'signed-trail', from: 'a@example.com', subject: 's', bodyText: 'New reply.\n--\nCurrent signature\nFrom: Person <person@example.com>\nSent: Thursday\nTo: Team\nSubject: Earlier\nOld reply.\n--\nOld signature' });
+  eq('O8 explicit signature stops before Outlook history', signedTrail.signature, 'Current signature');
+  check('O9 historical explicit signature stays with history', signedTrail.quotedText.includes('Old signature') && !signedTrail.quotedText.includes('Current signature'));
+
+  const apple = separateQuotedContent('Dare/Samuel, please be at the station from Monday.\n\nOn 22 Oct 2026, at 23:16, Sender <sender@example.com> wrote:\n\nDear Mathias,\nInstallation error in the earlier message.');
+  check('O10 iPhone attribution starts an unprefixed history block', !apple.cleanBody.includes('Installation error') && apple.quotedText.includes('Dear Mathias'));
   const summary = failures ? failures + " check(s) FAILED" : "All checks passed";
   console.log(summary);
   process.exit(failures === 0 ? 0 : 1);

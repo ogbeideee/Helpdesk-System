@@ -93,8 +93,8 @@ async function main() {
     check('C2 the client sees a generic message, not the driver error',
       !JSON.stringify(boomBody).includes('table "Ticket"')
       && /logged/i.test(boomBody.error));
-    check('C3 the log keeps the truth (message + stack)',
-      logged.join('\n').includes('db blew up') && logged.join('\n').includes('    at '));
+    check('C3 the log retains route/stack frames without raw driver values',
+      !logged.join('\n').includes('db blew up') && logged.join('\n').includes('/throw') && logged.join('\n').includes('    at '));
 
     logged.length = 0;
     const conflict = await fetch(`${base2}/http-error`);

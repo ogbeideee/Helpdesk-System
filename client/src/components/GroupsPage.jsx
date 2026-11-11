@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api } from '../api.js';
+import { api, peekRead } from '../api.js';
+import { usePageRefresh } from '../usePageRefresh.js';
 import { Spinner, ErrorState } from './ui.jsx';
 import { loadLabel, poolSummaryLine, poolWarning, rosterSections } from '../poolView.js';
 
@@ -24,7 +25,7 @@ function GroupIcon({ groupKey }) {
 }
 
 export default function GroupsPage() {
-  const [groups, setGroups] = useState(null);
+  const [groups, setGroups] = useState(() => peekRead('/assignment-pools')?.pools ?? null);
   const [error, setError] = useState('');
 
   const load = useCallback(() => {
@@ -34,6 +35,8 @@ export default function GroupsPage() {
     // group lead and the live ticket load.
     return api.assignmentPools().then((d) => setGroups(d.pools)).catch((e) => setError(e.message));
   }, []);
+
+  usePageRefresh(load, ['/assignment-pools']);
 
   useEffect(() => { load(); }, [load]);
 

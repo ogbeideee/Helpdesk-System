@@ -122,6 +122,23 @@ check('Escape closes the drawer',
   /Escape'[\s\S]{0,60}setNavOpen\(false\)/.test(app));
 check('leaving the phone layout closes the drawer', /matchMedia\(MOBILE_NAV_QUERY\)/.test(app));
 
+/* Collapsible navigation sections. A closed section hides its items behind a
+   toggle, so the toggle and the items have to travel together: the icon rail
+   has no room for a header, which is why it forces every section open instead
+   of stranding the items behind a control that is not on screen. */
+check('nav sections are disclosures with a real expanded state',
+  /aria-expanded=\{open\}/.test(app) && /aria-controls=\{`nav-group-\$\{group\.key\}`\}/.test(app));
+check('a closed nav section is actually removed from the flow',
+  /\.side-group-items\[hidden\]\s*\{\s*display:\s*none/.test(css));
+check('the icon rail forces every section open',
+  /const open = collapsed \? true : navGroupOpen\(group\)/.test(app)
+  && /\.shell\.is-collapsed \.side-group-toggle\s*\{\s*display:\s*none/.test(css));
+check('Operations has no toggle to hide it with',
+  /\{ key: 'operations', label: 'Operations', items: operations \}/.test(app)
+  && !/key: 'operations'[^}]*collapsible/.test(app));
+check('a closed section still shows that it holds the current page',
+  /side-group-active/.test(app) && /holdsCurrent/.test(app));
+
 /* A menu hung off a 36px button near the right edge would fall off a phone:
    the header menus anchor to the header instead. */
 check('header menus hang from the header, not from a button edge',
@@ -226,6 +243,22 @@ check('focusable fields are 16px on phones (no iOS zoom-on-focus)',
   /input,\s*select,\s*textarea[\s\S]{0,340}font-size:\s*16px/.test(drawerBody));
 check('the keyboard-shortcut hint is hidden on phones',
   /\.kbd-hint\s*\{\s*display:\s*none/.test(drawerBody));
+
+/* ---- 8. touch targets ---------------------------------------------------
+   WCAG 2.5.8 asks for 24×24 CSS px; a thumb wants more. The header's icon
+   buttons are the tightest controls in the shell, and the queue's row checkbox
+   is the tightest in the list — a 13px box whose surrounding cell explicitly
+   refused the click, so the target was the box and nothing else. */
+const iconBtn = /\.icon-btn\s*\{\s*width:\s*(\d+)px;\s*height:\s*\1px;/.exec(drawerBody);
+check('header icon buttons are a comfortable thumb target',
+  iconBtn !== null && Number(iconBtn[1]) >= 32, iconBtn ? `${iconBtn[1]}px` : 'not sized');
+const rowCheckbox = /\.queue-table \.select-cell input\s*\{[^}]*width:\s*(\d+)px/.exec(drawerBody);
+check('the row checkbox is enlarged on a phone',
+  rowCheckbox !== null && Number(rowCheckbox[1]) >= 18, rowCheckbox ? `${rowCheckbox[1]}px` : 'not sized');
+check('the whole select cell is the target, not just the box',
+  /className="select-cell"[\s\S]{0,140}toggleSelected\(t\.id\)/.test(tickets));
+check('the checkbox stops its own click so the cell cannot toggle twice',
+  /onClick=\{\(e\) => e\.stopPropagation\(\)\}[\s\S]{0,220}Select \$\{t\.ticketNumber\}/.test(tickets));
 
 console.log(`\n${failures === 0 ? 'OK' : 'FAILED'} — mobile checks (${failures} failure${failures === 1 ? '' : 's'})`);
 process.exit(failures === 0 ? 0 : 1);

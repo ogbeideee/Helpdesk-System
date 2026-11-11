@@ -52,6 +52,12 @@ async function main() {
     const raced = await delivery.enqueue(mail, 'direct');
     await Promise.all([delivery.deliver(raced, async () => { sends++; }), delivery.deliver(raced, async () => { sends++; })]);
     assert.equal(sends, 2); // only one worker acquired the lease
+    for (const reopened of [false, true]) {
+      const retired = await delivery.enqueue({ ...require('../src/email/outbound').replyAlertMail({ ticketNumber: 'INC-900001', shortDescription: 'Retired alert', requesterEmail: 'requester@example.com' }, { reopened }), toRecipients: [] }, 'direct');
+      assert.equal(await delivery.deliver(retired, async () => { throw new Error('Retired alerts must never reach transport'); }), false);
+      const suppressed = await prisma.notification.findUnique({ where: { id: retired.id } });
+      assert.equal(suppressed.emailStatus, 'expired'); assert.equal(suppressed.emailPayload, null);
+    }
     const failed = await delivery.enqueue(mail, 'direct');
     for (let i = 0; i < 5; i++) await delivery.deliver(failed, async () => { throw Error('offline'); });
     persisted = await prisma.notification.findUnique({ where: { id: failed.id } });

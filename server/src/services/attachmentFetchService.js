@@ -103,6 +103,7 @@ function defaultSourceFetchers() {
     return createGraphSourceFetcher();
   };
   sourceFetchers = {
+    power_automate: (...args) => require('../powerAutomate/gateway').createSourceFetcher()(...args),
     imap: (...args) => imap()(...args),
     graph: (...args) => graph()(...args),
   };

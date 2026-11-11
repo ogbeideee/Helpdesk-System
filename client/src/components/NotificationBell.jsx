@@ -80,6 +80,14 @@ export default function NotificationBell() {
   const list = feed.notifications || [];
   const canPromptDesktop = isNotificationSupported() && perm === 'default';
 
+  /* Clearing read state is explicit and per item — nothing is marked read just
+     because a menu was opened, which would silently destroy the only signal the
+     badge carries. */
+  const markRead = async (ids) => {
+    await api.markNotificationsRead(ids).catch(() => {});
+    load();
+  };
+
   return (
     <div {...anchorProps}>
       <button
@@ -87,7 +95,7 @@ export default function NotificationBell() {
         className="icon-btn"
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-label={unread ? `Notifications, ${unread} unread` : 'Notifications'}
+        aria-label={unread ? `Notifications, ${unread} unread` : 'Notifications, none unread'}
         onClick={() => {
           toggle();
           if (!open) load();
@@ -100,15 +108,14 @@ export default function NotificationBell() {
       {open && (
         <div className="menu menu-right menu-wide" role="dialog" aria-label="Notifications">
           <div className="menu-head">
-            <span className="menu-label">Notifications</span>
+            <span className="menu-label">
+              Notifications{unread > 0 ? ` · ${unread} unread` : ''}
+            </span>
             {unread > 0 && (
               <button
                 type="button"
-                className="btn-link"
-                onClick={async () => {
-                  await api.markNotificationsRead().catch(() => {});
-                  load();
-                }}
+                className="btn btn-ghost btn-sm notif-clear"
+                onClick={() => markRead()}
               >
                 Mark all read
               </button>
@@ -157,13 +164,26 @@ export default function NotificationBell() {
                       {n.ticket && (
                         <a
                           href={`#/tickets/${n.ticket.id}`}
-                          onClick={close}
+                          onClick={() => { close(); if (!n.readAt) markRead([n.id]); }}
                           className="notif-link mono-sm"
                         >
                           {n.ticket.ticketNumber}
                         </a>
                       )}
                       {n.createdAt && <span className="muted">{timeAgo(n.createdAt)}</span>}
+                      {/* Only on unread rows, and always visible rather than
+                          hover-only: a control you have to discover is not an
+                          obvious one. */}
+                      {!n.readAt && (
+                        <button
+                          type="button"
+                          className="notif-action"
+                          aria-label={`Mark "${n.title}" as read`}
+                          onClick={() => markRead([n.id])}
+                        >
+                          Mark read
+                        </button>
+                      )}
                     </span>
                   </div>
                 </li>

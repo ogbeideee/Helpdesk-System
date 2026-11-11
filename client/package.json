@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node sla-check.mjs && node sla-settings-check.mjs && node confirmation-check.mjs && node sla-report-check.mjs && node audit-check.mjs && node reports-check.mjs && node email-rules-check.mjs && node m365-check.mjs && node assignment-pool-check.mjs && node availability-history-check.mjs && node remote-access-check.mjs && node ticket-timeline-check.mjs && node ticket-skill-check.mjs && node attachments-check.mjs && node mobile-check.mjs && node operations-check.mjs && node chunk-recovery-check.mjs"
+    "test": "node sla-check.mjs && node sla-settings-check.mjs && node confirmation-check.mjs && node resolution-check.mjs && node sla-report-check.mjs && node audit-check.mjs && node reports-check.mjs && node email-rules-check.mjs && node m365-check.mjs && node assignment-pool-check.mjs && node availability-history-check.mjs && node remote-access-check.mjs && node ticket-timeline-check.mjs && node ticket-skill-check.mjs && node ticket-queue-check.mjs && node filter-chips-check.mjs && node exception-hierarchy-check.mjs && node contrast-check.mjs && node attachments-check.mjs && node mobile-check.mjs && node operations-check.mjs && node chunk-recovery-check.mjs && node read-cache-check.mjs && node api-cache-check.mjs && node reply-view-check.mjs && node conversation-check.mjs && node weekly-report-check.mjs && node draft-check.mjs && node refresh-check.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",
@@ -15,6 +15,6 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
-    "vite": "^5.4.11"
+    "vite": "^6.4.4"
   }
 }

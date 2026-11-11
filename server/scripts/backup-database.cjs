@@ -43,7 +43,12 @@ async function backup() {
   const env = { ...pgEnvironment(url), PGOPTIONS: '-c default_transaction_read_only=on' };
   // Back up the application's tables and sequences, not provider-managed
   // authentication/storage extensions that cannot be restored to vanilla PG.
-  const tables = [...Prisma.dmmf.datamodel.models.map(model => model.dbName || model.name), '_prisma_migrations'];
+  const known = [...Prisma.dmmf.datamodel.models.map(model => model.dbName || model.name), '_prisma_migrations'];
+  // The new application schema can include additive tables not deployed yet.
+  // Back up the actual current schema before applying those migrations.
+  const existing = new Set(run('psql', ['-Atc', "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"], env).trim().split(/\r?\n/));
+  if (!TABLES.every(table => existing.has(table)) || !existing.has('_prisma_migrations')) throw new Error('Application tables are missing');
+  const tables = known.filter(table => existing.has(table));
   run('pg_dump', ['--format=custom', '--no-owner', '--no-acl', '--strict-names',
     ...tables.map(table => `--table=public."${table}"`), '--file', file], env);
   run('pg_restore', ['--list', file], env);

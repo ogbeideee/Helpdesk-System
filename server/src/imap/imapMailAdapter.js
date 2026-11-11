@@ -30,6 +30,19 @@ function stripAngleBrackets(value) {
   return str.replace(/^<+/, '').replace(/>+$/, '') || null;
 }
 
+// Outlook Thread-Index: 22-byte shared header, followed by 5-byte reply
+// blocks. Preserve its identity when an export omits RFC reply headers.
+// https://learn.microsoft.com/en-us/office/client-developer/outlook/mapi/tracking-conversations
+function outlookConversationId(value) {
+  if (typeof value !== 'string') return null;
+  const encoded = value.replace(/\s+/g, '');
+  if (!encoded || encoded.length > 4096 || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) return null;
+  const bytes = Buffer.from(encoded, 'base64');
+  if (bytes.toString('base64').replace(/=+$/, '') !== encoded.replace(/=+$/, '')) return null;
+  if (bytes.length < 22 || (bytes.length - 22) % 5 !== 0 || bytes[0] !== 1) return null;
+  return `outlook-thread:${bytes.subarray(0, 22).toString('hex')}`;
+}
+
 /** mailparser address object(s) -> the { name, address } list the parser reads. */
 function toAddressList(value) {
   if (!value) return [];
@@ -165,9 +178,10 @@ async function extractMessage({ uid, source, internalDate }) {
     // the same physical message is one ticket no matter which source sees it.
     messageId,
     internetMessageId: messageId,
-    // IMAP has no native conversation id — threading runs through
-    // In-Reply-To/References, which the shared intake resolves.
-    conversationId: null,
+    // Outlook exports may omit RFC reply headers while retaining Thread-Index.
+    // This is a fallback identity; RFC references still take precedence and
+    // the shared intake's same-requester gate still applies.
+    conversationId: outlookConversationId(headerText(parsed.headers, 'thread-index')),
     inReplyTo: parsed.inReplyTo || null,
     references: Array.isArray(parsed.references) ? parsed.references.join(' ') : parsed.references || null,
     from: from ? { name: from.name, address: from.address } : null,
@@ -202,4 +216,4 @@ async function extractMessage({ uid, source, internalDate }) {
   return { rawEmail, attachments, truncated };
 }
 
-module.exports = { toRawEmail, extractMessage, stripAngleBrackets, headerText };
+module.exports = { toRawEmail, extractMessage, stripAngleBrackets, headerText, outlookConversationId };

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api } from '../api.js';
+import { api, peekRead } from '../api.js';
+import { usePageRefresh } from '../usePageRefresh.js';
 import { Spinner, ErrorState, fmtDateTime } from './ui.jsx';
 import {
   checklistRows, configRows, subscriptionRows, runtimeRows,
@@ -16,7 +17,7 @@ import {
  * displayed here — the checklist reports them as "set (hidden)".
  */
 export default function Microsoft365Page() {
-  const [data, setData] = useState(null);
+  const [data, setData] = useState(() => peekRead('/microsoft-365') ?? null);
   const [error, setError] = useState('');
   const [verifying, setVerifying] = useState(false);
   const [verifyNote, setVerifyNote] = useState('');
@@ -31,12 +32,11 @@ export default function Microsoft365Page() {
     }
   }, []);
 
+  usePageRefresh(load, ['/microsoft-365']);
+
   useEffect(() => {
     load();
-    // The integration runs in the background — poll so the runtime picture
-    // (last poll, last error) stays current without a manual refresh.
-    const t = setInterval(load, 30000);
-    return () => clearInterval(t);
+    // Subsequent updates share the shell's visible-page refresh clock.
   }, [load]);
 
   async function runVerify() {

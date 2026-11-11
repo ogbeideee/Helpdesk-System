@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api } from '../api.js';
+import { api, peekRead } from '../api.js';
+import { usePageRefresh } from '../usePageRefresh.js';
 import {
   Spinner, ErrorState, EmptyState, Modal, ConfirmDialog, Field, useToast, timeAgo,
 } from './ui.jsx';
@@ -12,6 +13,7 @@ function GroupEditor({ group, onClose, onSaved, showToast }) {
     description: group?.description || '',
   });
   const [busy, setBusy] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   async function submit(e) {
@@ -40,6 +42,28 @@ function GroupEditor({ group, onClose, onSaved, showToast }) {
     }
   }
 
+  if (deleting) return (
+    <ConfirmDialog
+      title={`Delete "${group.name}"?`}
+      message="This permanently removes the unused assignment group. Its audit history is kept."
+      confirmLabel="Delete group"
+      danger
+      busy={busy}
+      onCancel={() => { if (!busy) setDeleting(false); }}
+      onConfirm={async () => {
+        setBusy(true);
+        try {
+          await api.deleteAssignmentGroup(group.id);
+          showToast('Assignment group deleted');
+          await onSaved();
+        } catch (err) {
+          showToast(err.message, 'error');
+          setDeleting(false);
+        } finally { setBusy(false); }
+      }}
+    />
+  );
+
   return (
     <Modal title={editingExisting ? `Edit ${group.name}` : 'New assignment group'} onClose={onClose} width={460}>
       <form onSubmit={submit}>
@@ -61,11 +85,16 @@ function GroupEditor({ group, onClose, onSaved, showToast }) {
           <textarea rows={2} value={form.description} onChange={set('description')} />
         </Field>
         <div className="modal-actions">
+          {editingExisting && (
+            <button type="button" className="btn btn-danger" disabled={busy || !group.deletable}
+              title={group.deleteBlockedReason || undefined} onClick={() => setDeleting(true)}>Delete group</button>
+          )}
           <button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>Cancel</button>
           <button type="submit" className="btn btn-primary" disabled={busy}>
             {busy ? 'Saving…' : editingExisting ? 'Save changes' : 'Create group'}
           </button>
         </div>
+        {editingExisting && group.deleteBlockedReason && <p className="muted" role="note">{group.deleteBlockedReason}</p>}
       </form>
     </Modal>
   );
@@ -79,9 +108,9 @@ const SKILL_OPTIONS = [
 ];
 
 export default function RoutingPage() {
-  const [rules, setRules] = useState(null);
-  const [groups, setGroups] = useState([]);
-  const [agents, setAgents] = useState([]);
+  const [rules, setRules] = useState(() => peekRead('/routing/rules')?.rules ?? null);
+  const [groups, setGroups] = useState(() => peekRead('/routing/groups')?.groups ?? []);
+  const [agents, setAgents] = useState(() => peekRead('/agents')?.agents ?? []);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -106,6 +135,8 @@ export default function RoutingPage() {
       setError(e.message);
     }
   }, []);
+
+  usePageRefresh(load, ['/routing', '/agents']);
 
   useEffect(() => { load(); }, [load]);
 

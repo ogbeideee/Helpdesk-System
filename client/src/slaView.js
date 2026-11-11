@@ -3,9 +3,10 @@
 
    The rules live on the server. This module NEVER recomputes them: `breached`
    and `approaching` are read straight off the flags the API serialized,
-   `remainingMs` is the backend-computed working time, and the only local
-   arithmetic is formatting that number for display. When the display needs
-   fresher numbers, the UI re-fetches from the API — it never derives them. */
+   `remainingMs` / `overdueMs` are the backend-computed working times, and the
+   only local arithmetic is formatting those numbers for display. When the
+   display needs fresher numbers, the UI re-fetches from the API — it never
+   derives them. */
 
 const TONE_RANK = { muted: 0, ok: 1, warn: 2, bad: 3 };
 
@@ -28,35 +29,55 @@ export function fmtRemaining(ms) {
    `ended`  — the cycle has ended (ticket resolved/closed)
    `clock`  — which clock this is; an ended cycle reads differently per clock
               (a met resolution is "Met", an unneeded response is "Not needed")
-   Returns  — { status, tone, text, short } where `text` is the full wording
-              for the detail panel and `short` the compact queue label. */
+   Returns  — { word, status, tone, text, short } where `word` is the clock's
+              name ("Response" / "Resolution" — never an abbreviation), `text`
+              is the full wording for the detail panel and `short` the queue
+              label. `short` is deliberately a complete phrase, because the
+              queue cell has no room for a legend: it reads "Overdue · 2h",
+              not "R: 2h". */
 export function clockView(block, ended, clock = 'response') {
   const b = block || {};
+  const word = clock === 'resolution' ? 'Resolution' : 'Response';
+  // Working time past the target, only ever present on a breached clock.
+  const over = fmtRemaining(b.overdueMs);
   if (b.responded) {
-    // The response clock is frozen at the recorded first response.
+    // The response clock is frozen at the recorded first response. If that
+    // response was late, how late is the useful number, so it rides along.
     return b.breached
-      ? { status: 'answered-late', tone: 'bad', text: 'Answered late', short: 'Late' }
-      : { status: 'answered', tone: 'ok', text: 'Answered on time', short: 'Answered' };
+      ? {
+          word, status: 'answered-late', tone: 'bad',
+          text: over ? `Answered ${over} late` : 'Answered late',
+          short: over ? `Answered ${over} late` : 'Answered late',
+        }
+      : { word, status: 'answered', tone: 'ok', text: 'Answered on time', short: 'Answered' };
   }
   if (!b.dueAt) {
     // A cycle without an applicable target (e.g. a backfill stub) has nothing
     // to count down: show that plainly rather than inventing a state.
-    return { status: 'no-target', tone: 'muted', text: 'No target', short: '—' };
+    return { word, status: 'no-target', tone: 'muted', text: 'No target', short: '—' };
   }
   if (ended) {
     return b.breached
-      ? { status: 'missed', tone: 'bad', text: 'Missed', short: 'Missed' }
+      ? {
+          word, status: 'missed', tone: 'bad',
+          text: over ? `Missed — ${over} over` : 'Missed',
+          short: over ? `Missed · ${over}` : 'Missed',
+        }
       : clock === 'resolution'
-        ? { status: 'met', tone: 'ok', text: 'Met', short: 'Met' }
-        : { status: 'not-needed', tone: 'muted', text: 'Not needed', short: '—' };
+        ? { word, status: 'met', tone: 'ok', text: 'Met', short: 'Met' }
+        : { word, status: 'not-needed', tone: 'muted', text: 'Not needed', short: '—' };
   }
   if (b.breached) {
-    return { status: 'breached', tone: 'bad', text: 'Breached', short: 'Overdue' };
+    return {
+      word, status: 'breached', tone: 'bad',
+      text: over ? `Overdue — ${over} of working time past the target` : 'Overdue',
+      short: over ? `Overdue · ${over}` : 'Overdue',
+    };
   }
   if (b.approaching) {
-    return { status: 'approaching', tone: 'warn', text: 'Approaching breach', short: 'Approaching' };
+    return { word, status: 'approaching', tone: 'warn', text: 'Approaching breach', short: 'Due soon' };
   }
-  return { status: 'on-track', tone: 'ok', text: 'On track', short: 'On track' };
+  return { word, status: 'on-track', tone: 'ok', text: 'On track', short: 'On time' };
 }
 
 /* The whole current-cycle SLA picture for a serialized ticket, or null when
@@ -74,6 +95,9 @@ export function slaOverview(ticket) {
       const left = fmtRemaining(sla[c.key]?.remainingMs);
       c.remaining = left;
       c.text = left ? `${c.text} — ${left} working time left` : c.text;
+      // The queue label is the same fact, shortened to the number that
+      // matters: "Due in 45m" rather than a status an agent has to interpret.
+      if (left) c.short = `Due in ${left}`;
     }
   }
   const worst = [response, resolution].reduce(
@@ -93,7 +117,19 @@ export function slaOverview(ticket) {
 }
 
 function badgeFor(worst, ended, sla, response, resolution) {
-  if (worst === 'bad') return { tone: 'bad', text: 'SLA breached' };
+  if (worst === 'bad') {
+    // Name the clock that is actually in trouble. "SLA breached" is not just
+    // vaguer — it is wrong on a ticket whose response was answered late while
+    // the resolution clock is still running.
+    const breach = [response, resolution].find((c) => c.status === 'breached');
+    if (breach) {
+      const over = fmtRemaining(sla[breach.key]?.overdueMs);
+      return { tone: 'bad', text: over ? `${breach.word} overdue · ${over}` : `${breach.word} overdue` };
+    }
+    const late = [response, resolution].find((c) => c.status === 'answered-late');
+    if (late && !ended) return { tone: 'bad', text: `${late.word} answered late` };
+    return { tone: 'bad', text: 'SLA breached' };
+  }
   if (ended) return { tone: 'ok', text: 'SLA met' };
   if (worst === 'warn') {
     const left = nearestRemaining(sla, response, resolution);

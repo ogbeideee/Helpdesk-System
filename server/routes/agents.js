@@ -21,7 +21,7 @@ function validateSkillLevel(value) {
 // GET /api/agents — agents with group, skill, availability and open workload
 router.get('/', async (req, res) => {
   try {
-    const [agents, teams] = await Promise.all([
+    const [agents, teams, counts] = await Promise.all([
       prisma.agent.findMany({
         orderBy: [{ teamId: 'asc' }, { name: 'asc' }],
         include: {
@@ -36,6 +36,7 @@ router.get('/', async (req, res) => {
         },
       }),
       prisma.team.findMany({ orderBy: { key: 'asc' } }),
+      prisma.ticket.groupBy({ by: ['assignedAgentId', 'state'], where: { state: { in: OPEN_STATES } }, _count: { _all: true } }),
     ]);
     res.json({
       teams,
@@ -59,6 +60,8 @@ router.get('/', async (req, res) => {
         createdAt: a.createdAt,
         updatedAt: a.updatedAt,
         openWorkload: a._count.assignedTickets,
+        newTickets: counts.find(row => row.assignedAgentId === a.id && row.state === 'NEW')?._count._all || 0,
+        inProgressTickets: counts.find(row => row.assignedAgentId === a.id && row.state === 'IN_PROGRESS')?._count._all || 0,
       })),
     });
   } catch (err) {

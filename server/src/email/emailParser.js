@@ -321,6 +321,7 @@ function normalizePlainText(value) {
 /* ------------------------------------------------------------------ */
 
 const QUOTE_LINE_RE = /^\s{0,3}>/;
+const { outlookHeaderAt } = require('./outlookTrail');
 // "On 1 Sep 2026, Rita wrote:" in the locales an internal helpdesk sees.
 const QUOTE_INTRO_RE =
   /^\s*(?:on\s.{0,120}?wrote:|am\s.{0,120}?schrieb:|op\s.{0,120}?schreef:|le\s.{0,120}?a\s*écrit\s*:|el\s.{0,120}?escribió:|den\s.{0,120}?schrieb:)\s*$/i;
@@ -356,17 +357,10 @@ function separateQuotedContent(text) {
 
   const lines = text.split('\n');
 
-  // 1) Signature: the FIRST unquoted standard delimiter claims the tail.
+  // Separate history before signatures: a signature delimiter in an earlier
+  // email must never swallow the current reply or its Outlook header blocks.
   let signature = null;
-  let bodyLines = lines;
-  for (let i = 0; i < lines.length; i++) {
-    if (SIGNATURE_DELIMITER_RE.test(lines[i]) && !QUOTE_LINE_RE.test(lines[i])) {
-      const tail = lines.slice(i + 1).join('\n').trim();
-      if (tail) signature = tail;
-      bodyLines = lines.slice(0, i);
-      break;
-    }
-  }
+  const bodyLines = lines;
 
   // 2) Quoted / forwarded content: everything with a quote or forward marker.
   // Once a forward divider appears, the REST of the message is the forwarded
@@ -379,6 +373,14 @@ function separateQuotedContent(text) {
     const line = bodyLines[i];
     if (inForward) {
       quoted.push(line);
+      continue;
+    }
+    if (outlookHeaderAt(bodyLines, i)) {
+      let divider = own.length - 1;
+      while (divider >= 0 && !own[divider].trim()) divider--;
+      if (divider >= 0 && /^\s*[_-]{5,}\s*$/.test(own[divider])) quoted.push(...own.splice(divider));
+      quoted.push(line);
+      inForward = true;
       continue;
     }
     if (QUOTE_LINE_RE.test(line)) {
@@ -398,6 +400,13 @@ function separateQuotedContent(text) {
       continue;
     }
     if (QUOTE_INTRO_RE.test(line)) {
+      // Apple Mail/iPhone trails commonly omit > prefixes. A dated attribution
+      // with an explicit sender address still identifies history unambiguously.
+      if (/^\s*on\s.+\b\d{4}\b.+<[^<>\s]+@[^<>\s]+>\s*wrote:\s*$/i.test(line)) {
+        quoted.push(line);
+        inForward = true;
+        continue;
+      }
       const nextMeaningful = bodyLines.slice(i + 1).find((l) => l.trim());
       if (nextMeaningful && (QUOTE_LINE_RE.test(nextMeaningful) || FORWARD_DIVIDER_RE.test(nextMeaningful))) {
         quoted.push(line);
@@ -407,7 +416,9 @@ function separateQuotedContent(text) {
     own.push(line);
   }
 
-  const cleanOwn = own.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  const delimiter = own.findIndex(line => SIGNATURE_DELIMITER_RE.test(line));
+  if (delimiter >= 0) signature = own.slice(delimiter + 1).join('\n').trim() || null;
+  const cleanOwn = (delimiter >= 0 ? own.slice(0, delimiter) : own).join('\n').replace(/\n{3,}/g, '\n\n').trim();
 
   // 3) Signature. The explicit delimiter wins when the sender's client wrote
   // one; otherwise a corporate signature is recognised on the sender's own

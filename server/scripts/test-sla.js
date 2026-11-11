@@ -284,6 +284,11 @@ async function main() {
     eq('B6 response breached past due', s.response.breached, true);
     eq('B6 approaching off once breached', s.response.approaching, false);
     eq('B6 remaining null once past due', s.response.remainingMs, null);
+    // overdueMs is the mirror of remainingMs: the working time PAST the target,
+    // which is what lets the queue say "Response overdue · 10m" rather than
+    // just "overdue". Never present on a clock that is not breached.
+    eq('B6 response overdue = 10 working minutes', s.response.overdueMs, 600000);
+    eq('B6 resolution not breached yet, so no overdue time', s.resolution.overdueMs, null);
 
     s = view(T('2026-09-09T10:00:00+01:00'));
     eq('B6 resolution approaching at 25% remaining', s.resolution.approaching, true);
@@ -292,6 +297,7 @@ async function main() {
     s = view(T('2026-09-09T16:00:00+01:00'));
     eq('B6 resolution breached past due', s.resolution.breached, true);
     eq('B6 resolution remaining null', s.resolution.remainingMs, null);
+    eq('B6 resolution overdue = 1 working hour', s.resolution.overdueMs, 3600000);
 
     // Answered: the response clock is frozen at the recorded response.
     await sla.recordFirstResponse(ticket, { at: T(`${MON}T09:30:00+01:00`), responderId: agent.id });
@@ -301,6 +307,7 @@ async function main() {
     eq('B6 answered clock has no remaining', s.response.remainingMs, null);
     eq('B6 answered clock never approaching', s.response.approaching, false);
     eq('B6 answered on time', s.response.breached, false);
+    eq('B6 answered on time, so no overdue time', s.response.overdueMs, null);
     eq('B6 first responder exposed', s.response.firstResponderId, agent.id);
   }
 

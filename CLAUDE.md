@@ -339,8 +339,9 @@ other screen reads the *words*, which is why INC-001838 got through them: an IT
 lead's mail to a vendor, with the department copied for visibility, is a
 perfectly good request in prose. The header is what makes it not one.
 `intakeScreening.screenInternalCopy` requires the sender to be a known `Agent`
-account (any role, active or not — a leaver's last mail must not open a ticket
-either) **and** an ingestion mailbox to be on Cc/Bcc **and not** on `To`. That
+account (any role, active or not) or in an explicitly configured exact
+`intakeInternalDomains` domain, **and** an ingestion mailbox to be on Cc/Bcc
+**and no configured ingestion address** on `To`. That
 last clause is the entire rule: addressed to us is a request whatever it reads
 like, copied to us is FYI. So an agent mailing the helpdesk directly still gets
 a ticket and an outsider who copies us still gets one. It is the one signal that
@@ -366,8 +367,12 @@ creation. The admin Profile → Settings surface owns the runtime mode, threshol
 sender/reason allowlists, metrics, and emergency stop; the Groq key is an
 environment secret only.
 
-**Session lifetime** — JWTs are stateless 12h bearer tokens, so there is no
-revocation list. `Agent.passwordChangedAt` stands in for one: `userService`
+**Session lifetime** — browser sign-in uses a 12h HttpOnly, SameSite=Strict
+cookie (Secure in production); localStorage holds only an opaque account-change
+marker. Bearer tokens remain supported for API clients. Logout persists a token
+digest in `RevokedSession`, checked on every authenticated request; cookie writes
+also enforce same-origin Origin/Fetch Metadata. `Agent.passwordChangedAt`
+invalidates older sessions across devices: `userService`
 stamps it on every password write (self-service or admin reset) and
 `requireAuth` rejects any token whose `iat` predates it. `express` runs with
 `trust proxy: 1` so rate-limit keys see the real client address behind Fly.
@@ -389,7 +394,7 @@ falls back to the old "will be closed after confirmation" wording.
 **Outbound transport** — `src/mailer.js` picks exactly one: **Microsoft Graph →
 SMTP → the console fallback**, in that order. All three speak the same small
 interface (`sendMail`, `sendBroadcastMail`, `hasBroadcastTarget`, and
-`broadcastTarget` for the reply-alert fallback), so no caller and no test changes
+`broadcastTarget` for the configured team target), so no caller and no test changes
 when the choice does. `src/smtp/config.js` is the SMTP option: enabled by
 `SMTP_HOST` + `SMTP_USER` + `SMTP_PASS`, implicit TLS on 465 by default,
 `SMTP_FROM` defaulting to the authenticated user, and `SMTP_BROADCAST_DL`
@@ -453,6 +458,10 @@ Reuse it; do not write a bare `update` for ownership.
   `NODE_ENV=production`.
 - Notifications go through `src/mailer.js` and the `Notification` table. Do not
   build a second notification system.
+- Received replies/reopens update the conversation and unread indicators but
+  send no extra alert email to agents or the DL. The original email is their
+  mail notification. Requester acknowledgements, public agent replies and status
+  updates remain active. The delivery worker suppresses legacy queued reply alerts.
 - Four ticket categories are fixed: `Password Reset`, `Inquiry / Help`,
   `Software`, `Hardware`.
 - Tests must never touch the application database (the Supabase PostgreSQL) — see below.

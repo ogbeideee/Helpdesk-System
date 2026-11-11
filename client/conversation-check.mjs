@@ -1,0 +1,60 @@
+import assert from 'node:assert/strict';
+import { conversationSections, conversationUnreadIds, conversationDate, conversationRows, conversationReferences, quotedTrail, messageText, mailHeaderRows, MESSAGE_LABELS, THREAD_REASONS } from './src/conversationView.js';
+import { buildTimeline } from './src/ticketTimelineView.js';
+const events = Array.from({ length: 10 }, (_, id) => ({ kind: 'requester', commentId: id }));
+events.push({ kind: 'sla' }, { kind: 'closed' });
+assert.equal(conversationSections(events, false).messages.length, 5);
+assert.equal(conversationSections(events, false, [0]).messages.length, 6);
+assert.equal(conversationSections(events, false, [0]).hiddenCount, 4);
+assert.equal(conversationSections(events, true).messages.length, 10);
+assert.equal(conversationSections(events, true).activity.length, 2);
+assert.deepEqual(conversationUnreadIds({ comments: [{ id: 2 }], conversation: { unreadIds: [2] } }, [1, 2]), [2]);
+assert.equal(messageText({ cleanBody: '', quotedText: 'old' }, 'raw'), '(No new text outside the quoted history or signature)');
+assert.equal(messageText(null, 'raw'), 'raw');
+assert.deepEqual(mailHeaderRows({ subject: 'Account change', from: 'Person <person@example.com>', cc: 'Team', sent: 'Thursday' }), [
+  { label: 'From', value: 'Person <person@example.com>' }, { label: 'Sent', value: 'Thursday' },
+  { label: 'Cc', value: 'Team' }, { label: 'Subject', value: 'Account change' },
+]);
+assert.deepEqual(mailHeaderRows(null), []);
+assert(MESSAGE_LABELS.internal.includes('staff only'));
+assert(THREAD_REASONS.historical_unknown.includes('not recorded'));
+const timeline = buildTimeline({ id: 1, comments: [{ id: 2, isRequester: true, messageType: 'agent', authorName: 'Agent', body: 'Reply' },
+  { id: 3, messageType: 'participant', body: 'Vendor' }] });
+assert.equal(timeline[0].kind, 'update');
+assert.equal(timeline[1].kind, 'participant');
+assert.equal(timeline[0].senderName, 'Agent');
+assert.equal(buildTimeline({ requesterName: 'Taylor James', comments: [{ id: 4, messageType: 'requester' }] })[0].senderName, 'Taylor James');
+assert.equal(buildTimeline({ comments: [{ id: 5, isInternal: true }] })[0].senderName, 'Team');
+assert.equal(conversationDate('2026-10-12T23:30:00Z', 'Africa/Lagos').time, '00:30');
+assert.equal(conversationDate('2026-10-12T23:30:00Z', 'Africa/Lagos').label, '13 October 2026');
+assert.equal(conversationDate('invalid').key, 'unknown');
+const sampleTicket = { requesterName: 'Taylor', requesterEmail: 'taylor@example.com', createdAt: '2026-10-12T09:00:00Z', body: 'Please unlock my account so I can access email today.' };
+const sampleEvents = Array.from({ length: 8 }, (_, i) => ({ kind: 'update', commentId: i + 1,
+  at: `2026-10-13T${String(i + 10).padStart(2, '0')}:00:00Z`, senderName: 'Alex', senderEmail: 'alex@example.com', detail: `Long enough email reply number ${i + 1}, confirming the account status.` }));
+const visibleRows = conversationRows(sampleTicket, sampleEvents, [sampleEvents[0], ...sampleEvents.slice(-5)]);
+assert.equal(visibleRows[0].number, 2);
+assert.equal(visibleRows[0].dateLabel, conversationDate(sampleEvents[0].at).label);
+assert.equal(visibleRows[1].gapBefore, 2);
+assert.equal(visibleRows[1].number, 5);
+assert.equal(visibleRows[1].dateLabel, null);
+const refs = conversationReferences(sampleTicket, sampleEvents);
+const quote = { headers: { from: 'Taylor <taylor@example.com>', sent: 'Mon, 12 Oct 2026 09:00:00 +0000' }, cleanBody: sampleTicket.body };
+const quoted = { quotedMessages: [quote] };
+assert.equal(quotedTrail(quoted, refs, 'reply-1').rows[0].match.key, 'original');
+assert.equal(quotedTrail(quoted, refs, 'original').rows[0].match, null, 'never link a quote to a later message');
+assert.equal(quotedTrail({ quotedMessages: [{ ...quote, headers: { from: 'Other <other@example.com>' } }] }, refs, 'reply-1').rows[0].match, null);
+assert.equal(quotedTrail({ quotedMessages: [{ ...quote, headers: { from: 'Taylor' } }] }, refs, 'reply-1').rows[0].match, null, 'names alone are not identity');
+assert.equal(quotedTrail({ quotedMessages: [{ ...quote, cleanBody: 'Thanks' }] }, refs, 'reply-1').rows[0].match, null);
+const ambiguousRefs = [refs[0], { ...refs[0], key: 'duplicate' }, refs[1]];
+assert.equal(quotedTrail(quoted, ambiguousRefs, 'reply-1').rows[0].match, null, 'ambiguous matching text stays quoted');
+const internalRefs = [{ ...refs[0], internal: true }, refs[1]];
+assert.equal(quotedTrail(quoted, internalRefs, 'reply-1').rows[0].match, null, 'internal text is not an email reference');
+const laterQuote = { ...quote, headers: { ...quote.headers, sent: 'Tue, 13 Oct 2026 09:00:00 +0000' } };
+assert.equal(quotedTrail({ quotedMessages: [laterQuote, quote] }).rows[0].sourceIndex, 1);
+assert.equal(quotedTrail({ quotedMessages: [laterQuote, { ...quote, headers: {} }] }).order, 'As quoted in the email');
+assert.equal(quotedTrail(quoted, refs, 'reply-1').rows[0].message, quote, 'the complete quoted entry is retained');
+assert.equal(refs.length, 9, 'similar standalone replies are never deduplicated');
+console.log('Conversation view checks passed: chronology, gaps, exact times, conservative quote cross-references and preservation.');
+const partialTicket = { ...sampleTicket, history: { olderReplyCount: 20 } };
+assert.equal(conversationReferences(partialTicket, events)[1].number, 22, 'recent history keeps absolute message numbering');
+assert.equal(conversationReferences(partialTicket, events)[0].number, 1, 'opening message stays number one');

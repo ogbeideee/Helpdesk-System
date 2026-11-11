@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { api } from '../api.js';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { useReplyDraft } from '../useReplyDraft.js';
+import { api, peekRead } from '../api.js';
+import { usePageRefresh } from '../usePageRefresh.js';
 import { usePageHeader } from '../pageHeader.js';
 import { STATES, PRIORITIES, STATE_TRANSITIONS } from '../constants.js';
 import { buildTimeline, activeHandover as findActiveHandover } from '../ticketTimelineView.js';
@@ -8,7 +10,8 @@ import { Conversation } from './TicketConversation.jsx';
 import { PropertiesCard, SlaCard, RemoteAccessCard, ActionsCard } from './TicketInspector.jsx';
 import { ReassignModal, HandoverModal, ResolveModal, DeleteZone } from './TicketModals.jsx';
 import {
-  Spinner, ErrorState, StateBadge, PriorityBadge, SlaBadge, ConfirmationChip, ConfirmDialog, useToast,
+  Spinner, ErrorState, StateBadge, PriorityBadge, ConfirmationChip, ReplyChip, Icon, timeAgo,
+  ConfirmDialog, useToast,
 } from './ui.jsx';
 
 const STATE_LABELS = Object.fromEntries(STATES.map((s) => [s.value, s.label]));
@@ -25,66 +28,61 @@ const PRIORITY_LABELS = Object.fromEntries(PRIORITIES.map((p) => [p.value, p.lab
  * ticket, and running a mutation and folding the result back in.
  */
 export default function TicketDetail({ id, me, onChanged }) {
-  const [ticket, setTicket] = useState(null);
+  const [ticket, setTicket] = useState(() => peekRead(`/tickets/${id}?history=recent`));
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [noteText, setNoteText] = useState('');
-  const [noteMode, setNoteMode] = useState('public'); // 'public' | 'internal'
+  const { text: noteText, mode: noteMode, setText: setNoteText, setMode: setNoteMode, clearSent, saved: draftSaved } = useReplyDraft(me.id, id);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [historyBusy, setHistoryBusy] = useState(false);
+  const [historyError, setHistoryError] = useState('');
+  const allHistory = useRef(false);
+  const dirtyGroup = useRef(false);
   const [resolveOpen, setResolveOpen] = useState(false);
   const [closeConfirm, setCloseConfirm] = useState(false);
   const [reassignOpen, setReassignOpen] = useState(false);
   const [candidates, setCandidates] = useState(null);
   const [candidatesError, setCandidatesError] = useState('');
-  const [groupPick, setGroupPick] = useState('');
-  const [handovers, setHandovers] = useState([]);
-  const [raSessions, setRaSessions] = useState(null);
+  const [groupPick, setGroupPick] = useState(() => ticket?.team?.key || '');
+  const [handovers, setHandovers] = useState(() => peekRead(`/tickets/${id}/handovers`)?.handovers || []);
+  const [raSessions, setRaSessions] = useState(() => peekRead(`/remote-access/ticket/${id}`)?.sessions || null);
+  const [secondaryError, setSecondaryError] = useState('');
   const [handoverOpen, setHandoverOpen] = useState(false);
   const [showToast, toastNode] = useToast();
 
   const load = useCallback(async () => {
     setError('');
     try {
-      const [t, h, r] = await Promise.all([
-        api.getTicket(id),
-        api.ticketHandovers(id).then((data) => data.handovers || []).catch(() => []),
-        api.remoteAccessSessions(id).then((data) => data.sessions || []).catch(() => []),
-      ]);
+      const t = await api.getTicket(id, allHistory.current);
       setTicket(t);
-      setGroupPick(t.team?.key || '');
-      setHandovers(h);
-      setRaSessions(r);
+      if (!dirtyGroup.current) setGroupPick(t.team?.key || '');
     } catch (e) {
       setError(e.message);
     }
   }, [id]);
 
   const refreshSecondaryData = useCallback(() => {
+    setSecondaryError('');
     api
       .ticketHandovers(id)
       .then((data) => setHandovers(data.handovers || []))
-      .catch(() => {});
+      .catch(() => setSecondaryError('Handover information could not be refreshed.'));
     api
       .remoteAccessSessions(id)
       .then((data) => setRaSessions(data.sessions || []))
-      .catch(() => setRaSessions([]));
+      .catch(() => setSecondaryError('Remote assistance information could not be refreshed.'));
   }, [id]);
 
   useEffect(() => {
     load();
+    refreshSecondaryData();
   }, [load]);
+  usePageRefresh(() => {
+    if (!busy && !resolveOpen && !handoverOpen && !reassignOpen && groupPick === (ticket?.team?.key || '')) {
+      load(); refreshSecondaryData();
+    }
+  }, [`/tickets/${id}`, `/remote-access/ticket/${id}`]);
 
-  // Keep the SLA block live the only compliant way: re-read it from the API.
-  // There is no client-side clock math — remainingMs and the breached /
-  // approaching flags always come from the server, so a quiet refresh every
-  // minute (while the tab is visible and the ticket is open) is what makes
-  // the countdown move. Actions still refresh immediately via run().
-  useEffect(() => {
-    if (!ticket || !['NEW', 'IN_PROGRESS'].includes(ticket.state)) return undefined;
-    const iv = setInterval(() => {
-      if (!document.hidden) load();
-    }, 60_000);
-    return () => clearInterval(iv);
-  }, [ticket?.id, ticket?.state, load]);
+  // The shared visible-page refresh also refreshes server-derived SLA values.
 
   // Both people-modals read the same candidate payload, so it is fetched once
   // per open and thrown away on close.
@@ -105,23 +103,29 @@ export default function TicketDetail({ id, me, onChanged }) {
    * conversation, so each collection is merged only when the response actually
    * carried one — an omitted array means "unchanged", never "emptied".
    */
-  async function run(fn, successMessage) {
+  async function run(fn, successMessage, { resetGroup = false } = {}) {
     setBusy(true);
     setError('');
     try {
       const updated = await fn();
       if (updated && typeof updated === 'object' && updated.ticketNumber) {
+        // Mutation payloads may include raw/full comments. Only the detail
+        // reader adds sender types, quote parsing, unread state and paging.
+        // Keep the current enriched collections until that reader refreshes.
+        const { comments: rawComments, attachments: rawAttachments, slaEvents: rawSlaEvents, ...fields } = updated;
         setTicket((current) => ({
           ...current,
-          ...updated,
+          ...fields,
           auditLogs: updated.auditLogs
             ? [...new Map([...(current?.auditLogs || []), ...updated.auditLogs].map((log) => [log.id, log])).values()]
             : current?.auditLogs,
-          comments: updated.comments ?? current?.comments,
-          attachments: updated.attachments ?? current?.attachments,
-          slaEvents: updated.slaEvents ?? current?.slaEvents,
+          comments: current?.comments,
+          attachments: current?.attachments,
+          slaEvents: current?.slaEvents,
         }));
-        setGroupPick(updated.team?.key || '');
+        if (resetGroup) dirtyGroup.current = false;
+        if (!dirtyGroup.current) setGroupPick(updated.team?.key || '');
+        await load();
         refreshSecondaryData();
       } else {
         await load();
@@ -139,6 +143,20 @@ export default function TicketDetail({ id, me, onChanged }) {
   }
 
   const events = useMemo(() => buildTimeline(ticket), [ticket]);
+  const markRead = useCallback(async (through) => {
+    await api.markConversationRead(id, through);
+    setTicket(current => current ? { ...current,
+      conversation: { ...current.conversation, unreadIds: [] },
+      comments: current.comments?.map(comment => new Date(comment.linkedAt) <= new Date(through)
+        ? { ...comment, unread: false } : comment),
+    } : current);
+  }, [id]);
+  async function moveReply(commentId, data) {
+    await api.moveThreadReply(id, commentId, data);
+    await load();
+    onChanged?.();
+    showToast('Email reply and attachments moved. Both tickets have an audit record.');
+  }
 
   usePageHeader(
     ticket?.ticketNumber || 'Ticket',
@@ -155,53 +173,50 @@ export default function TicketDetail({ id, me, onChanged }) {
   const activeHandover = findActiveHandover(handovers);
 
   return (
-    <div className="page">
-      <header className="detail-head">
-        <button className="crumb" onClick={() => window.location.hash = '/tickets'}>
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M10 3L5 8l5 5"/></svg>
-          All tickets
-        </button>
-        <div className="detail-head-main">
-          <div className="detail-head-text">
-            <h1 className="detail-title">{ticket.shortDescription}</h1>
-            <div className="pill-row">
-              <span className="cell-id">{ticket.ticketNumber}</span>
-              <StateBadge state={ticket.state} />
-              <ConfirmationChip ticket={ticket} />
-              <PriorityBadge priority={ticket.priority} />
-              <SlaBadge ticket={ticket} />
-              {ticket.awaitingAssignment && <span className="chip chip-warn">awaiting assignment</span>}
-              {ticket.source === 'email' && <span className="chip">via email</span>}
-              {ticket.category && <span className="chip">{ticket.category}</span>}
-            </div>
-          </div>
-          {/* One primary action, chosen by where the ticket is in its
-              lifecycle. Everything else is secondary, in the inspector. */}
-          <PrimaryActions
-            ticket={ticket}
-            me={me}
-            busy={busy}
-            nextStates={nextStates}
-            activeHandover={activeHandover}
-            onStart={() => run(async () => api.startTicket(id), 'Work started')}
-            onResolve={() => setResolveOpen(true)}
-            onClose={() => setCloseConfirm(true)}
-            onTake={() => run(async () => api.takeTicket(id), 'Ticket is now yours')}
-            onReassign={() => setReassignOpen(true)}
-            onHandover={() => setHandoverOpen(true)}
-          />
-        </div>
-      </header>
+    <div className="page ticket-workspace">
+      <button className="crumb" onClick={() => window.location.hash = '/tickets'}>
+        <Icon name="chevronRight" className="ticket-back-icon" size={12} /> All tickets
+      </button>
 
       {error && <ErrorState message={error} />}
 
       <div className="detail-layout">
-        <div className="stack">
+        <div className="stack ticket-main">
           <Conversation
+            key={ticket.id}
             ticket={ticket}
             events={events}
             handovers={handovers}
             originalAttachments={originalAttachments(ticket)}
+            header={
+              <header className="detail-head">
+                <div className="ticket-subject-line">
+                  <h2 className="detail-title">{ticket.shortDescription}</h2>
+                  <StateBadge state={ticket.state} />
+                  <PriorityBadge priority={ticket.priority} />
+                </div>
+                <div className="ticket-request-meta">
+                  <span>{ticket.requesterName || 'Unknown requester'}</span>
+                  <span>{ticket.source === 'email' ? 'Email' : 'Portal'}</span>
+                  <span>Created {timeAgo(ticket.createdAt)}</span>
+                </div>
+                <div className="ticket-context">
+                  <ConfirmationChip ticket={ticket} />
+                  <ReplyChip ticket={ticket} />
+                  {ticket.awaitingAssignment && <span className="chip chip-warn">awaiting assignment</span>}
+                </div>
+              </header>
+            }
+            onRead={markRead}
+            onMove={moveReply}
+            historyBusy={historyBusy}
+            historyError={historyError}
+            onLoadHistory={async () => {
+              setHistoryBusy(true); setHistoryError('');
+              try { const data = await api.getTicket(id, true); allHistory.current = true; setTicket(data); return true; }
+              catch (error) { setHistoryError(error.message); return false; }
+              finally { setHistoryBusy(false); }
+            }}
           />
 
           {open && (
@@ -212,27 +227,53 @@ export default function TicketDetail({ id, me, onChanged }) {
               noteMode={noteMode}
               setNoteMode={setNoteMode}
               busy={busy}
+              draftSaved={draftSaved}
               onSend={async () => {
                 const isInternal = noteMode === 'internal';
                 await run(async () => {
                   await api.addNote(id, noteText, isInternal);
-                  setNoteText('');
+                  clearSent(noteMode, noteText);
                 }, isInternal ? 'Internal note added' : 'Requester update added');
               }}
             />
           )}
         </div>
 
-        <aside className="inspector" aria-label="Ticket details">
+        <aside className={`inspector ${inspectorOpen ? 'is-expanded' : ''}`} aria-label="Ticket details">
+          <div className="mobile-ticket-summary">
+            <span><strong>{ticket.assignedAgent?.name || 'Unassigned'}</strong><span className="muted small">Ticket owner</span></span>
+            <button className="btn btn-secondary btn-sm" aria-expanded={inspectorOpen} aria-controls="ticket-properties" onClick={() => setInspectorOpen(value => !value)}>{inspectorOpen ? 'Hide details' : 'Ticket details'}</button>
+            {open && <button className="btn btn-ghost btn-sm" onClick={() => { const input = document.getElementById('ticket-reply'); input?.focus(); input?.scrollIntoView({ block: 'center' }); }}>Write reply</button>}
+          </div>
+          <SlaCard ticket={ticket} />
+          <div className="ticket-properties-region" id="ticket-properties">
           <PropertiesCard
             ticket={ticket}
             busy={busy}
             groupPick={groupPick}
-            setGroupPick={setGroupPick}
+            setGroupPick={value => { dirtyGroup.current = value !== (ticket.team?.key || ''); setGroupPick(value); }}
             run={run}
             me={me}
           />
-          <SlaCard ticket={ticket} />
+          </div>
+          <section className="insp-section ticket-primary-actions">
+            <h2 className="insp-title">Actions</h2>
+            <PrimaryActions
+              ticket={ticket}
+              me={me}
+              busy={busy}
+              nextStates={nextStates}
+              activeHandover={activeHandover}
+              onStart={() => run(async () => api.startTicket(id), 'Work started')}
+              onResolve={() => setResolveOpen(true)}
+              onClose={() => setCloseConfirm(true)}
+              onTake={() => run(async () => api.takeTicket(id), 'Ticket is now yours')}
+              onReassign={() => setReassignOpen(true)}
+              onHandover={() => setHandoverOpen(true)}
+            />
+          </section>
+          {secondaryError && <div className="insp-section inline-load-error" role="status">{secondaryError} <button className="btn-link" onClick={refreshSecondaryData}>Retry</button></div>}
+          <div className="ticket-secondary-region">
           {raSessions !== null && (
             <RemoteAccessCard
               ticket={ticket}
@@ -256,6 +297,7 @@ export default function TicketDetail({ id, me, onChanged }) {
             onReopen={() => run(async () => api.setStatus(id, { state: 'IN_PROGRESS' }), 'Ticket reopened')}
             onCancelHandover={(hid) => run(async () => api.cancelHandover(hid), 'Handover cancelled')}
           />
+          </div>
         </aside>
       </div>
 
@@ -325,19 +367,21 @@ export default function TicketDetail({ id, me, onChanged }) {
 /* Composer — chat-style reply box                                    */
 /* ------------------------------------------------------------------ */
 
-function Composer({ ticket, noteText, setNoteText, noteMode, setNoteMode, busy, onSend }) {
+function Composer({ ticket, noteText, setNoteText, noteMode, setNoteMode, busy, onSend, draftSaved }) {
   const isPublic = noteMode === 'public';
   return (
-    <section className="card" style={{ padding: 16 }}>
-      <div className="card-head" style={{ marginBottom: 6 }}>
+    <section className={`card ticket-composer ${isPublic ? '' : 'is-internal'}`}>
+      <div className="card-head">
         <h2>{isPublic ? 'Reply to requester' : 'Add internal note'}</h2>
-        <div className="composer-toggle" role="tablist">
-          <button className={isPublic ? 'is-active' : ''} onClick={() => setNoteMode('public')}>Public</button>
-          <button className={!isPublic ? 'is-active' : ''} onClick={() => setNoteMode('internal')}>Internal</button>
+        <div className="composer-toggle" role="group" aria-label="Note visibility">
+          <button aria-pressed={isPublic} className={isPublic ? 'is-active' : ''} onClick={() => setNoteMode('public')}>Public</button>
+          <button aria-pressed={!isPublic} className={!isPublic ? 'is-active' : ''} onClick={() => setNoteMode('internal')}>Internal</button>
         </div>
       </div>
       <div className="composer">
         <textarea
+          id="ticket-reply"
+          aria-label={isPublic ? 'Reply to requester' : 'Internal note'}
           rows={3}
           placeholder={isPublic ? `Message ${ticket.requesterName || 'the requester'}…` : 'Note for the team — never sent to the requester.'}
           value={noteText}
@@ -345,6 +389,7 @@ function Composer({ ticket, noteText, setNoteText, noteMode, setNoteMode, busy, 
         />
         <div className="composer-toolbar">
           <div className="muted small">
+            {noteText && <span className={draftSaved ? 'draft-status' : 'draft-status warn-text'} role="status">{draftSaved ? 'Draft saved in this tab' : 'Draft could not be saved — keep this page open'}<br /></span>}
             {isPublic
               ? ticket.requesterEmail ? `Will email ${ticket.requesterEmail}` : 'No requester email on file'
               : 'Internal — only visible to the team.'}
@@ -370,7 +415,7 @@ function Composer({ ticket, noteText, setNoteText, noteMode, setNoteMode, busy, 
 }
 
 /* ------------------------------------------------------------------ */
-/* Header actions — exactly one primary, chosen by lifecycle position  */
+/* Inspector actions — one primary, chosen by lifecycle position       */
 /* ------------------------------------------------------------------ */
 
 function PrimaryActions({
@@ -414,6 +459,11 @@ function PrimaryActions({
 
   return (
     <div className="detail-actions">
+      {primary && (
+        <button className="btn btn-primary" disabled={busy} onClick={primary.onClick}>
+          {primary.label}
+        </button>
+      )}
       {canTake && primary && primary.label !== 'Take ticket' && (
         <button className="btn btn-secondary" disabled={busy} onClick={onTake}>Take</button>
       )}
@@ -429,12 +479,7 @@ function PrimaryActions({
           title={activeHandover ? `Awaiting ${activeHandover.targetAgent.name}'s answer` : 'Ask a teammate to take this ticket'}
           onClick={onHandover}
         >
-          Handover
-        </button>
-      )}
-      {primary && (
-        <button className="btn btn-primary" disabled={busy} onClick={primary.onClick}>
-          {primary.label}
+          Offer handover
         </button>
       )}
     </div>

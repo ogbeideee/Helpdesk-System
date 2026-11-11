@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api } from '../api.js';
+import { api, peekRead } from '../api.js';
+import { usePageRefresh } from '../usePageRefresh.js';
 import { Spinner, ErrorState, EmptyState, useToast, Icon, fmtDateTime } from './ui.jsx';
 import {
   ENTITY_TYPES,
@@ -98,7 +99,7 @@ function EventDetail({ row }) {
 }
 
 export default function AuditTrailPage() {
-  const [data, setData] = useState(null);
+  const [data, setData] = useState(() => peekRead('/audit?page=1') ?? null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState(EMPTY_DRAFT);
@@ -119,6 +120,8 @@ export default function AuditTrailPage() {
       return null;
     }
   }, []);
+
+  usePageRefresh(() => load(applied, page), ['/audit']);
 
   useEffect(() => { load({}); }, [load]);
 

@@ -14,6 +14,9 @@ const { PrismaClient } = require('@prisma/client');
 let stage = 'restore';
 async function main() {
   const env = pgEnvironment(fixture.url);
+  // testdb initializes the latest schema. A pre-migration snapshot lacks new
+  // tables, so clear this guarded disposable schema before restoring it.
+  run('psql', ['-c', 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'], env);
   run('pg_restore', ['--clean', '--if-exists', '--no-owner', '--no-acl', '--exit-on-error', '--dbname', env.PGDATABASE, backup], env);
   stage = 'baseline counts';
   const beforeClient = new PrismaClient();

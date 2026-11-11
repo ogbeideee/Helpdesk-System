@@ -308,12 +308,7 @@ function transportFor(env, client) {
   };
   await createMailer({ transport: dlTransport, logger: QUIET })
     .notifyReplyReceived({ id: 1, ticketNumber: 'TK-9', shortDescription: 'x', requesterEmail: 'r@requester.test' }, {});
-  eq('D6 an unassigned reply alert falls back to the transport DL', fallback.length, 1);
-  eq('D7 and it is the transport address, not a Graph one',
-    fallback[0].toRecipients[0].emailAddress.address, 'team@mail.test');
-  check('D8 the fallback alert is internal-only and link-free',
-    !fallback[0].toRecipients.some((r) => r.emailAddress.address === 'r@requester.test')
-    && !/https?:\/\//.test(fallback[0].body));
+  eq('D6 unassigned reply alerts do not send through SMTP or DL', fallback.length, 0);
 
   // A broken provider must never fail a request: the mailer reports false.
   const dead = {

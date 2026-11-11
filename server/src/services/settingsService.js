@@ -392,7 +392,22 @@ const DEFINITIONS = {
       'A message from one of your own accounts (any Agent row) that carries the helpdesk mailbox ' +
       'on Cc/Bcc but NOT on To opens no ticket — the department was copied for visibility, not ' +
       'asked. Addressed to the helpdesk directly it opens a ticket like any other request. ' +
-      'A requester outside your accounts is never affected. Set to 0 to keep filing those as tickets.',
+      'Senders in the configured internal domains are also covered, even without an account. Set to 0 to keep filing those as tickets.',
+  },
+  intakeInternalDomains: {
+    group: 'intake',
+    label: 'Internal sender domains (comma separated)',
+    type: 'string',
+    env: 'INTAKE_INTERNAL_DOMAINS',
+    fallback: '',
+    help: 'Exact organisation email domains whose copied-only mail opens no new ticket, including employees without helpdesk accounts. No subdomain guessing. Direct requests and existing-thread replies remain accepted.',
+    validate(value) {
+      const domains = String(value ?? '').split(',').map((v) => v.trim().toLowerCase()).filter(Boolean);
+      if (domains.some((v) => v.length > 253 || !/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(v))) {
+        return { ok: false, error: 'Use comma-separated email domains, for example example.com' };
+      }
+      return { ok: true, value: [...new Set(domains)].join(', ') };
+    },
   },
   intakeMailboxAddresses: {
     group: 'intake',

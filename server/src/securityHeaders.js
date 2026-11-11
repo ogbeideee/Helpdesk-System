@@ -18,10 +18,9 @@
 //   when-cross-origin                   URLs never leak to a third party via
 //                                       the Referer header.
 //
-// Deliberately NOT set here: a blanket Content-Security-Policy. The inline
-// boot script in client/index.html stamps the theme before first paint and
-// Vite emits inline module preloads in dev, so a CSP that actually holds needs
-// a nonce/end-to-end check of its own — a follow-up, not a guessed header.
+// Production script CSP hashes the exact inline boot script in the built
+// index.html. Development keeps Vite's HMR working. Inline style attributes
+// remain allowed for React sizing and the shared theme-token component rules.
 // HSTS is also not set: Fly terminates TLS and its proxy already answers
 // redirects; a header duplicated at two layers is a header nobody owns.
 //
@@ -32,11 +31,24 @@
 // browsers are refused — the safe default for a session-token API.
 const NODE_ENV = () => process.env.NODE_ENV || 'development';
 
+function productionCsp() {
+  const fs = require('fs');
+  const path = require('path');
+  const crypto = require('crypto');
+  const built = path.join(__dirname, '../../client/dist/index.html');
+  const html = fs.readFileSync(fs.existsSync(built) ? built : path.join(__dirname, '../../client/index.html'), 'utf8');
+  const hashes = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)]
+    .filter(match => !/\bsrc\s*=/.test(match[1]) && match[2].trim())
+    .map(match => `'sha256-${crypto.createHash('sha256').update(match[2]).digest('base64')}'`);
+  return `default-src 'self'; script-src 'self' ${hashes.join(' ')}; script-src-attr 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`;
+}
+
 function securityHeaders() {
+  const csp = NODE_ENV() === 'production' ? productionCsp() : "frame-ancestors 'none'";
   return function securityHeadersMiddleware(_req, res, next) {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
-    res.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
+    res.setHeader('Content-Security-Policy', csp);
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     next();
   };

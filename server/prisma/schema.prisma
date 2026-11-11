@@ -107,6 +107,9 @@ model RoutingRuleAuditLog {
 // table name; it holds every person who can sign in, whatever their role.
 // There is deliberately no second user system.
 model Agent {
+  weeklyReportPreferences Json?
+  weeklyReportReference   AgentWeeklyReportReference?
+  weeklyReports           AgentWeeklyReport[]
   id                      Int               @id @default(autoincrement())
   name                    String
   email                   String            @unique
@@ -151,6 +154,30 @@ model Agent {
   remoteAccessSessions    RemoteAccessSession[] @relation("RemoteAccessSessionAgent")
   remoteAccessRequested   RemoteAccessSession[] @relation("RemoteAccessSessionRequester")
   remoteAccessEnded       RemoteAccessSession[] @relation("RemoteAccessSessionEnder")
+}
+
+// Personal weekly totals only: edits replace the snapshot, with no change log.
+model AgentWeeklyReport {
+  id Int @id @default(autoincrement())
+  agentId Int
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  week String
+  data Json
+  version Int @default(1)
+  @@unique([agentId, week])
+}
+
+model WeeklyActivityDefinition {
+  id String @id
+  label String
+  category String
+  active Boolean @default(true)
+}
+
+model AgentWeeklyReportReference {
+  agentId Int @id
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  data Json
 }
 
 // Agent Unavailability Timeline: one row per span of availability state

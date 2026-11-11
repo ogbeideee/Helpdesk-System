@@ -18,6 +18,7 @@ import { attachmentsForComment } from './attachmentView.js';
 
 export const EVENT_META = {
   requester:  { cls: 'ev-requester',  glyph: 'message', label: 'Requester' },
+  participant: { cls: 'ev-requester', glyph: 'message', label: 'Participant' },
   update:     { cls: 'ev-update',     glyph: 'message', label: 'Agent reply' },
   internal:   { cls: 'ev-internal',   glyph: 'lock',    label: 'Internal note' },
   status:     { cls: 'ev-status',     glyph: 'arrow',   label: 'Status' },
@@ -35,7 +36,7 @@ export const EVENT_META = {
 };
 
 /** The conversation bubble kinds, as opposed to the one-line system markers. */
-const MESSAGE_KINDS = ['internal', 'update', 'resolution', 'requester'];
+const MESSAGE_KINDS = ['internal', 'update', 'resolution', 'requester', 'participant'];
 
 export function isMessageKind(kind) {
   return MESSAGE_KINDS.includes(kind);
@@ -77,10 +78,18 @@ export function buildTimeline(ticket) {
 
   for (const c of ticket.comments || []) {
     events.push({
-      kind: c.isInternal ? 'internal' : 'update',
+      kind: c.isInternal ? 'internal' : c.messageType === 'participant' ? 'participant'
+        : c.messageType === 'requester' || (!c.messageType && c.isRequester) ? 'requester' : 'update',
       at: c.createdAt,
       title: commentTitle(c),
+      senderName: c.authorName || c.authorEmail || (c.isInternal ? 'Team' : c.messageType === 'requester' || (!c.messageType && c.isRequester) ? ticket.requesterName || 'Requester' : 'Agent'),
+      senderEmail: c.authorEmail || null,
       detail: c.body,
+      commentId: c.id,
+      displayMessage: c.displayMessage,
+      threading: c.threading,
+      canMoveThread: c.canMoveThread,
+      unread: c.unread,
       ticketId: ticket.id,
       attachments: attachmentsForComment(ticket, c.id),
     });
@@ -119,7 +128,8 @@ function commentTitle(c) {
   if (c.isInternal) {
     return `Internal note${c.authorName ? ' — ' + c.authorName : ''}`;
   }
-  if (c.isRequester) {
+  if (c.messageType === 'participant') return `Participant reply — ${c.authorName || c.authorEmail || 'Sender'}`;
+  if (c.messageType === 'requester' || (!c.messageType && c.isRequester)) {
     return `Requester reply${c.authorName || c.authorEmail ? ' — ' + (c.authorName || c.authorEmail) : ''}`;
   }
   return `${c.authorName || 'Agent'} updated the requester`;

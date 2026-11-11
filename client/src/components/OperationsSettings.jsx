@@ -1,20 +1,23 @@
 import { useEffect, useState } from 'react';
-import { api } from '../api.js';
+import { api, peekRead } from '../api.js';
+import { usePageRefresh } from '../usePageRefresh.js';
 import { Field, Spinner, ErrorState, useToast } from './ui.jsx';
-import { outcomeLabel, deliveryLabel, operationTime, decisionExplanation } from '../operationsView.js';
+import { outcomeLabel, deliveryLabel, operationTime, decisionExplanation, decisionSender, decisionMessageId } from '../operationsView.js';
 
 export default function OperationsSettings() {
-  const [data, setData] = useState(null);
-  const [form, setForm] = useState(null);
+  const [data, setData] = useState(() => peekRead('/admin/operations') ?? null);
+  const [form, setForm] = useState(() => data?.settings || null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [greeting, setGreeting] = useState('Dear Bash,');
   const [preview, setPreview] = useState(null);
   const [toast, toastNode] = useToast();
   async function load() {
-    try { const next = await api.operations(); setData(next); setForm(current => current || next.settings); setError(''); }
+    try { const next = await api.operations(); setData(next); setForm(current => !current || JSON.stringify(current) === JSON.stringify(data?.settings) ? next.settings : current); setError(''); }
     catch (e) { setError(e.message); }
   }
+  usePageRefresh(load, ['/admin/operations']);
+
   useEffect(() => { load(); }, []);
   async function run(action) {
     setBusy(true);
@@ -32,7 +35,8 @@ export default function OperationsSettings() {
         <Field label="Assign by opening greeting"><select value={form.intakeAddressedRouting} onChange={e => set('intakeAddressedRouting', e.target.value)}><option value="1">Enabled</option><option value="0">Disabled</option></select></Field>
         <Field label="Name aliases" hint="One nickname = saved agent name per line. Each nickname must identify one account."><textarea rows={5} value={form.intakeAddressedAliases || ''} onChange={e => set('intakeAddressedAliases', e.target.value)} placeholder={'bash = Bashir Oladipo\nyemi = Ibiyemi Aboyewa'} /></Field>
         <Field label="Helpdesk and department DL addresses" hint="Comma separated. Include the addresses that deliver mail to the helpdesk."><textarea rows={2} value={form.intakeMailboxAddresses || ''} onChange={e => set('intakeMailboxAddresses', e.target.value)} /></Field>
-        <Field label="Ignore copied mail from our accounts"><select value={form.intakeInternalCopies} onChange={e => set('intakeInternalCopies', e.target.value)}><option value="1">Enabled</option><option value="0">Disabled</option></select></Field>
+        <Field label="Internal sender domains" hint="Comma separated, for example example.com. Covers employees without helpdesk accounts; exact domains only."><input value={form.intakeInternalDomains || ''} onChange={e => set('intakeInternalDomains', e.target.value)} /></Field>
+        <Field label="Ignore copied mail from our accounts and internal domains"><select value={form.intakeInternalCopies} onChange={e => set('intakeInternalCopies', e.target.value)}><option value="1">Enabled</option><option value="0">Disabled</option></select></Field>
         <button className="btn btn-primary" disabled={busy} onClick={() => run(async () => { const next = await api.updateIntakeSettings(form); setData(next); setForm(next.settings); setPreview(null); toast('Intake settings saved'); })}>Save intake settings</button>
         <Field label="Test an opening greeting" hint="Tests saved settings. The assignment engine still checks availability, skill, group and workload."><input value={greeting} maxLength={300} onChange={e => { setGreeting(e.target.value); setPreview(null); }} /></Field>
         <button className="btn" disabled={busy} onClick={() => run(async () => setPreview(await api.previewGreeting(greeting)))}>Test greeting</button>
@@ -47,10 +51,10 @@ export default function OperationsSettings() {
       </tbody></table></div>
     </section>
     <section className="card">
-      <div className="card-head"><h2>Intake decisions</h2><span className="muted small">Latest 100 outcomes · recorded from this release onward</span></div>
-      <div className="table-wrap table-stack"><table className="table"><thead><tr><th>Time</th><th>Ticket</th><th>Outcome</th><th>Explanation</th></tr></thead><tbody>
-        {data.decisions.map(row => <tr key={row.id}><td data-label="Time">{operationTime(row.createdAt)}</td><td data-label="Ticket">{row.entityLabel}</td><td data-label="Outcome">{outcomeLabel(row.metadata?.outcome)}</td><td data-label="Explanation">{decisionExplanation(row)}</td></tr>)}
-        {!data.decisions.length && <tr><td colSpan={4}>No intake decisions recorded yet.</td></tr>}
+      <div className="card-head"><h2>Intake decisions</h2><span className="muted small">Latest 100 outcomes · who wrote in, and where the mail went</span></div>
+      <div className="table-wrap table-stack"><table className="table"><thead><tr><th>Time</th><th>From</th><th>Ticket</th><th>Outcome</th><th>Explanation</th></tr></thead><tbody>
+        {data.decisions.map(row => <tr key={row.id}><td data-label="Time">{operationTime(row.createdAt)}</td><td data-label="From">{decisionSender(row)}{decisionMessageId(row) && <details className="conversation-history"><summary>Message ID</summary><code>{decisionMessageId(row)}</code></details>}</td><td data-label="Ticket">{row.ticketId ? <a href={`#/tickets/${row.ticketId}`}>{row.entityLabel}</a> : row.entityLabel}</td><td data-label="Outcome">{outcomeLabel(row.metadata?.outcome)}</td><td data-label="Explanation">{decisionExplanation(row)}</td></tr>)}
+        {!data.decisions.length && <tr><td colSpan={5}>No intake decisions recorded yet.</td></tr>}
       </tbody></table></div>
     </section>
   </>;

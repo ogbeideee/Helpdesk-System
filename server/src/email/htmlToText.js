@@ -112,7 +112,8 @@ function htmlToPlainText(html) {
 /** True when the string looks like it carries HTML markup. */
 function looksLikeHtml(value) {
   if (typeof value !== 'string' || !value) return false;
-  return /<\/?[a-z][\s\S]*>/i.test(value) || /&[a-z#0-9]+;/i.test(value);
+  // An Outlook address such as <person@example.com> is text, not a tag.
+  return /<\/?[a-z][a-z0-9:-]*(?:\s[^<>]*|\/?)>/i.test(value) || /&[a-z#0-9]+;/i.test(value);
 }
 
 module.exports = { htmlToPlainText, looksLikeHtml, decodeEntities };

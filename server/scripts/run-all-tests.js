@@ -18,6 +18,7 @@ const { spawnSync } = require('child_process');
 
 // Same order as the chain this replaced.
 const SUITES = [
+  'test-power-automate',
   'test-email-parser',
   'test-email-ingest',
   'test-graph-mailbox',
@@ -31,6 +32,7 @@ const SUITES = [
   'test-workload',
   'test-handover',
   'test-email-integration',
+  'test-conversation',
   'test-notification-layout',
   'test-operations',
   'test-read-performance',
@@ -53,6 +55,7 @@ const SUITES = [
   'test-remote-access',
   'test-audit',
   'test-reports',
+  'test-weekly-reports',
   'test-scheduled-reports',
   'test-sla',
   'test-sla-dashboard',
@@ -65,6 +68,7 @@ const SUITES = [
   'test-status-link',
   'test-resolution-confirm',
   'test-error-handling',
+  'test-review-hardening',
   'test-ingestion-watchdog',
   'test-e2e',
 ];

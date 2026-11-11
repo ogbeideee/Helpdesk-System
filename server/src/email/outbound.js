@@ -12,10 +12,8 @@
 // transport (Graph, SMTP or the console fallback), wrapping these builders in
 // sendMailSafe.
 //
-// No mail carries a link. A requester has no portal account — often their
-// account is the very thing that is broken — and an agent already works in
-// TicketDesk, so the reply-to-this-mail address is the single channel both
-// audiences need. Nothing here references the portal base URL or a signed link.
+// Assignment notices link agents to the authenticated ticket page. Requester
+// mail stays link-free except for the signed resolution confirmation.
 //
 // Recipient classes, explicit per builder:
 //   - REQUESTER mails (ticketAcknowledgementMail, statusUpdateMail,
@@ -115,9 +113,8 @@ function slaLine(ticket) {
 
 /**
  * The footer every notification carries. Deliberately link-free: a requester has
- * no portal account (their account may be the very thing that is broken) and an
- * agent reads the ticket in TicketDesk, so a link helps neither audience. The
- * reply-to-this-mail address is the only channel either of them needs.
+ * no portal account (their account may be the very thing that is broken).
+ * Assignment links are added explicitly by that builder, not by this footer.
  */
 function ticketFooter(ticket) {
   const lines = ['', '--', 'IT Helpdesk — TicketDesk', `Ticket: ${ticket.ticketNumber}`];
@@ -173,25 +170,22 @@ function ticketAcknowledgementMail(ticket) {
   if (!ticket.requesterEmail) return null;
   const html = htmlShell(`
     <p style="margin:0 0 14px;font-size:16px;font-weight:600;">${htmlEscape(greeting(ticket.requesterName))}</p>
-    <p style="margin:0 0 16px;">Your request has been logged with the IT Helpdesk.</p>
+    <p style="margin:0 0 16px;">Your request has been logged. Our IT team will review it and keep you updated.</p>
     <div style="margin:0 0 18px;padding:12px 14px;background:#ffffff;border:1px solid #e4e7ec;border-radius:6px;">
-      ${htmlFact('Ticket:', ticket.ticketNumber)}
       ${htmlFact('Subject:', ticket.shortDescription)}
     </div>
-    <p style="margin:0;">You will receive updates as we work on it. To add information,
-       simply reply to this email &mdash; your message is attached to the ticket.</p>`, { title: 'We received your request', ticketNumber: ticket.ticketNumber });
+    <p style="margin:0;">Keep this email for your ticket reference.</p>`, { title: 'We received your request', ticketNumber: ticket.ticketNumber });
   return {
     subject: ticketSubject(ticket, 'We received your request'),
     body: [
       greeting(ticket.requesterName),
       '',
-      'Your request has been logged with the IT Helpdesk.',
+      'Your request has been logged. Our IT team will review it and keep you updated.',
       '',
       `Ticket:    ${ticket.ticketNumber}`,
       `Subject:   ${ticket.shortDescription}`,
       '',
-      'You will receive updates as we work on it. To add information,',
-      'simply reply to this email — your message is attached to the ticket.',
+      'Keep this email for your ticket reference.',
       ticketFooter(ticket),
     ].filter((l) => l !== null).join('\r\n'),
     html,
@@ -205,7 +199,18 @@ function ticketAcknowledgementMail(ticket) {
  */
 function assignmentMail(ticket, agent) {
   if (!agent || !agent.email) return null;
-  return {
+  let ticketUrl = '';
+  try {
+    const base = new URL(process.env.PORTAL_BASE_URL || '');
+    if (['http:', 'https:'].includes(base.protocol) && !base.username && !base.password && Number.isSafeInteger(ticket.id) && ticket.id > 0) {
+      base.search = '';
+      base.hash = '';
+      base.pathname = base.pathname.replace(/\/+$/, '') + '/';
+      base.hash = `/tickets/${ticket.id}`;
+      ticketUrl = base.toString();
+    }
+  } catch { /* Unconfigured or malformed base: keep a usable unlinked notice. */ }
+  const mail = {
     subject: ticketSubject(ticket, `Assigned to you: ${ticket.shortDescription}`),
     body: [
       greeting(agent.name),
@@ -220,10 +225,12 @@ function assignmentMail(ticket, agent) {
       `Subject: ${ticket.shortDescription}`,
       'Excerpt:',
       `> ${excerpt(ticket.body, 240)}`,
+      ...(ticketUrl ? ['', `Open ticket: ${ticketUrl}`] : []),
       ticketFooter(ticket),
     ].join('\r\n'),
     toRecipients: [toRecipient(agent.email)],
   };
+  return require('./notificationLayout').decorateMail(mail, { ticketNumber: ticket.ticketNumber, ticketUrl });
 }
 
 /**
@@ -321,13 +328,13 @@ function agentReplyMail({ ticket, agentName, body }) {
     .split('\n')
     .map(
       (l) =>
-        `<div style="margin:0;padding-left:12px;border-left:3px solid #dfe3e8;color:#374151;">${htmlEscape(l) || '&nbsp;'}</div>`
+        `<div style="margin:0;color:#243247;">${htmlEscape(l) || '&nbsp;'}</div>`
     )
     .join('');
   const html = htmlShell(`
     <p style="margin:0 0 14px;font-size:16px;font-weight:600;">${htmlEscape(greeting(ticket.requesterName))}</p>
-    <p style="margin:0 0 12px;"><strong>${htmlEscape(agentName)}</strong> from the IT Helpdesk wrote:</p>
-    <div style="margin:0 0 6px;padding:12px 0 12px 2px;">${quotedHtml}</div>`, { title: 'New message about your request', ticketNumber: ticket.ticketNumber });
+    <p style="margin:0 0 18px;color:#64748b;"><strong>${htmlEscape(agentName)}</strong> from IT Helpdesk</p>
+    <div style="margin:0 0 6px;line-height:1.7;">${quotedHtml}</div>`, { title: 'An update from your IT team', ticketNumber: ticket.ticketNumber });
   return {
     subject,
     body: [
@@ -346,10 +353,8 @@ function agentReplyMail({ ticket, agentName, body }) {
 }
 
 /**
- * INTERNAL — alert to the assigned agent (or the DL fallback, chosen by the
- * mailer) when a requester replies or reopens. Returns only subject and body:
- * the recipient policy (assignee first, DL fallback) is the mailer's, because
- * it depends on the transport configuration.
+ * Legacy reply-alert shape, retained for identifying older queued alerts and
+ * regression fixtures. The active mailer never sends this notification.
  */
 function replyAlertMail(ticket, context = {}) {
   const reopened = Boolean(context.reopened);
@@ -371,6 +376,7 @@ function replyAlertMail(ticket, context = {}) {
 }
 
 module.exports = {
+  htmlEscape,
   // shared formatting
   ticketSubject,
   toRecipient,

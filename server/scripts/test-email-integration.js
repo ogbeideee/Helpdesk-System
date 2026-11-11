@@ -252,6 +252,21 @@ async function main() {
   eq('B21 assignment refuses without an agent', outbound.assignmentMail(subjectTicket, null), null);
   eq('B22 assignment refuses an agent without email',
     outbound.assignmentMail(subjectTicket, { name: 'No Address', email: null }), null);
+  check('B22a assignment ticket number links to authenticated detail',
+    assignment.html.includes(`href="http://portal.test/#/tickets/${subjectTicket.id}"`) && assignment.html.includes('>TK-4242</a>'));
+  check('B22b plain-text assignment has a usable ticket URL', assignment.body.includes(`Open ticket: http://portal.test/#/tickets/${subjectTicket.id}`));
+  const savedPortal = process.env.PORTAL_BASE_URL;
+  for (const base of ['', 'javascript:alert(1)', 'https://user:password@portal.test']) {
+    process.env.PORTAL_BASE_URL = base;
+    const unlinked = outbound.assignmentMail(subjectTicket, subjectTicket.assignedAgent);
+    check('B22c unsafe/unconfigured portal falls back to unlinked assignment', !unlinked.html.includes('href=') && !unlinked.body.includes('Open ticket:'));
+  }
+  process.env.PORTAL_BASE_URL = 'https://portal.test/helpdesk///?ignored=true#old';
+  check('B22d configured subpath and trailing slashes normalise',
+    outbound.assignmentMail(subjectTicket, subjectTicket.assignedAgent).html.includes(`href="https://portal.test/helpdesk/#/tickets/${subjectTicket.id}"`));
+  check('B22e assignment link cannot inject user markup',
+    !outbound.assignmentMail(nasty, subjectTicket.assignedAgent).html.includes('<script>'));
+  process.env.PORTAL_BASE_URL = savedPortal;
 
   // B23-B24 team broadcast (internal; recipients are the transport's business)
   const broadcast = outbound.newTicketBroadcastMail(subjectTicket);
@@ -293,15 +308,14 @@ async function main() {
     (await mailer.notifyAgentReply(subjectTicket, { agentName: 'Ada Agent', body: 'hi' }), cap.sent.length), 3);
   eq('C5 assignment sends exactly one mail',
     (await mailer.notifyAssignment(subjectTicket, subjectTicket.assignedAgent), cap.sent.length), 4);
-  eq('C6 reply alert sends exactly one mail',
-    (await mailer.notifyReplyReceived(subjectTicket, {}), cap.sent.length), 5);
+  eq('C6 reply alert is discontinued', await mailer.notifyReplyReceived(subjectTicket, {}), false);
+  eq('C6b no extra email is sent for a reply', cap.sent.length, 4);
   eq('C7 broadcast uses the broadcast channel, not sendMail',
     (await mailer.notifyNewTicketToDl(subjectTicket), cap.broadcasts.length), 1);
   check('C8 requester mails only ever address the requester',
     [0, 1, 2].every((i) => JSON.stringify(recipientAddresses(cap.sent[i])) === JSON.stringify([REQUESTER])));
   check('C9 internal mails never address the requester',
-    JSON.stringify(recipientAddresses(cap.sent[3])) === JSON.stringify([`ada@${DOMAIN}`])
-    && JSON.stringify(recipientAddresses(cap.sent[4])) === JSON.stringify([`ada@${DOMAIN}`]));
+    JSON.stringify(recipientAddresses(cap.sent[3])) === JSON.stringify([`ada@${DOMAIN}`]));
   check('C10 mailer output equals the assembled builder output',
     cap.sent[0].subject === ack.subject && cap.sent[0].body === ack.body);
 
@@ -312,9 +326,8 @@ async function main() {
     (await mailer2.notifyRequesterAck(ticketShape({ requesterEmail: null })), cap2.sent.length), 0);
   eq('C12 assignment without an agent sends nothing',
     (await mailer2.notifyAssignment(subjectTicket, null), cap2.sent.length), 0);
-  eq('C13 reply alert with no assignee falls back to the DL',
-    recipientAddresses((await mailer2.notifyReplyReceived(ticketShape({ assignedAgent: null }), {}), cap2.sent[0]))[0], DL);
-  eq('C14 the DL fallback mail is still one mail', cap2.sent.length, 1);
+  eq('C13 unassigned reply alerts are also discontinued', await mailer2.notifyReplyReceived(ticketShape({ assignedAgent: null }), {}), false);
+  eq('C14 no DL fallback alert is sent', cap2.sent.length, 0);
 
   // C15-C18 transport failures are swallowed and logged, never thrown
   const errors = [];
@@ -389,7 +402,7 @@ async function main() {
   eq('D7 replay is reported as a duplicate', dup.status, 'duplicate');
   eq('D8 duplicate replay sends nothing', flowCap.sent.length + flowCap.broadcasts.length, beforeDup);
 
-  // D9 requester reply alerts the agent, never the requester
+  // A received reply updates the thread without sending a duplicate alert.
   const replyMailer = captureMailer();
   const replyCap = replyMailer.transport;
   const replyIn = await intakeEmailMessage({
@@ -399,10 +412,8 @@ async function main() {
     from: REQUESTER,
   }, { logger: quiet, mailer: replyMailer });
   eq('D9 reply is appended', replyIn.status, 'comment_added');
-  eq('D10 reply alert is exactly one mail', replyCap.sent.length, 1);
-  check('D11 reply alert goes to the assigned agent only',
-    JSON.stringify(recipientAddresses(replyCap.sent[0])) === JSON.stringify([`lead@${DOMAIN}`]));
-  check('D12 reply alert never copies the requester', !replyCap.sent[0].subject.includes(REQUESTER));
+  eq('D10 received replies send no extra mail', replyCap.sent.length, 0);
+  eq('D11 received replies send no broadcast', replyCap.broadcasts.length, 0);
 
   // D13 reply on a resolved ticket reopens with reopened wording
   await prisma.ticket.update({
@@ -418,8 +429,7 @@ async function main() {
     from: REQUESTER,
   }, { logger: quiet, mailer: reopenMailer });
   eq('D13 reply on resolved reopens', reopenIn.status, 'reopened');
-  eq('D14 reopened alert subject', reopenCap.sent[0].subject,
-    `[${created.ticket.ticketNumber}] Reopened: VPN drops every hour`);
+  eq('D14 reopening by email sends no duplicate alert', reopenCap.sent.length + reopenCap.broadcasts.length, 0);
 
   // D15-D17 SLA alerts: agents only, requester excluded, no recipients -> silent
   // Ada is a plain member (created after the intake flow so the round-robin
@@ -499,6 +509,37 @@ async function main() {
   });
   eq('D26 re-run is already_sent', again.status, 'already_sent');
   eq('D27 dedupe prevents a second report mail', reportCap.sent.length, 1);
+
+  /* ---- D28-D33 the intake ledger names the message it is about ---------- */
+  // The operator's question is "this email is in the mailbox — was it parsed,
+  // and where did it go?". The ledger above (the three flows this part already
+  // drove) answers it only when each row carries WHO wrote in and WHICH message
+  // it was: a timestamp alone cannot be matched back to a mail, and a skipped
+  // message is stored nowhere else at all.
+  const ledgerRows = (await prisma.auditEvent.findMany({
+    where: { entityType: 'EmailIntake' }, orderBy: { id: 'asc' },
+  })).map((row) => ({ row, meta: JSON.parse(row.metadata || '{}') }));
+  check('D28 one ledger row per definitive outcome (the duplicate recorded none)',
+    ledgerRows.length === 3, `got ${ledgerRows.length}`);
+  check('D29 every ledger row names the sender',
+    ledgerRows.every(({ meta }) => meta.sender === REQUESTER),
+    JSON.stringify(ledgerRows.map(({ meta }) => meta.sender)));
+  check('D30 every ledger row names the message',
+    JSON.stringify(ledgerRows.map(({ meta }) => meta.messageId))
+      === JSON.stringify(['flow-new@email.test', 'flow-reply@email.test', 'flow-reopen@email.test']),
+    JSON.stringify(ledgerRows.map(({ meta }) => meta.messageId)));
+  check('D31 the created row points at the ticket it opened',
+    ledgerRows.some(({ row, meta }) => meta.outcome === 'created'
+      && row.ticketId === created.ticket.id && row.entityLabel === created.ticket.ticketNumber));
+  // The privacy posture is unchanged where it matters: no subject, no body, no
+  // recipient headers and no token is retained on a ledger row.
+  check('D32 a ledger row retains no subject, body or recipients',
+    !JSON.stringify(ledgerRows.map(({ meta }) => meta)).includes('VPN drops')
+    && ledgerRows.every(({ meta }) => !('subject' in meta) && !('body' in meta)
+      && !('recipients' in meta) && !('to' in meta) && !('cc' in meta)));
+  check('D33 a threaded reply row names the ticket it was appended to',
+    ledgerRows.some(({ row, meta }) => meta.outcome === 'comment_added'
+      && row.ticketId === created.ticket.id));
 
   /* ---- E. live API: internal-note protection via the console transport -- */
   console.log('\n--- E. live API (console transport) ---');

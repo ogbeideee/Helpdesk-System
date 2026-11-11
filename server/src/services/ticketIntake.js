@@ -44,15 +44,25 @@ class IntakeValidationError extends Error {
 }
 
 /**
- * Strip angle brackets from an RFC 5322 Message-ID and split a header value
- * (one string, possibly space-separated) into a comparable id list.
+ * One RFC 5322 Message-ID as every store here keeps it: angle brackets off,
+ * trimmed. Dedupe, reference threading and the intake ledger all compare ids to
+ * the Ticket/Comment columns that hold this exact shape, so the stripping lives
+ * in one place.
+ */
+function stripMessageId(value) {
+  return String(value || "").replace(/^</, "").replace(/>$/, "").trim();
+}
+
+/**
+ * Split a header value (one string, possibly space-separated) into a comparable
+ * list of stripped ids.
  */
 function messageIdList(value) {
   const list = Array.isArray(value) ? value : value ? [value] : [];
   const out = [];
   for (const item of list) {
     for (const token of String(item).split(/\s+/)) {
-      const id = token.replace(/^</, "").replace(/>$/, "").trim();
+      const id = stripMessageId(token);
       if (id) out.push(id);
     }
   }
@@ -89,11 +99,7 @@ function normalizeRecipients(value) {
 }
 
 function normalizeMessage(payload = {}) {
-  const internetMessageId =
-    String(payload.internetMessageId || "")
-      .replace(/^</, "")
-      .replace(/>$/, "")
-      .trim() || null;
+  const internetMessageId = stripMessageId(payload.internetMessageId) || null;
   return {
     messageId: String(payload.messageId || "").trim(),
     // The RFC identity every ingestion source shares (Graph supplies it as
@@ -161,7 +167,7 @@ async function resolveThread(msg) {
     const byRef = await prisma.ticket.findUnique({
       where: { ticketNumber: ref },
     });
-    if (byRef) return byRef;
+    if (byRef) return { ...byRef, threadMatch: { reason: 'ticket_number', matchedMessageId: null } };
   }
   // Threading headers. Works across sources: a reply fetched over IMAP can
   // reference a message whose ticket was created by Graph, because both store
@@ -179,7 +185,7 @@ async function resolveThread(msg) {
       },
       orderBy: { createdAt: "desc" },
     });
-    if (byMessage) return byMessage;
+    if (byMessage) return { ...byMessage, threadMatch: { reason: 'message_reference', matchedMessageId: byMessage.internetMessageId || byMessage.graphMessageId } };
     const byComment = await prisma.comment.findFirst({
       where: {
         OR: [
@@ -190,7 +196,7 @@ async function resolveThread(msg) {
       include: { ticket: true },
       orderBy: { createdAt: "desc" },
     });
-    if (byComment) return byComment.ticket;
+    if (byComment) return { ...byComment.ticket, threadMatch: { reason: 'reply_reference', matchedMessageId: byComment.internetMessageId || byComment.graphMessageId } };
   }
   if (msg.conversationId && msg.requesterEmail) {
     const candidates = await prisma.ticket.findMany({
@@ -203,7 +209,7 @@ async function resolveThread(msg) {
         (t.requesterEmail || "").toLowerCase() ===
         msg.requesterEmail.toLowerCase(),
     );
-    if (own) return own;
+    if (own) return { ...own, threadMatch: { reason: 'conversation_requester', matchedMessageId: null } };
   }
   return null;
 }
@@ -415,7 +421,9 @@ async function processEmailMessage(
   validate(msg);
 
   // Loop guard parity with the Graph pipeline: never process our own mailbox.
-  const selfMailbox = (process.env.GRAPH_SHARED_MAILBOX || "").toLowerCase();
+  const selfMailbox = (channel === 'power_automate'
+    ? process.env.POWER_AUTOMATE_MAILBOX || process.env.GRAPH_SHARED_MAILBOX || ''
+    : process.env.GRAPH_SHARED_MAILBOX || '').trim().toLowerCase();
   if (selfMailbox && msg.requesterEmail.toLowerCase() === selfMailbox) {
     logger.log(`[intake] skipped self-addressed message ${msg.messageId}`);
     return { status: "skipped_self", ticket: null };
@@ -513,9 +521,11 @@ async function processEmailMessage(
         if (plan.accepted.length) {
           try {
             comment = await prisma.$transaction(async (tx) => {
+              await tx.$queryRaw`SELECT id FROM "Ticket" WHERE id = ${thread.id} FOR UPDATE`;
               const created = await tx.comment.create({
                 data: {
                   ticketId: thread.id,
+                  threadingMetadata: JSON.stringify(thread.threadMatch),
                   authorName: truncate(msg.requesterName || "", 120),
                   authorEmail: msg.requesterEmail,
                   isRequester: true,
@@ -538,6 +548,7 @@ async function processEmailMessage(
                 },
                 tx,
               );
+              await require('./emailResponseService').recordEmailResponse(thread, msg, created, tx);
               return created;
             });
           } catch (err) {
@@ -545,9 +556,12 @@ async function processEmailMessage(
             throw err;
           }
         } else {
-          comment = await prisma.comment.create({
+          comment = await prisma.$transaction(async tx => {
+          await tx.$queryRaw`SELECT id FROM "Ticket" WHERE id = ${thread.id} FOR UPDATE`;
+          const created = await tx.comment.create({
             data: {
               ticketId: thread.id,
+              threadingMetadata: JSON.stringify(thread.threadMatch),
               authorName: truncate(msg.requesterName || "", 120),
               authorEmail: msg.requesterEmail,
               isRequester: true,
@@ -556,6 +570,9 @@ async function processEmailMessage(
               internetMessageId: msg.internetMessageId,
               body: truncate(msg.body.trim() || "(empty message)", COMMENT_MAX),
             },
+          });
+          await require('./emailResponseService').recordEmailResponse(thread, msg, created, tx);
+          return created;
           });
         }
       } catch (err) {
@@ -622,18 +639,20 @@ async function processEmailMessage(
           },
         });
       } else {
-        current = await prisma.ticket.findUnique({
+        // A reply IS activity on the ticket, so the ticket's own timestamp
+        // moves with it. The Comment row alone leaves the Ticket untouched, and
+        // the queue's default "Recently updated" ordering (plus the reply marker
+        // derived from this timestamp) then never shows a threaded mail — which
+        // is exactly how a freshly forwarded request reads as a dropped one.
+        current = await prisma.ticket.update({
           where: { id: thread.id },
+          data: { updatedAt: new Date() },
           include: { assignedAgent: true, team: true },
         });
       }
 
-      await mailer.notifyReplyReceived(current, {
-        fromName: msg.requesterName
-          ? `${msg.requesterName} <${msg.requesterEmail}>`
-          : msg.requesterEmail,
-        reopened,
-      });
+      // The conversation/unread state is the in-app signal. Agents already
+      // receive the source email; do not send a second reply/reopen alert.
 
       logger.log(
         `[intake] ${reopened ? "reopened" : "reply appended to"} ${current.ticketNumber}`,
@@ -940,6 +959,23 @@ async function processEmailMessage(
 
 // The existing audit trail records intake outcomes without retaining subject,
 // body, recipient headers or provider tokens. Audit failure never drops mail.
+//
+// It DOES record who wrote in and which message the row is about. Without those
+// two fields a row says only "something happened at 16:19", and the operator
+// reading it cannot match the mail in front of them to the outcome the gate
+// recorded — which is the single question this ledger exists to answer ("did
+// this email get parsed, and where did it go?"). A skipped message is stored
+// nowhere else at all, so for those rows the sender is the only way back to the
+// message. Still no subject and no body: the sender and the RFC Message-ID are
+// facts the mailbox itself publishes on every message.
+function ledgerIdentity(payload = {}) {
+  const msg = normalizeMessage(payload);
+  return {
+    sender: msg.requesterEmail || null,
+    messageId: msg.internetMessageId || stripMessageId(msg.messageId) || null,
+  };
+}
+
 async function intakeEmailMessage(payload, options = {}) {
   const result = await processEmailMessage(payload, options);
   if (result.status !== 'duplicate') {
@@ -951,6 +987,7 @@ async function intakeEmailMessage(payload, options = {}) {
         description: result.status.replace(/_/g, ' '),
         metadata: {
           channel: options.channel || 'unknown', outcome: result.status,
+          ...ledgerIdentity(payload),
           reason: result.reason || result.assignment?.reason || null,
           greeting: result.assignment?.addressedDecision || null,
           group: result.assignment?.groupName || null,

@@ -37,7 +37,18 @@ async function deliver(row, send, client = prisma, now = new Date()) {
   if (!claimed.count) return false;
   const current = await client.notification.findUnique({ where: { id: row.id } });
   try {
-    await send(decrypt(current.emailPayload), current.emailKind);
+    const payload = decrypt(current.emailPayload);
+    const retiredReply = /^\[[^\]\r\n]+\] (New reply|Reopened): /.test(String(payload.subject || '')) &&
+      (String(payload.body || '').startsWith('The requester added a reply to this ticket.') ||
+       String(payload.body || '').startsWith('The requester replied on a resolved/closed ticket'));
+    if (retiredReply) {
+      await client.notification.updateMany({ where: { id: row.id, emailStatus: 'sending', emailLeaseUntil: leaseUntil }, data: {
+        emailStatus: 'expired', emailPayload: null, emailLeaseUntil: null, emailNextAttemptAt: null,
+        emailError: 'Duplicate reply alert discontinued',
+      } });
+      return false;
+    }
+    await send(payload, current.emailKind);
   } catch (error) {
     const terminal = current.emailAttempts >= MAX_ATTEMPTS;
     await client.notification.updateMany({ where: { id: row.id, emailStatus: 'sending', emailLeaseUntil: leaseUntil }, data: {

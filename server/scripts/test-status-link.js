@@ -42,7 +42,7 @@ async function startServer() {
   });
   for (let i = 0; i < 120; i++) {
     if (proc.exitCode !== null) throw new Error('server exited early');
-    try { if ((await fetch(`http://localhost:${process.env.PORT}/api/health`)).ok) return proc; } catch {}
+    try { if ((await fetch(`http://127.0.0.1:${process.env.PORT}/api/health`)).ok) return proc; } catch {}
     await new Promise((r) => setTimeout(r, 250));
   }
   throw new Error('server did not become ready');
@@ -91,7 +91,7 @@ async function stopServer(proc) {
   /* ---- C. the HTTP endpoint -------------------------------------------- */
   console.log('\n--- C. public endpoint ---');
   const server = await startServer();
-  const okRes = await fetch(`http://localhost:${process.env.PORT}/api/public/ticket-status?token=${encodeURIComponent(token)}`);
+  const okRes = await fetch(`http://127.0.0.1:${process.env.PORT}/api/public/ticket-status?token=${encodeURIComponent(token)}`);
   const okBody = await okRes.json();
   eq('C1 a valid token answers 200', okRes.status, 200);
   eq('C2 it returns the ticket number', okBody.ticketNumber, ticket.ticketNumber);
@@ -101,17 +101,17 @@ async function stopServer(proc) {
   check('C6 no agent fields are exposed',
     !('assignedAgentId' in okBody) && !('assignedAgent' in okBody));
   eq('C7 a forged token is 404',
-    (await fetch(`http://localhost:${process.env.PORT}/api/public/ticket-status?token=forged.token`)).status, 404);
+    (await fetch(`http://127.0.0.1:${process.env.PORT}/api/public/ticket-status?token=forged.token`)).status, 404);
   eq('C8 a missing token is 404',
-    (await fetch(`http://localhost:${process.env.PORT}/api/public/ticket-status`)).status, 404);
+    (await fetch(`http://127.0.0.1:${process.env.PORT}/api/public/ticket-status`)).status, 404);
   // Valid signature, wrong email → the ticket lookup must not match.
   const wrongEmail = statusLink.makeToken(ticket.id, 'someone-else@status.test');
   eq('C9 a token for a different requester is 404',
-    (await fetch(`http://localhost:${process.env.PORT}/api/public/ticket-status?token=${encodeURIComponent(wrongEmail)}`)).status, 404);
+    (await fetch(`http://127.0.0.1:${process.env.PORT}/api/public/ticket-status?token=${encodeURIComponent(wrongEmail)}`)).status, 404);
   // Valid signature, ticket id that does not exist.
   const wrongTicket = statusLink.makeToken(999999, 'requester@status.test');
   eq('C10 a token for an unknown ticket is 404',
-    (await fetch(`http://localhost:${process.env.PORT}/api/public/ticket-status?token=${encodeURIComponent(wrongTicket)}`)).status, 404);
+    (await fetch(`http://127.0.0.1:${process.env.PORT}/api/public/ticket-status?token=${encodeURIComponent(wrongTicket)}`)).status, 404);
 
   /* ---- D. no email carries a self-service link -------------------------- */
   console.log('\n--- D. requester emails are link-free ---');
@@ -128,10 +128,11 @@ async function stopServer(proc) {
 
   /* ---- E. rate limiting -------------------------------------------------- */
   console.log('\n--- E. rate limiting ---');
-  // 30 requests per window per IP; the loop above used ~12, so pad to the cap.
+  // Pin IPv4 above so localhost address-family selection cannot split the per-IP bucket.
+  // 30 requests per window per IP; the earlier requests also count toward the cap.
   let last;
   for (let i = 0; i < 30; i++) {
-    last = await fetch(`http://localhost:${process.env.PORT}/api/public/ticket-status?token=forged.${i}`);
+    last = await fetch(`http://127.0.0.1:${process.env.PORT}/api/public/ticket-status?token=forged.${i}`);
   }
   eq('E1 repeated probing is eventually 429', last.status, 429);
 

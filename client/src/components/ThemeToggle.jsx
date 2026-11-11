@@ -5,17 +5,19 @@ import { Icon, usePopover } from './ui.jsx';
 /**
  * Appearance control in the application header.
  *
- * The visible part is an indicator, not a switch: a sun, a track with the knob
- * on the side of the theme actually in effect, and a moon. Pressing it opens
- * the Appearance menu.
+ * One control, and it names the choice in force: the icon is the mode you are
+ * actually in, and the label says the same thing in words. It replaced a sun, a
+ * switch and a moon sitting side by side — three glyphs that between them
+ * communicated none of the three choices, and took a third of the header's
+ * width to do it.
  *
- * The menu carries three choices rather than two, so "follow the operating
+ * The menu still carries three options rather than two, so "follow the operating
  * system" stays reachable after an explicit pick — a plain toggle would make
  * that choice unrecoverable.
  */
 const OPTIONS = [
-  { value: 'light', label: 'Light mode', icon: 'sun' },
-  { value: 'dark', label: 'Dark mode', icon: 'moon' },
+  { value: 'light', label: 'Light', icon: 'sun' },
+  { value: 'dark', label: 'Dark', icon: 'moon' },
   { value: 'system', label: 'System', icon: 'monitor' },
 ];
 
@@ -34,26 +36,24 @@ export default function ThemeToggle() {
     close();
   }
 
-  const current = OPTIONS.find((o) => o.value === preference);
+  const current = OPTIONS.find((o) => o.value === preference) || OPTIONS[2];
 
   return (
     <div {...anchorProps}>
       <button
         type="button"
-        className={`theme-control ${resolved === 'dark' ? 'is-dark' : 'is-light'}`}
+        className="icon-btn"
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label={`Appearance: ${current?.label || preference}`}
+        aria-label={`Appearance: ${current.label}`}
         title={
           preference === 'system'
-            ? `Following the system (currently ${resolved})`
-            : `${current?.label}`
+            ? `Appearance: following the system (currently ${resolved})`
+            : `Appearance: ${current.label}`
         }
         onClick={toggle}
       >
-        <Icon name="sun" size={15} className="theme-glyph" />
-        <span className="theme-track" aria-hidden="true"><span className="theme-knob" /></span>
-        <Icon name="moon" size={15} className="theme-glyph" />
+        <Icon name={current.icon} size={17} />
       </button>
 
       {open && (

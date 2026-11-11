@@ -2,7 +2,7 @@ const prisma = require('../lib/prisma');
 const { STATES, OPEN_STATES } = require('../states');
 const slaService = require('../slaService');
 
-async function snapshot(client = prisma) {
+async function snapshot(client = prisma, actor = null) {
   const [rows, agents, teams, recent, sla] = await Promise.all([
     // One aggregate supplies all queue breakdowns from the same read instead
     // of eight independent counts competing with the ticket queue.
@@ -10,9 +10,10 @@ async function snapshot(client = prisma) {
     client.agent.findMany({ where: { isActive: true }, orderBy: [{ teamId: 'asc' }, { name: 'asc' }],
       select: { id: true, name: true, email: true, skillLevel: true, teamId: true, team: true } }),
     client.team.findMany({ orderBy: { key: 'asc' } }),
-    client.ticket.findMany({ orderBy: { createdAt: 'desc' }, take: 5, select: {
+    client.ticket.findMany({ orderBy: { createdAt: 'desc' }, take: 8, select: {
       id: true, ticketNumber: true, shortDescription: true, state: true, priority: true,
       category: true, requesterEmail: true, createdAt: true,
+      assignedAgent: { select: { id: true, name: true } },
     } }),
     slaService.dashboardSlaStats({ client }),
   ]);
@@ -43,6 +44,12 @@ async function snapshot(client = prisma) {
     ticketsPerAgent: agents.map(agent => ({ agentId: agent.id, name: agent.name, email: agent.email,
       assignmentGroup: agent.team?.name || null, skillLevel: agent.skillLevel, openTickets: perAgent.get(agent.id) || 0 })),
     recentlyCreated: recent, sla, generatedAt: new Date().toISOString(),
+    ...(actor ? { myWorkload: {
+      agentId: actor.id, available: actor.isAvailable,
+      openTickets: perAgent.get(actor.id) || 0,
+      newTickets: rows.filter(row => row.assignedAgentId === actor.id && row.state === 'NEW').reduce((sum, row) => sum + row._count._all, 0),
+      inProgressTickets: rows.filter(row => row.assignedAgentId === actor.id && row.state === 'IN_PROGRESS').reduce((sum, row) => sum + row._count._all, 0),
+    } } : {}),
   };
 }
 module.exports = { snapshot };

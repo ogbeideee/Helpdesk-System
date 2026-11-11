@@ -76,6 +76,7 @@ async function loadSlaPolicy(client = prisma) {
   }
   return {
     responseTargetMs: s.slaResponseTargetMinutes * 60000,
+    confirmationWindowDays: s.resolutionAutoCloseDays,
     resolutionTargetHours: {
       critical: s.slaResolutionHoursCritical,
       high: s.slaResolutionHoursHigh,
@@ -305,6 +306,10 @@ async function recordFirstResponse(
   ticket,
   { at, responderId = null, actor = 'system', client = prisma } = {}
 ) {
+  if (client === prisma) return prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT id FROM "Ticket" WHERE id = ${ticket.id} FOR UPDATE`;
+    return recordFirstResponse(ticket, { at, responderId, actor, client: tx });
+  });
   const cycle = await latestCycleFor(ticket.id, client);
   if (!cycle || cycle.firstResponseAt) return null;
   const at2 = at ? new Date(at) : new Date();
@@ -543,8 +548,10 @@ async function onPriorityChanged(
  *
  * `approaching` / `breached` are computed live from timestamps against the
  * calendar, so they stay correct without a sweeper. `remainingMs` is working
- * time from `now` to the target (null once answered / ended / breached-past).
- * `holidays` makes the remaining-time math holiday-exact; callers that don't
+ * time from `now` to the target (null once answered / ended / breached-past);
+ * `overdueMs` is the mirror image — working time past the target, non-null
+ * only for a breached clock. `holidays` makes the remaining-time math
+ * holiday-exact; callers that don't
  * supply one still get exact due/breach values. `calendar` overrides the
  * working calendar for that math — callers pass the configured calendar (see
  * loadSlaPolicy); the approved default is used when absent. Due instants and
@@ -591,6 +598,22 @@ function serializeSla(ticket, { now, holidays = [], calendar: cal = calendar.def
       now2 >= current.resolutionApproachAt
   );
 
+  // Working time PAST the target, for a clock that has breached. `remainingMs`
+  // is null the moment a clock breaches, so without this the UI could only say
+  // "overdue" — never how far over. It is measured to the same instant that
+  // decided the breach (the recorded response, the resolution, the cycle end,
+  // or now while the clock is still running), so the two always agree, and it
+  // is 0 for a breach that has only just happened. Working time, like every
+  // other SLA number here: an evening or a weekend spent overdue adds nothing.
+  const responseOverdueMs =
+    responseBreached && current.responseDueAt
+      ? cal.workingMsBetween(current.responseDueAt, responseEffective, holidays)
+      : null;
+  const resolutionOverdueMs =
+    resolutionBreached && current.resolutionDueAt
+      ? cal.workingMsBetween(current.resolutionDueAt, resolutionEffective, holidays)
+      : null;
+
   return {
     cycleNumber: current.cycleNumber,
     cycleStartedAt: current.startedAt,
@@ -599,6 +622,7 @@ function serializeSla(ticket, { now, holidays = [], calendar: cal = calendar.def
     response: {
       dueAt: current.responseDueAt,
       remainingMs: responseRemainingMs,
+      overdueMs: responseOverdueMs,
       approaching: responseApproaching,
       breached: responseBreached,
       responded: Boolean(current.firstResponseAt),
@@ -608,6 +632,7 @@ function serializeSla(ticket, { now, holidays = [], calendar: cal = calendar.def
     resolution: {
       dueAt: current.resolutionDueAt,
       remainingMs: resolutionRemainingMs,
+      overdueMs: resolutionOverdueMs,
       approaching: resolutionApproaching,
       breached: resolutionBreached,
     },

@@ -12,14 +12,12 @@ const { graphConfig } = require('./graph/config');
 const { smtpConfig, createSmtpTransport } = require('./smtp/config');
 const { decorateMail } = require('./email/notificationLayout');
 const {
-  toRecipient,
   recipientsOf,
   newTicketBroadcastMail,
   ticketAcknowledgementMail,
   assignmentMail,
   statusUpdateMail,
   agentReplyMail,
-  replyAlertMail,
 } = require('./email/outbound');
 // Resolving asks the requester to confirm; the mail carries the signed
 // confirmation link when a portal base URL is configured.
@@ -70,11 +68,14 @@ function renderDevNotification({ kind, to, mail }) {
 }
 
 /**
- * Transport selection, in order: Microsoft Graph, then SMTP, then the console
- * fallback. Only one is ever live, and every one of them speaks the same small
+ * Transport selection: explicit Power Automate opt-in, Graph, SMTP, console.
+ * Only one is ever live, and every one of them speaks the same small
  * interface, so no caller (and no test) changes when the choice changes.
  */
 function getDefaultTransport() {
+  if (require('./powerAutomate/config').readConfig().outbound) {
+    return require('./powerAutomate/gateway').createTransport();
+  }
   if (graphConfig.enabled) {
     // Lazy require so the Graph SDK/MSAL never loads when integration is off.
     const { graphOps } = require('./graph/graphClient');
@@ -86,12 +87,12 @@ function getDefaultTransport() {
 
 /**
  * Create a mailer bound to a specific transport + broadcast-target policy.
- * Called with no arguments it resolves Graph-or-console automatically.
+ * Called with no arguments it selects the configured transport automatically.
  */
 function createMailer(options = {}) {
   const logger = options.logger || console;
   const transport = options.transport || getDefaultTransport();
-  const durable = options.durable ?? (!options.transport && (graphConfig.enabled || smtpConfig.enabled));
+  const durable = options.durable ?? (!options.transport && (require('./powerAutomate/config').readConfig().outbound || graphConfig.enabled || smtpConfig.enabled));
   const delivery = () => require('./services/emailDeliveryService');
   const deliveryClient = options.client;
   let retryTimer = null;
@@ -174,28 +175,9 @@ function createMailer(options = {}) {
     return sendMailSafe(mail);
   }
 
-  /** Alert to the assigned agent (or DL fallback) on requester replies/reopens. */
-  async function notifyReplyReceived(ticket, context = {}) {
-    const targets = [];
-    if (ticket.assignedAgent && ticket.assignedAgent.email) {
-      targets.push(ticket.assignedAgent.email);
-    }
-    if (!targets.length) {
-      // Transport-neutral: whichever transport is live owns the team address, so
-      // the reply alert still lands somewhere when the assignee has none.
-      const dl =
-        typeof transport.broadcastTarget === 'function'
-          ? transport.broadcastTarget()
-          : graphConfig.broadcastDl;
-      if (dl) targets.push(dl);
-    }
-    if (!targets.length) return false;
-    const { subject, body } = replyAlertMail(ticket, {
-      fromName: context.fromName,
-      reopened: context.reopened,
-    });
-    return sendMailSafe({ subject, body, toRecipients: targets.map(toRecipient) });
-  }
+  // Retired entry point retained for older integrations. Never enqueue or send
+  // duplicate reply/reopen alerts, including the former DL fallback.
+  async function notifyReplyReceived() { return false; }
 
   return {
     transport,

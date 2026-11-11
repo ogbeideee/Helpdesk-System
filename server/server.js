@@ -14,6 +14,19 @@ app.set('trust proxy', 1);
 // Security headers on every response (nosniff, no framing, referrer policy).
 // See src/securityHeaders.js for what is set and what is deliberately not.
 app.use(require('./src/securityHeaders').securityHeaders());
+// Protect even legacy route-local catches: no 5xx JSON may expose a driver
+// message. Log only route/status here; raw bodies and query strings stay out.
+app.use((req, res, next) => {
+  const json = res.json;
+  res.json = function safeJson(value) {
+    if (res.statusCode >= 500 && (process.env.NODE_ENV === 'production' || process.env.ERROR_DETAIL !== '1')) {
+      console.error(`[api-failure] ${req.method} ${req.path} status=${res.statusCode}`);
+      value = { error: 'The request could not be completed. Please try again.' };
+    }
+    return json.call(this, value);
+  };
+  next();
+});
 // CORS: in production the SPA is served by this process, so cross-origin
 // browser calls are not expected — the wildcard is switched off unless
 // CORS_ORIGINS names real origins. Development keeps the permissive shape.
@@ -23,6 +36,9 @@ if (corsOptions) app.use(cors(corsOptions));
 // no compression by default, so a first visit previously downloaded the bundle
 // uncompressed.
 app.use(compression());
+// Integration-specific credential checks run before the large JSON decoder.
+app.use('/api/integrations/power-automate', require('./routes/powerAutomate').buildRouter());
+app.use('/api/weekly-reports', express.json({limit:'1mb'}));
 app.use(express.json());
 
 // Public routes (auth endpoints + health + the requester status lookup + the
@@ -40,6 +56,7 @@ app.use('/api/dev', require('./routes/dev'));
 // Authenticated API
 app.use('/api/tickets', require('./src/authMiddleware').requireAuth, require('./routes/tickets'));
 app.use('/api/stats', require('./src/authMiddleware').requireAuth, require('./routes/stats'));
+app.use('/api/weekly-reports', require('./src/authMiddleware').requireAuth, require('./routes/weeklyReports'));
 app.use('/api/dashboard', require('./src/authMiddleware').requireAuth, require('./routes/dashboard'));
 app.use('/api/agents', require('./routes/agents'));
 app.use('/api/routing', require('./routes/routing'));
@@ -162,6 +179,16 @@ app.get('/api/admin/diagnostics', require('./src/authMiddleware').requireAdmin, 
     ok: true,
     // Unchanged for existing consumers.
     graph: graphConfig.enabled ? 'enabled' : 'disabled',
+    powerAutomate: (() => {
+      const cfg = require('./src/powerAutomate/config').readConfig();
+      return {
+        intakeConfigured: cfg.intakeKey.length >= 32,
+        outboundEnabled: cfg.outbound,
+        gatewayUrlConfigured: Boolean(cfg.flowUrl),
+        gatewayKeyConfigured: cfg.flowKey.length >= 32,
+        mailboxConfigured: Boolean(process.env.POWER_AUTOMATE_MAILBOX),
+      };
+    })(),
     time: new Date().toISOString(),
     integration: {
       graphEnabled: graphConfig.enabled,

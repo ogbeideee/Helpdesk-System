@@ -74,11 +74,13 @@
   --t-fast:        120ms cubic-bezier(0.4, 0, 0.2, 1);
   --t:             160ms cubic-bezier(0.4, 0, 0.2, 1);
 
-  /* Focus */
-  --ring:          0 0 0 2px var(--bg), 0 0 0 4px rgba(109, 139, 255, 0.45);
+  /* Focus — 4px halo: 2px of background to lift the element off the ring, then
+     2px of accent. The accent has to clear 3:1 against BOTH --bg and --surface
+     (WCAG 2.1 1.4.11, non-text contrast); at 0.45 it measured 2.2:1 against the
+     page background, which is a ring you can lose on a dim screen. */
+  --ring:          0 0 0 2px var(--bg), 0 0 0 4px rgba(109, 139, 255, 0.75);
 
   /* Foreground on a filled brand/solid surface */
-  --on-primary:    #ffffff;
   --on-solid:      #0a0d14;
 
   /* Violet accent — senior skill, admin role, assignment events */
@@ -132,16 +134,17 @@
 
   --success:       #146f42;   /* 5.5:1 on --success-soft */
   --success-soft:  rgba(23, 134, 79, 0.10);
-  --warning:       #a2650a;
+  --warning:       #8f5c05;   /* 4.9:1 on --warning-soft, 5.7:1 on --surface */
   --warning-soft:  rgba(162, 101, 10, 0.11);
   --danger:        #c0392f;
   --danger-soft:   rgba(192, 57, 47, 0.10);
   --info:          #1f7ea0;
   --info-soft:     rgba(31, 126, 160, 0.10);
 
-  --ring:          0 0 0 2px var(--bg), 0 0 0 4px rgba(59, 91, 219, 0.40);
+  /* Focus — see the note on the dark theme's ring; the same 3:1 floor applies,
+     and a dark accent on a near-white page needs more alpha to reach it. */
+  --ring:          0 0 0 2px var(--bg), 0 0 0 4px rgba(59, 91, 219, 0.80);
 
-  --on-primary:    #ffffff;
   --on-solid:      #ffffff;
 
   --violet:        #6544c7;
@@ -338,6 +341,39 @@ body {
   color: var(--muted-2);
 }
 
+/* ---- collapsible navigation sections ------------------------------- */
+/* Operations has no toggle — it is where the work is, and it must not be
+   possible to hide it. Administration folds because eight items already force
+   the rail to scroll; the everyday destinations stay visible regardless. */
+.side-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 10px 4px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--muted-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: color var(--t);
+}
+.side-group-toggle:hover { color: var(--text-dim); }
+.side-group-toggle .side-group-label { flex: 1; padding: 0; }
+.side-group-chevron { display: inline-flex; transition: transform var(--t); }
+.side-group-chevron:not(.is-open) { transform: rotate(-90deg); }
+/* Closed, but holding the page you are on: without this the rail reads as
+   having nothing selected at all. */
+.side-group-active {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+.side-group-items[hidden] { display: none; }
+
 .nav-item {
   display: flex;
   align-items: center;
@@ -379,7 +415,7 @@ body {
   padding: 0 5px;
   border-radius: 9px;
   background: var(--danger);
-  color: var(--on-primary);
+  color: var(--on-solid);
   font-size: 10.5px;
   font-weight: 600;
   line-height: 18px;
@@ -643,41 +679,82 @@ body {
   border: 1px solid transparent;
   letter-spacing: 0.01em;
 }
-.pill-state-new         { background: var(--primary-soft); color: var(--primary-2); }
-.pill-state-in_progress { background: var(--warning-soft); color: var(--warning); }
-.pill-state-resolved    { background: var(--success-soft); color: var(--success); }
-.pill-state-closed      { background: var(--neutral-soft); color: var(--text-dim); }
+/* ==================================================================
+   Exception hierarchy
+   A queue row carries four independent signals — lifecycle, priority,
+   SLA and ownership — and they used to share one palette, so a
+   perfectly healthy "In Progress / Moderate / On time" row shouted as
+   loudly as a breached one. Exactly one tier now owns saturated
+   colour: the exceptions an agent has to act on. Lifecycle badges use
+   restrained blue / violet / green / grey tints; routine priorities and
+   healthy SLA clocks stay neutral. The exceptions are:
+     · an SLA clock that is already overdue      (.sla-mini.is-bad)
+     · unread mail on the ticket                 (.next-response.is-attention)
+     · work with no owner                        (.unassigned-tag)
+   Amber is deliberately reserved for two things only — High priority
+   and an approaching breach — so it still means "soon".
+   ================================================================== */
+
+.pill-state-new         { background: var(--primary-soft);  color: var(--primary-2); }
+.pill-state-in_progress { background: var(--violet-soft);   color: var(--violet); }
+.pill-state-resolved    { background: var(--success-soft);  color: var(--success); }
+.pill-state-closed      { background: var(--neutral-soft);  color: var(--muted); }
 
 .prio-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+/* Priority keeps its colour only where it is a decision: High and Critical
+   say "do this before the rest". Moderate and Low are the norm and go
+   neutral, so the two that matter stand out against them. */
 .pill-priority-low      { background: var(--neutral-soft); color: var(--text-dim); }
-.pill-priority-moderate { background: var(--primary-soft); color: var(--primary-2); }
+.pill-priority-moderate { background: var(--surface-2);    color: var(--text-dim); }
 .pill-priority-high     { background: var(--warning-soft); color: var(--warning); }
-.pill-priority-critical { background: var(--danger-soft); color: var(--danger); }
+.pill-priority-critical { background: var(--danger-soft);  color: var(--danger); }
 
 .pill-overdue { background: var(--danger-soft); color: var(--danger); }
 .pill-sla     { background: var(--success-soft); color: var(--success); }
 .pill-sla-warn { background: var(--warning-soft); color: var(--warning); }
 
-/* Queue SLA cell — one compact chip per clock ("R" response, "Res"
-   resolution); the tone carries the status, the tooltip carries the words. */
-.sla-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+/* Queue SLA cell — one chip per clock, each naming the clock in full
+   ("Response" / "Resolution") beside what it is doing ("Due in 45m",
+   "Overdue · 2h"). The tone carries the status, the tooltip carries the
+   long-form wording; nothing here abbreviates. */
+.sla-cell { display: flex; flex-direction: column; align-items: stretch; gap: 5px; }
 .sla-mini {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
+  display: grid;
+  grid-template-columns: 62px max-content;
+  align-items: baseline;
+  gap: 10px;
   max-width: 100%;
   font-size: 11px;
   line-height: 1.5;
-  padding: 0 7px;
-  border-radius: 999px;
-  background: var(--neutral-soft);
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--text-dim);
   white-space: nowrap;
 }
-.sla-mini-key { font-weight: 700; font-size: 10px; opacity: 0.75; }
-.sla-mini.is-ok   { background: var(--success-soft); color: var(--success); }
-.sla-mini.is-warn { background: var(--warning-soft); color: var(--warning); }
-.sla-mini.is-bad  { background: var(--danger-soft);  color: var(--danger); }
+/* The clock name and its value share the chip's own colour on purpose. The
+   tone already carries the status, and the `opacity: 0.7` that used to separate
+   them here silently cut the key to 3.5:1 — under the AA floor for 10px text,
+   and invisible in a screenshot. Weight and size do the separating instead. */
+.sla-mini-key { font-size: 11px; font-weight: 400; color: var(--text-dim); }
+.sla-mini-val { position: relative; padding-left: 11px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.sla-mini.is-bad .sla-mini-val::before,
+.sla-mini.is-warn .sla-mini-val::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.55em;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+/* Aligned text pairs replace pills. Only exceptional values and their dots
+   change tone; clock labels remain neutral in both themes. */
+.sla-mini.is-ok   { background: transparent; color: var(--text-dim); }
+.sla-mini.is-warn { background: transparent; color: var(--warning); }
+/* A missed or overdue clock keeps its explicit wording as well as its tone. */
+.sla-mini.is-bad  { background: transparent; color: var(--danger); font-weight: 700; }
 
 .chip {
   display: inline-flex;
@@ -729,9 +806,33 @@ body {
 .chip-confirm.is-soon    { background: var(--warning-soft); color: var(--warning); }
 .chip-confirm.is-overdue { background: var(--danger-soft);  color: var(--danger); }
 
+/* The conversation marker — what the newest message on a ticket was, and which
+   side wrote it. A threaded reply creates no ticket of its own, so this is the
+   only thing that keeps it visible on a row that was already in the queue.
+   Sits with the state pill for the same reason the confirmation chip does: it
+   is an attention signal, not a property of the ticket. */
+.chip-reply.is-waiting  { background: var(--warning-soft); color: var(--warning);  border-color: transparent; }
+.chip-reply.is-other    { background: var(--info-soft);    color: var(--info);     border-color: transparent; }
+.chip-reply.is-answered { background: var(--neutral-soft); color: var(--text-dim); border-color: transparent; }
+
 /* The queue's status cell stacks the state pill over the confirmation chip,
    the same one-column shape the SLA cell uses. */
 .status-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+/* The lifecycle status owns this cell. The badge and the confirmation chip
+   share one line because the chip REFINES the status (a RESOLVED ticket
+   waiting on its requester), rather than competing with it. */
+.status-primary { display: inline-flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+/* "Whose turn is it" — the second reading of the cell, deliberately quieter
+   than the badge above it. "Next response: us" is the one that is work, so it
+   lifts a step; unread mail outranks both. */
+.next-response {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.next-response.is-owed      { color: var(--text-dim); }
+.next-response.is-attention { color: var(--primary); font-weight: 600; }
 
 .ticket-no {
   font-family: var(--font-mono);
@@ -833,7 +934,7 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
   font-weight: 500;
 }
 .field-label em { color: var(--danger); font-style: normal; }
-.field-hint { display: block; font-size: 11.5px; color: var(--muted); margin-top: 4px; }
+.field-hint { display: block; font-size: 12px; color: var(--muted); margin-top: 4px; }
 
 .form-card .field:last-of-type { margin-bottom: 4px; }
 .form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
@@ -1273,7 +1374,7 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
   padding: 0 5px;
   border-radius: 9px;
   background: var(--danger);
-  color: var(--on-primary);
+  color: var(--on-solid);
   font-size: 10.5px;
   font-weight: 600;
   line-height: 18px;
@@ -1331,7 +1432,7 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
   padding: 0 4px;
   border-radius: 9px;
   background: var(--danger);
-  color: var(--on-primary);
+  color: var(--on-solid);
   font-size: 10px;
   line-height: 16px;
   text-align: center;
@@ -1765,6 +1866,55 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
 .queue-controls .segmented { flex: 1 1 auto; max-width: 560px; }
 .queue-controls .segment { flex: 1 1 auto; justify-content: center; }
 
+/* ---- quick views -------------------------------------------------- */
+/* Four questions, four buttons. Deliberately a band of their own rather than
+   another control inside the strip below: they are a shortcut PAST the
+   filters, and exactly one of them can be the answer at a time. */
+.quick-views {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.quick-view {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--t), background var(--t), border-color var(--t);
+}
+.quick-view:hover { color: var(--text); background: var(--surface-2); border-color: var(--border-strong); }
+.quick-view.is-active {
+  background: var(--primary-soft);
+  border-color: var(--primary-line);
+  color: var(--primary);
+  font-weight: 600;
+}
+/* The count is the second thing read, after the question itself — quiet when
+   the view is idle, filled once it is the one you are looking at. */
+.quick-view-count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+}
+.quick-view:hover .quick-view-count { background: var(--surface-3); color: var(--text-dim); }
+.quick-view.is-active .quick-view-count { background: var(--primary); color: var(--on-solid); }
+
 .search-field {
   position: relative;
   display: flex;
@@ -1850,6 +2000,17 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
 .segment-in_progress.is-active .segment-dot { background: var(--warning);   opacity: 1; }
 .segment-resolved.is-active .segment-dot    { background: var(--success);   opacity: 1; }
 .segment-closed.is-active .segment-dot      { background: var(--muted);     opacity: 1; }
+/* How much clicking this tab would show. Quiet enough that four tabs do not
+   become eight competing numbers, but present, so the queue is understandable
+   before a single row is read. */
+.segment-count {
+  margin-left: 1px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.segment:hover .segment-count { color: var(--text-dim); }
+.segment.is-active .segment-count { color: var(--text-dim); }
 
 .filter-more { position: relative; }
 .filter-more.is-on { color: var(--text); border-color: var(--border-strong); }
@@ -1859,11 +2020,43 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
   padding: 0 4px;
   border-radius: 8px;
   background: var(--primary);
-  color: var(--on-primary);
+  color: var(--on-solid);
   font-size: 10px;
   font-weight: 600;
   line-height: 16px;
 }
+
+/* ---- active filter chips ------------------------------------------ */
+/* One chip per filter the collapsed panel is holding. Each removes itself, so
+   a filter can be undone without opening the panel that set it — and the panel
+   stays collapsed, which is the point. */
+.filter-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--t), background var(--t), border-color var(--t);
+}
+.filter-chip:hover { border-color: var(--border-strong); background: var(--surface-3); color: var(--text); }
+.filter-chip-label { color: var(--muted); font-size: 12px; }
+.filter-chip-value { font-weight: 600; }
+.filter-chip-x { color: var(--muted); font-size: 13px; line-height: 1; }
+.filter-chip:hover .filter-chip-x { color: var(--danger); }
 
 .filter-row {
   display: flex;
@@ -1917,7 +2110,14 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
   border-radius: var(--radius-lg);
   overflow-x: auto;
 }
-.queue-table { width: 100%; border-collapse: collapse; }
+/* Fixed layout, so the column widths above are a real budget rather than a
+   hint. Auto layout sizes a column to its content, which is why a long subject
+   used to push the table wider and then truncate anyway at its own 360px cap.
+   Here the fixed columns take exactly what they ask for and the subject — the
+   one column with no width of its own — takes everything left over, so a wider
+   screen makes the subject longer instead of padding the other columns. */
+.queue-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.queue-table .cell-subject { max-width: none; }
 
 .queue-table thead th {
   padding: 10px 14px;
@@ -1947,16 +2147,58 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
 .th-sort.is-active { color: var(--text); }
 .sort-arrow { opacity: 0.8; }
 
+/* ---- row states -----------------------------------------------------
+   Hover, keyboard focus and checkbox selection used to be three near-identical
+   tints, so a shaded row meant nothing in particular — you could not tell a
+   row you were passing over from one you had deliberately ticked. Each state
+   now has its own SHAPE as well as its own tone:
+     hover     a tint, nothing else — transient
+     focus     a ring — unmistakable wherever the pointer happens to be
+     selected  a tint AND a bar down the leading edge — a state you leave set
+   The bar is drawn on the first cell rather than the <tr>: a box-shadow on a
+   table row does not paint reliably across browsers, and a collapsed border
+   would be shared with the row above. */
 .queue-table tbody tr {
   cursor: pointer;
   transition: background var(--t-fast);
 }
-.queue-table tbody tr + tr { border-top: 1px solid var(--border-soft); }
+.queue-table tbody tr + tr { border-top: 1px solid var(--border); }
+/* Separate identity, workflow, SLA and ownership without boxing every cell.
+   Checkbox/ID/subject and status/priority remain visually grouped. */
+.queue-table :is(th, td):nth-child(4),
+.queue-table :is(th, td):nth-child(n+6):not(:last-child) {
+  border-left: 1px solid var(--border-soft);
+}
+/* Bounded content cannot paint over a divider or into the next column. */
+.queue-table .cell-agent { display: flex; min-width: 0; }
+.queue-table .cell-agent .avatar { flex-shrink: 0; }
+.queue-table .cell-agent-name { min-width: 0; }
+.queue-table .group-tag {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.queue-table .sla-mini.is-ok { background: transparent; }
+.queue-table .sla-mini { max-width: 100%; white-space: nowrap; }
 .queue-table tbody tr:hover { background: var(--surface-hover); }
 .queue-table tbody tr:focus-visible {
-  outline: none;
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
   background: var(--surface-hover);
-  box-shadow: inset 2px 0 0 var(--primary);
+}
+.queue-table tbody tr:has(.select-cell input:checked) { background: var(--primary-soft); }
+.queue-table tbody tr:has(.select-cell input:checked) .select-cell {
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+/* Focus on an already-selected row still has to be visible, so the ring
+   changes colour rather than disappearing into the selection tint. */
+.queue-table tbody tr:has(.select-cell input:checked):focus-visible {
+  outline-color: var(--primary-2);
 }
 .queue-table td {
   padding: 13px 14px;
@@ -1964,15 +2206,29 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
   font-size: 13px;
   color: var(--text-dim);
 }
+/* Compact density: fewer columns (see queueColumns) and tighter rows, so more
+   tickets fit on the screen an agent works in all day. */
+.queue-table.is-compact td { padding: 8px 14px; }
+.density-toggle { color: var(--muted); }
+.density-toggle.is-on { color: var(--text); background: var(--surface-2); }
 .queue-table .select-cell {
   width: 38px;
   padding-right: 0;
   text-align: center;
 }
 .queue-table .select-cell input { cursor: pointer; }
+/* The cell is the target, not just the box inside it — a 13px checkbox is
+   below the 24×24 minimum for a touch target (WCAG 2.5.8), and the cell around
+   it was explicitly non-clickable. */
+.queue-table .select-cell { cursor: pointer; }
 .queue-table tbody tr:has(.select-cell input:checked) { background: var(--primary-soft); }
 
-.queue-table .cell-main { max-width: 1px; width: 42%; }
+/* The one unsized column, and therefore the flexible one: under
+   `table-layout: fixed` it takes whatever the fixed columns leave. The
+   `max-width: 1px` that used to be here was the auto-layout trick for forcing
+   a cell to shrink-to-fit — fixed layout achieves the same thing, and would
+   take that declaration literally and collapse the column to nothing. */
+.queue-table .cell-main { width: auto; max-width: none; }
 .cell-subject {
   display: block;
   font-size: 13.5px;
@@ -2009,10 +2265,19 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
   font-size: 11.5px;
   white-space: nowrap;
 }
+/* An unowned ticket is an exception, so it is a badge rather than the muted
+   italic it used to be — which was the quietest thing in the row and the one
+   thing an agent is meant to pick up. The dashed outline keeps it distinct
+   from the filled amber pills it would otherwise be confused with. */
 .unassigned-tag {
-  color: var(--muted);
-  font-size: 12.5px;
-  font-style: italic;
+  display: inline-block;
+  padding: 1px 8px;
+  border: 1px dashed var(--warning);
+  border-radius: var(--radius-pill);
+  color: var(--warning);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 .cell-age {
   text-align: right;
@@ -2110,7 +2375,7 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
 .insp-section { padding: 16px 16px 14px; }
 .insp-section + .insp-section { border-top: 1px solid var(--border-soft); }
 .insp-title {
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.10em;
@@ -2192,6 +2457,33 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
 
 .activity-card { padding: 18px 20px 20px; }
 
+.conversation-tools { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 12px 18px; }
+.conversation-tools .segmented { width: auto; }
+.conversation-history { margin: 10px 0; overflow-wrap: anywhere; min-width: 0; }
+.conversation-history summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 6px 0; }
+.mail-trail-message { border-top: 1px solid var(--border); margin-top: 14px; padding-top: 12px; min-width: 0; }
+.mail-trail-header { margin: 0 0 14px; padding: 12px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 13px; overflow-wrap: anywhere; }
+.mail-trail-header > div { display: flex; gap: 8px; align-items: baseline; }
+.mail-trail-header dt { flex: 0 0 60px; font-weight: 600; }
+.mail-trail-header dd { margin: 0; min-width: 0; }
+.mail-trail-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.conversation-history pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; padding: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+.conversation-unread { border-top: 2px solid var(--primary); color: var(--primary); padding: 10px 0; font-weight: 600; }
+.conversation-caption { font-size: 11.5px; color: var(--muted); margin: 4px 0 8px; overflow-wrap: anywhere; }
+.conversation-date { display: flex; align-items: center; gap: 12px; color: var(--text-dim); font-size: 12px; font-weight: 500; padding: 10px 0 6px; }
+.conversation-date::after { content: ''; flex: 1; height: 1px; background: var(--border-soft); }
+.message-ordinal { color: var(--muted); font-size: 10.5px; }
+.original-request-tag { background: var(--primary-soft); color: var(--primary); border-color: var(--primary-line); }
+.quoted-history { margin-top: 10px; min-width: 0; overflow-wrap: anywhere; }
+.quoted-history > summary { cursor: pointer; font-size: 11.5px; color: var(--text-dim); }
+.quoted-history[open] { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-soft); }
+.quoted-history pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.quoted-reference { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.quoted-reference .btn-link { align-self: flex-start; text-align: left; white-space: normal; }
+.quoted-message-heading { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 500; margin-bottom: 10px; }
+.quoted-message-heading > span { font-size: 11px; font-weight: 400; color: var(--muted); }
+.conversation-gap { width: 100%; margin: 4px 0 8px; white-space: normal; }
+.ticket-workspace .ev.is-message:focus { outline: 2px solid var(--primary-line); outline-offset: 3px; border-radius: var(--radius); }
 .activity-rail {
   position: relative;
   display: flex;
@@ -2277,6 +2569,130 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
 .ev-resolution .ev-bubble.is-resolution { background: var(--success-soft); }
 .ev-sla-warn   .ev-mark { color: var(--warning); background: var(--warning-soft); border-color: transparent; }
 .ev-sla-breach .ev-mark { color: var(--danger);  background: var(--danger-soft);  border-color: transparent; }
+
+/* Ticket workspace: existing theme tokens, isolated from the shell and other
+   screens. Conversation has visual priority; operational controls stay in one
+   inspector. Geometry follows the existing breakpoint ladder below. */
+.ticket-workspace .detail-head {
+  padding: 20px 24px 0;
+  margin: 0;
+}
+.ticket-back-icon { transform: rotate(180deg); }
+.ticket-workspace > .crumb { margin-bottom: 4px; }
+.ticket-workspace .detail-layout { margin-top: 12px; }
+.ticket-workspace .ticket-main { gap: 0; }
+.ticket-workspace .ticket-main:has(.ticket-composer) .activity-card { border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+.ticket-workspace .ticket-main .ticket-composer { border-radius: 0 0 var(--radius-lg) var(--radius-lg); margin-top: -1px; }
+.ticket-subject-line { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+.ticket-subject-line .detail-title { flex: 1 1 280px; margin: 0; }
+.ticket-request-meta { display: flex; gap: 8px 14px; flex-wrap: wrap; color: var(--muted); font-size: 12px; margin-top: 10px; }
+.ticket-request-meta > span + span { border-left: 1px solid var(--border); padding-left: 14px; }
+.ticket-context { display: flex; gap: 6px; flex-wrap: wrap; }
+.ticket-context:not(:empty) { margin-top: 10px; }
+.ticket-workspace .inspector { top: 90px; max-height: calc(100dvh - 110px); overflow-y: auto; }
+.mobile-ticket-summary { display: none; }
+.property-save-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 0; border-top: 1px solid var(--border); }
+.property-save-bar > span { width: 100%; }
+.inline-load-error { color: var(--text-dim); font-size: 13px; line-height: 1.6; }
+.inline-load-error .btn-link { margin-left: 8px; }
+.draft-status { color: var(--text-dim); }
+.ticket-composer.is-internal { border-left: 3px solid var(--warning); }
+.ticket-workspace .ticket-request-meta,
+.ticket-workspace .conversation-caption,
+.ticket-workspace .insp-sub { font-size: 12px; }
+.ticket-workspace .ev-time,
+.ticket-workspace .message-ordinal { font-size: 12px; }
+.modal:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+.ticket-workspace .insp-section { padding: 14px 18px; }
+.ticket-workspace .insp-title { margin-bottom: 8px; }
+.ticket-workspace .insp-row { grid-template-columns: 82px minmax(0, 1fr); padding: 5px 0; }
+.ticket-workspace .insp-row.is-stacked { grid-template-columns: 1fr; }
+.ticket-workspace .insp-label { font-size: 12px; }
+.ticket-workspace .insp-value { font-size: 12.5px; }
+.ticket-workspace .insp-inline { flex-wrap: nowrap; }
+.ticket-workspace .insp-inline > .insp-select { flex: 1; min-width: 0; }
+.ticket-workspace .insp-select { padding: 4px 8px; }
+.ticket-additional-details { margin-top: 8px; }
+.ticket-additional-details > summary,
+.message-details > summary { cursor: pointer; color: var(--muted); font-size: 11.5px; }
+.message-details { margin-top: 10px; }
+.message-details[open] { padding-top: 8px; border-top: 1px solid var(--border-soft); }
+.ticket-sla-clock { padding: 10px 0; display: flex; flex-direction: column; gap: 5px; }
+.ticket-sla-caption { font-size: 10.5px; color: var(--muted); }
+.ticket-workspace .insp-title .ticket-sla-caption { float: right; font-weight: 400; }
+.ticket-sla-clock + .ticket-sla-clock { border-top: 1px solid var(--border-soft); }
+.ticket-sla-line { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 12px; }
+.ticket-sla-line strong { font-weight: 500; text-align: right; color: var(--text-dim); }
+.ticket-sla-clock.is-bad strong { color: var(--danger); }
+.ticket-sla-clock.is-warn strong { color: var(--warning); }
+.ticket-sla-clock.is-muted strong { color: var(--muted); }
+.ticket-workspace .detail-head-main { margin-top: 12px; }
+.ticket-workspace .detail-head .pill-row { gap: 8px; }
+.ticket-workspace .activity-card { padding: 0; overflow: hidden; }
+.ticket-workspace .activity-card > .card-head { padding: 18px 20px 0; margin-bottom: 0; }
+.ticket-workspace .conversation-tools {
+  padding: 0 24px;
+  margin-top: 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.ticket-workspace .conversation-tools .segmented { padding: 0; background: transparent; border: 0; border-radius: 0; gap: 18px; }
+.ticket-workspace .conversation-tools .segment { padding: 12px 0; border-radius: 0; border-bottom: 2px solid transparent; }
+.ticket-workspace .conversation-tools .segment.is-active { background: transparent; color: var(--primary); border-bottom-color: var(--primary); }
+.ticket-workspace .conversation-tools .segment:hover { background: transparent; }
+.ticket-workspace .conversation-tools > .btn { margin-left: auto; }
+.ticket-workspace .activity-rail { padding: 12px 24px 20px; gap: 6px; }
+.ticket-workspace .activity-rail::before { display: none; }
+.ticket-workspace .ev { gap: 12px; }
+.ticket-workspace .ev.is-message { grid-template-columns: 32px minmax(0, 1fr); }
+.ticket-workspace .ev.is-message .ev-mark { width: 32px; height: 32px; }
+.ticket-workspace .ev.is-message .ev-body {
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+.ticket-workspace .ev.is-message .ev-title { font-weight: 600; }
+.ticket-workspace .ev.is-message .ev-bubble {
+  background: transparent;
+  padding: 0;
+  margin-top: 8px;
+  color: var(--text);
+}
+.ticket-workspace .ev-internal.is-message .ev-body {
+  background: var(--warning-soft);
+  border-left: 3px solid var(--warning);
+}
+.ticket-workspace .conversation-unread {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 0;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: center;
+}
+.ticket-workspace .conversation-unread::before,
+.ticket-workspace .conversation-unread::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--primary-line);
+}
+.ticket-workspace .insp-title {
+  color: var(--text);
+  font-size: 13px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.ticket-workspace .insp-row + .insp-row { border-top: 1px solid var(--border-soft); }
+.ticket-workspace .ticket-primary-actions .detail-actions { justify-content: stretch; }
+.ticket-workspace .ticket-primary-actions .btn { flex: 1 1 auto; justify-content: center; }
+.ticket-workspace .ticket-primary-actions .btn-primary { order: -1; flex-basis: 100%; }
+.ticket-workspace .ticket-composer { padding: 16px 24px; }
+.ticket-workspace .ticket-composer > .card-head { margin-bottom: 14px; }
+.ticket-workspace .composer { background: var(--surface-2); }
+.ticket-workspace .composer:focus-within { border-color: var(--primary); }
+.ticket-workspace .composer-toggle button.is-active { color: var(--primary); background: var(--primary-soft); }
 
 /* ---- responsive --------------------------------------------------- */
 
@@ -2616,19 +3032,41 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
   transition: background var(--t), color var(--t), border-color var(--t);
 }
 .icon-btn:hover { background: var(--surface-2); color: var(--text); border-color: var(--border-soft); }
+/* The badge reports unread work, so it keeps the accent — but at the size of a
+   badge, not a headline. It used to be 9.5px/700 in a solid primary pill at
+   the corner of the icon, which made a number the loudest thing in the header.
+   The number is now truthful as well: it is counted over every notification
+   rather than over the 50 the feed happens to return. */
 .icon-btn-badge {
   position: absolute;
-  top: 1px; right: 0;
-  min-width: 15px;
-  padding: 0 4px;
-  border-radius: 8px;
+  top: 2px; right: 1px;
+  min-width: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
   background: var(--primary);
-  color: var(--on-primary);
-  font-size: 9.5px;
-  font-weight: 700;
-  line-height: 15px;
+  color: var(--on-solid);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 14px;
   text-align: center;
+  opacity: 0.9;
 }
+
+/* Clearing read state, per item and in bulk. A link-shaped control, not a
+   button competing with the notification itself. */
+.notif-action {
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.notif-action:hover { color: var(--text); }
+.notif-clear { font-size: 11.5px; padding: 2px 8px; }
 .account-btn {
   display: inline-flex;
   align-items: center;
@@ -2643,40 +3081,11 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
 .account-btn:hover { border-color: var(--border-strong); }
 
 /* ---- appearance control ------------------------------------------- */
-
-.theme-control {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  height: 34px;
-  padding: 0 10px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  transition: background var(--t), border-color var(--t);
-}
-.theme-control:hover { background: var(--surface-2); border-color: var(--border-soft); }
-.theme-track {
-  position: relative;
-  width: 32px; height: 17px;
-  border-radius: var(--radius-pill);
-  background: var(--surface-3);
-  border: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.theme-knob {
-  position: absolute;
-  top: 1.5px; left: 1.5px;
-  width: 12px; height: 12px;
-  border-radius: 50%;
-  background: var(--text);
-  transition: transform var(--t);
-}
-.theme-control.is-dark .theme-knob { transform: translateX(14px); }
-.theme-control.is-light .theme-glyph:first-of-type { color: var(--warning); }
-.theme-control.is-dark .theme-glyph:last-of-type { color: var(--primary-2); }
+/* The appearance control is now a plain `.icon-btn`, sized and shaped like the
+   notification bell beside it. The sun / track / moon indicator it replaced
+   showed three glyphs that between them named none of the three choices, and
+   spent a third of the header doing it; the menu behind the button is where
+   the three live. */
 
 /* ==================================================================
    Popover menus — appearance, notifications, account, availability
@@ -2800,7 +3209,7 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
 .notif-body strong { font-size: 12.5px; font-weight: 600; color: var(--text); }
 .notif-entry.is-read .notif-body strong { font-weight: 500; color: var(--text-dim); }
 .notif-text { font-size: 12px; color: var(--muted); line-height: 1.5; }
-.notif-meta { display: flex; gap: 8px; align-items: center; font-size: 11px; margin-top: 2px; }
+.notif-meta { display: flex; gap: 8px; align-items: center; font-size: 12px; margin-top: 2px; }
 .notif-link { color: var(--primary-2); text-decoration: none; }
 .notif-link:hover { text-decoration: underline; }
 
@@ -2833,6 +3242,9 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
 .shell.is-collapsed .sidebar-collapse { transform: scaleX(-1); }
 
 .side-group-label { display: var(--rail-block); }
+/* The icon rail has no room for a section header, and it forces every section
+   open in App.jsx — so the toggle goes with the header. */
+.shell.is-collapsed .side-group-toggle { display: none; }
 .nav-item { justify-content: var(--rail-justify); }
 .nav-label { display: var(--rail-inline); }
 .nav-item .chip-dev { display: var(--rail-inline); }
@@ -3255,6 +3667,81 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
 .spinner-sm { width: 13px; height: 13px; border-width: 1.5px; }
 .icon { flex-shrink: 0; }
 
+.weekly-report { display: grid; gap: 18px; min-width: 0; }
+.weekly-report .card { padding: 20px; min-width: 0; }
+.weekly-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 12px; }
+.weekly-fields { display: grid; gap: 18px; border: 0; min-width: 0; }
+.weekly-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 16px; margin-top: 16px; }
+.weekly-activity { padding: 16px; border: 1px solid var(--border); border-radius: 10px; min-width: 0; overflow-wrap: anywhere; }
+.weekly-report label { display: block; margin-bottom: 10px; }
+.weekly-report textarea { display: block; width: 100%; margin-top: 6px; resize: vertical; }
+.weekly-counter { display: flex; gap: 8px; align-items: center; margin: 12px 0; }
+.weekly-counter input { width: 90px; min-width: 0; text-align: center; }
+.weekly-report input:not([type=checkbox]), .weekly-report select, .weekly-report textarea { font-size: 16px; max-width: 100%; }
+.weekly-text { white-space: pre-wrap; overflow-wrap: anywhere; margin: 10px 0 18px; }
+.weekly-activity-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 14px; }
+.weekly-activity-heading > span { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.weekly-frequency { border: 0; padding: 0; margin: 0 0 14px; min-width: 0; }
+.weekly-frequency legend { color: var(--text-dim); font-size: 12px; margin-bottom: 8px; padding: 0; }
+.weekly-frequency-options { display: flex; flex-wrap: wrap; gap: 8px; }
+.weekly-report .weekly-frequency-option { display: inline-flex; align-items: center; gap: 8px; padding: 9px 10px; min-height: 44px; margin: 0; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--surface); cursor: pointer; }
+.weekly-frequency-option.is-selected { background: var(--primary-soft); border-color: var(--primary-line); }
+.weekly-frequency-option input[type=radio] { width: 16px; height: 16px; margin: 0; accent-color: var(--primary); }
+.weekly-multiple > label { margin-bottom: 6px; color: var(--text-dim); font-size: 12px; }
+.weekly-pin { margin-bottom: 10px; }
+.weekly-review-list { margin: 16px 0; }
+.weekly-review-item { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.weekly-review-prompt { color: var(--text-dim); margin: 8px 0; }
+.modal.weekly-review-modal { display: flex; flex-direction: column; max-height: calc(92vh - 24px); max-height: calc(92dvh - 24px); min-height: 0; overflow: hidden; }
+.weekly-review-modal > .modal-head { flex-shrink: 0; }
+.weekly-review-scroll { min-height: 0; overflow-y: auto; overscroll-behavior: contain; overflow-wrap: anywhere; }
+.weekly-review-footer { flex-shrink: 0; padding-top: 14px; margin-bottom: 0; border-top: 1px solid var(--border); }
+
+/* Personal weekly report workspace. All layout stays inside the page. */
+.weekly-report [hidden] { display: none !important; }
+.weekly-weekbar, .weekly-tabbar, .weekly-section-heading, .weekly-entry-tools, .weekly-actionbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; }
+.weekly-weekbar h2 { font-size: 20px; font-weight: 600; margin-bottom: 6px; }
+.weekly-week-actions, .weekly-action-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.weekly-report .weekly-date-picker { margin: 0; font-size: 12px; color: var(--text-dim); }
+.weekly-date-picker input { display: block; margin-top: 4px; }
+.weekly-tabbar { border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+.weekly-tabbar [role="tablist"] { display: flex; flex-wrap: wrap; gap: 12px; }
+.weekly-tabbar [role="tab"] { border-radius: 0; border-bottom: 2px solid transparent; padding: 10px 4px; }
+.weekly-tabbar [role="tab"][aria-selected="true"] { border-bottom-color: var(--primary); color: var(--primary-2); }
+.weekly-filter-group { display: flex; flex-wrap: wrap; gap: 4px; }
+.weekly-filter-group .is-selected { background: var(--primary-soft); color: var(--primary-2); }
+.weekly-entry-list { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
+.weekly-group-label { padding: 10px 18px; background: var(--surface-2); color: var(--text-dim); font-size: 12px; font-weight: 500; letter-spacing: .06em; }
+.weekly-entry { border-top: 1px solid var(--border); }
+.weekly-entry > summary { display: grid; grid-template-columns: minmax(0, 1fr) auto 16px; align-items: center; gap: 16px; padding: 14px 18px; cursor: pointer; list-style: none; }
+.weekly-entry > summary::-webkit-details-marker { display: none; }
+.weekly-entry > summary > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.weekly-entry > summary strong { font-weight: 500; }
+.weekly-entry-meta { display: block; margin-top: 4px; }
+.weekly-entry-count { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.weekly-entry-count > span { min-width: 26px; text-align: center; }
+.weekly-entry-count .btn { padding: 6px 10px; min-height: 34px; }
+.weekly-entry[open] > summary { background: var(--surface-2); }
+.weekly-entry-editor { padding: 18px; border-top: 1px solid var(--border); }
+.weekly-entry-editor select { display: block; width: 100%; margin-top: 6px; }
+.weekly-section-heading { margin-bottom: 16px; }
+.weekly-note-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.weekly-note-grid label { min-width: 0; }
+.weekly-report .weekly-disclosure summary { cursor: pointer; font-weight: 500; overflow-wrap: anywhere; }
+.weekly-disclosure summary .small { font-weight: 400; margin-left: 12px; }
+.weekly-disclosure[open] > summary { margin-bottom: 18px; }
+.weekly-setup-content { display: grid; gap: 12px; }
+.weekly-setup-content input[type="file"] { width: 100%; margin-top: 8px; }
+.weekly-document > h2 { margin-bottom: 8px; }
+.weekly-document > label { margin-top: 22px; }
+.weekly-document h3 { margin: 22px 0 12px; }
+.weekly-ready-label { color: var(--primary-2); background: var(--primary-soft); padding: 5px 10px; border-radius: var(--radius-sm); font-size: 12px; }
+.weekly-empty { padding: 24px; }
+.weekly-actionbar { position: sticky; bottom: 0; z-index: 5; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 20px; }
+.weekly-actionbar p { margin-top: 4px; }
+.weekly-carry-section { padding: 14px 0; border-bottom: 1px solid var(--border); }
+.weekly-carry-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 12px; }
+
 /* ==================================================================
    Responsive
    ================================================================== */
@@ -3379,6 +3866,9 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
    ================================================================== */
 
 @media (max-width: 768px) {
+  .weekly-note-grid, .weekly-carry-columns { grid-template-columns: minmax(0, 1fr); }
+  .weekly-actionbar { padding: 14px; }
+  .weekly-weekbar h2 { font-size: 17px; }
   /* ---- navigation drawer ------------------------------------------
      The rail leaves the flow and slides over the workspace, carrying the
      labels the icon-only rail has no room for. `is-collapsed` is a desktop
@@ -3447,6 +3937,9 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
   .topbar-title p { font-size: 12px; }
   .topbar-actions { gap: 4px; }
   .icon-btn { width: 36px; height: 36px; }
+  /* A 13px box is not a thumb target; the cell is the target, but the box has
+     to be findable inside it. */
+  .queue-table .select-cell input { width: 18px; height: 18px; }
   .account-btn { margin-left: 0; }
   .search-field input { padding-right: 14px; }
 
@@ -3528,7 +4021,8 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
       "id       age"
       "subject  subject"
       "status   priority"
-      "sla      group"
+      "sla      sla"
+      "group    group"
       "owner    owner";
     gap: 7px 10px;
     align-items: center;
@@ -3543,8 +4037,10 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
     width: auto;
     padding: 0;
     border-bottom: none;
+    border-left: none;
   }
   .queue-cards .queue-table td[data-label]::before { display: none; }
+  .queue-cards .queue-table td:nth-child(n) { border-left: none; }
   .queue-cards .queue-table td[data-label="Ticket"]     { grid-area: id; }
   .queue-cards .queue-table .cell-main                { grid-area: subject; max-width: none; width: auto; }
   .queue-cards .queue-table td[data-label="Status"]   { grid-area: status; justify-self: start; }
@@ -3570,6 +4066,10 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
   .queue-cards .sla-cell { flex-direction: row; flex-wrap: wrap; gap: 4px; }
   .queue-cards .cell-agent { min-width: 0; }
   .queue-cards tbody tr:active { background: var(--surface-hover); }
+  /* A card has a rounded edge of its own, so the selection bar moves to the
+     card rather than sitting on a checkbox cell that no longer leads a row. */
+  .queue-cards tbody tr:has(.select-cell input:checked) { box-shadow: inset 3px 0 0 var(--primary); }
+  .queue-cards tbody tr:has(.select-cell input:checked) .select-cell { box-shadow: none; }
 
   /* Skeleton rows keep the card's shape, so the list does not jump when the
      real rows land. Only the two lines a card actually shows are drawn;
@@ -3702,6 +4202,56 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
   .detail-head .pill-row { margin-top: 8px; }
   /* 40px of card padding is 12% of a 320px screen. */
   .activity-card { padding: 14px 14px 16px; }
+  .ticket-workspace .detail-head { padding: 14px; }
+  .ticket-workspace .inspector { max-height: none; overflow: hidden; }
+  /* Flatten only the work-panel wrappers so the single subject stays above
+     the inspector on phones, while the conversation still follows it. */
+  .ticket-workspace .detail-layout { gap: 0; }
+  .ticket-workspace .ticket-main,
+  .ticket-workspace .ticket-main .activity-card { display: contents; }
+  .ticket-workspace .detail-head {
+    order: -2;
+    width: 100%;
+    margin-bottom: 12px;
+    background: var(--surface);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-lg);
+  }
+  .ticket-workspace .inspector { width: 100%; margin-bottom: 16px; }
+  .mobile-ticket-summary { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 6px; padding: 12px 14px; border-bottom: 1px solid var(--border-soft); }
+  .mobile-ticket-summary > span { display: flex; flex-direction: column; gap: 3px; min-width: 0; overflow-wrap: anywhere; font-size: 12px; }
+  .mobile-ticket-summary .btn { min-height: 40px; padding: 6px 8px; }
+  .ticket-workspace .ticket-sla-clock { padding: 6px 0; }
+  .ticket-workspace .ticket-primary-actions { padding-top: 10px; }
+  .ticket-workspace .inspector:not(.is-expanded) .insp-section:has(> .ticket-sla-heading) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 12px; }
+  .ticket-workspace .inspector:not(.is-expanded) .ticket-sla-heading,
+  .ticket-workspace .inspector:not(.is-expanded) .insp-section:has(> .ticket-sla-heading) > details,
+  .ticket-workspace .inspector:not(.is-expanded) .ticket-primary-actions > h2,
+  .ticket-workspace .inspector:not(.is-expanded) .ticket-primary-actions .btn-secondary { display: none; }
+  .ticket-workspace .inspector:not(.is-expanded) .ticket-sla-line { flex-direction: column; gap: 3px; align-items: flex-start; }
+  .ticket-workspace .inspector:not(.is-expanded) .ticket-sla-clock + .ticket-sla-clock { border-top: 0; }
+  .ticket-workspace .inspector:not(.is-expanded) .ticket-properties-region,
+  .ticket-workspace .inspector:not(.is-expanded) .ticket-secondary-region { display: none; }
+  .ticket-workspace .inspector .insp-select { min-height: 40px; }
+  .ticket-workspace .inspector .btn { min-height: 40px; }
+  .ticket-workspace .conversation-tools,
+  .ticket-workspace .activity-rail,
+  .ticket-workspace .ticket-composer { width: 100%; background: var(--surface); }
+  .ticket-workspace .conversation-tools {
+    margin-top: 0;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+  .ticket-workspace .activity-rail {
+    border: 1px solid var(--border-soft);
+    border-top: 0;
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  }
+  .ticket-workspace .activity-card > .card-head { padding: 14px 14px 0; }
+  .ticket-workspace .conversation-tools { padding: 12px 14px; }
+  .ticket-workspace .activity-rail { padding: 10px 14px 14px; }
+  .ticket-workspace .ticket-composer { padding: 14px; }
+  .ticket-workspace .ev.is-message .ev-body { padding: 10px; }
   .card { padding: 16px 14px; }
   /* The composer heading and its Public/Internal switch share a head; on a
      phone they get a line each rather than fighting for one. */
@@ -3738,6 +4288,15 @@ input[type='checkbox'] { width: auto; accent-color: var(--primary); }
    ================================================================== */
 
 @media (max-width: 560px) {
+  .weekly-entry > summary { gap: 8px; padding: 12px; grid-template-columns: minmax(0, 1fr) auto 12px; }
+  .weekly-entry-count { gap: 0; }
+  .weekly-entry-count .btn { min-height: 44px; min-width: 36px; padding: 6px; }
+  .weekly-entry-count > span { min-width: 22px; }
+  .weekly-entry > summary strong { font-size: 13px; }
+  .weekly-actionbar, .weekly-action-buttons { align-items: stretch; flex-direction: column; width: 100%; }
+  .weekly-action-buttons .btn { justify-content: center; }
+  .weekly-disclosure summary .small { display: block; margin: 6px 0 0; }
+  .weekly-tabbar { align-items: flex-start; }
   /* Two figures per row is the most a phone can show without clipping. */
   .kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dash-breakdowns { grid-template-columns: minmax(0, 1fr); }

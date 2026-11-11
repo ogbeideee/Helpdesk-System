@@ -36,12 +36,28 @@ eq('approaching flag → warn tone', clockView({ ...base, approaching: true }, f
 eq('approaching text', clockView({ ...base, approaching: true }, false).text, 'Approaching breach');
 eq('breached flag → breached', clockView({ ...base, breached: true, remainingMs: null }, false).status, 'breached');
 eq('answered = ok', clockView({ ...base, responded: true }, false).text, 'Answered on time');
-eq('answered late = bad', clockView({ ...base, responded: true, breached: true }, false).short, 'Late');
+eq('answered late = bad', clockView({ ...base, responded: true, breached: true }, false).short, 'Answered late');
 eq('ended after the clock ran out = missed', clockView({ ...base, breached: true }, true).status, 'missed');
 eq('ended before the clock ran out = not needed', clockView(base, true).text, 'Not needed');
 eq('ended resolution that was met = Met', clockView(base, true, 'resolution').text, 'Met');
 eq('ended missed resolution = Missed', clockView({ ...base, breached: true }, true, 'resolution').text, 'Missed');
 eq('no applicable target = muted, no invented state', clockView({ dueAt: null }, false).status, 'no-target');
+
+/* ---- clockView: the clock is named in full, never abbreviated -------- */
+eq('response clock is spelled out', clockView(base, false, 'response').word, 'Response');
+eq('resolution clock is spelled out', clockView(base, false, 'resolution').word, 'Resolution');
+eq('the default clock is the response clock', clockView(base, false).word, 'Response');
+
+/* ---- overdueMs: how far past the target, only on a breached clock ---- */
+// The backend sends overdueMs only for a breached clock; without it the UI
+// still says "Overdue", it just cannot say how long.
+const overdue = { ...base, remainingMs: null, breached: true, overdueMs: 2 * 3600000 };
+eq('breached clock reports how far over', clockView(overdue, false).short, 'Overdue · 2h');
+eq('breached without a duration still says overdue', clockView({ ...base, breached: true }, false).short, 'Overdue');
+eq('breached detail wording carries the duration', clockView(overdue, false).text, 'Overdue — 2h of working time past the target');
+eq('answered-late carries how late', clockView({ ...overdue, responded: true }, false).short, 'Answered 2h late');
+eq('ended miss carries how far over', clockView(overdue, true, 'resolution').text, 'Missed — 2h over');
+eq('a running clock never reports overdue time', clockView(base, false).short !== 'Overdue · 2h', true);
 
 /* ---- slaOverview: badge picks the worst clock ------------------------ */
 const okBlock = { dueAt: 1, remainingMs: 45 * 60000, approaching: false, breached: false, responded: false };
@@ -66,12 +82,23 @@ const mk = (response, resolution, slaExtra = {}, ticketExtra = {}) => ({
 eq('ticket without sla → null (legacy path)', slaOverview({ id: 1, state: 'NEW' }), null);
 eq('badge reads the nearest due clock', slaOverview(mk(okBlock, { dueAt: 2, remainingMs: 3 * 3600000, approaching: false, breached: false })).badge.text, 'SLA due in 45m');
 eq('approaching → warn badge', slaOverview(mk(approaching, okBlock)).badge.tone, 'warn');
-eq('breached response wins the badge', slaOverview(mk(breached, okBlock)).badge.text, 'SLA breached');
-eq('breached resolution wins the badge', slaOverview(mk(okBlock, breached)).badge.text, 'SLA breached');
+eq('breached response wins the badge, named', slaOverview(mk(breached, okBlock)).badge.text, 'Response overdue');
+eq('breached resolution wins the badge, named', slaOverview(mk(okBlock, breached)).badge.text, 'Resolution overdue');
 eq('ended clean cycle → SLA met', slaOverview(mk(okBlock, okBlock, { cycleEndedAt: 9 })).badge.text, 'SLA met');
 eq('ended breached cycle → SLA breached', slaOverview(mk(breached, breached, { cycleEndedAt: 9 })).badge.text, 'SLA breached');
 eq('remaining time flows into the detail text', slaOverview(mk(approaching, okBlock)).response.text, 'Approaching breach — 45m working time left');
 eq('cycle number is surfaced', slaOverview(mk(okBlock, okBlock, { cycleNumber: 3 })).cycleNumber, 3);
+
+/* ---- slaOverview: the queue label states the time that is left ------- */
+eq('queue label leads with the number', slaOverview(mk(okBlock, okBlock)).response.short, 'Due in 45m');
+eq('approaching queue label keeps the number', slaOverview(mk(approaching, okBlock)).response.short, 'Due in 45m');
+eq('badge names the clock and the time over', slaOverview(mk({ ...breached, overdueMs: 2 * 3600000 }, okBlock)).badge.text, 'Response overdue · 2h');
+eq(
+  'a late-but-answered response never reads as overdue',
+  slaOverview(mk({ ...breached, responded: true, overdueMs: 2 * 3600000 }, okBlock)).badge.text,
+  'Response answered late'
+);
+eq('queue chip spells the clock out for both clocks', slaOverview(mk(okBlock, okBlock)).resolution.word, 'Resolution');
 
 /* ---- cycleSummary: per-cycle outcomes from latched flags ------------- */
 eq('answered on time', cycleSummary({ firstResponseAt: 1, responseBreached: false, resolutionBreached: false }).response, 'Answered');

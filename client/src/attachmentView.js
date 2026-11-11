@@ -11,7 +11,7 @@
 // with. That is the association the timeline renders, so it lives here next to
 // the fetch rather than being re-derived per component.
 
-import { getToken } from './api.js';
+import { authHeaders } from './api.js';
 
 /** `application/pdf; charset=…` → `application/pdf`. Never throws. */
 export function attachmentType(att) {
@@ -79,7 +79,7 @@ export function canPreviewInline(attachment) {
  */
 export async function fetchAttachmentObjectUrl(ticketId, attachment) {
   const res = await fetch(`/api/tickets/${ticketId}/attachments/${attachment.id}`, {
-    headers: { Authorization: `Bearer ${getToken()}` },
+    headers: authHeaders(),
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
@@ -105,7 +105,7 @@ export async function fetchAttachmentObjectUrl(ticketId, attachment) {
  */
 export async function downloadAttachment(ticketId, attachment) {
   const res = await fetch(`/api/tickets/${ticketId}/attachments/${attachment.id}`, {
-    headers: { Authorization: `Bearer ${getToken()}` },
+    headers: authHeaders(),
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));

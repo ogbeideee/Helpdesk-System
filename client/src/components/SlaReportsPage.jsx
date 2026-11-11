@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api } from '../api.js';
+import { api, peekRead } from '../api.js';
+import { usePageRefresh } from '../usePageRefresh.js';
 import { Spinner, ErrorState, EmptyState, useToast } from './ui.jsx';
 import { KpiCard } from './Dashboard.jsx';
 import {
@@ -85,7 +86,7 @@ function OverTimeChart({ rows }) {
 }
 
 export default function SlaReportsPage() {
-  const [data, setData] = useState(null);
+  const [data, setData] = useState(() => peekRead('/sla/report') ?? null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState({ from: '', to: '' });
@@ -100,6 +101,8 @@ export default function SlaReportsPage() {
       setError(e.message);
     }
   }, []);
+
+  usePageRefresh(() => load(applied), ['/sla/report']);
 
   useEffect(() => { load({}); }, [load]);
 

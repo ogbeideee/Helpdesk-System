@@ -1,0 +1,22 @@
+const router = require('express').Router();
+const service = require('../src/services/weeklyReportService');
+const {rateLimit}=require('../src/rateLimit');
+const writingLimit=rateLimit({windowMs:60000,max:5,keyFn:req=>`weekly-writing:${req.agent.id}`,message:'Please wait a minute before generating another report.'});
+const uploadLimit=rateLimit({windowMs:60000,max:10,keyFn:req=>`weekly-reference:${req.agent.id}`,message:'Please wait a minute before uploading another report.'});
+const run = fn => async(req,res,next)=>{try{await fn(req,res);}catch(e){if(e.status) res.status(e.status).json({error:e.message});else next(e);}};
+router.get('/',run(async(req,res)=>res.json(await service.load(req.agent,req.query.week))));
+router.put('/preferences',run(async(req,res)=>res.json(await service.preferences(req.agent,req.body))));
+router.put('/',run(async(req,res)=>res.json(await service.save(req.agent,req.body.week,req.body.data,req.body.version))));
+router.post('/activities',run(async(req,res)=>res.json(await service.changeDefinition(req.agent,req.body))));
+router.post('/reference',uploadLimit,require('express').raw({type:'application/octet-stream',limit:'2mb'}),run(async(req,res)=>res.json(await service.reference(req.agent,req.body))));
+router.delete('/reference',run(async(req,res)=>res.json(await service.clearReference(req.agent))));
+router.get('/previous',run(async(req,res)=>res.json(await service.previous(req.agent,req.query.week))));
+router.post('/generate',writingLimit,run(async(req,res)=>res.json(await service.generate(req.agent,req.body.week,req.body.version))));
+router.put('/draft',run(async(req,res)=>res.json(await service.editDraft(req.agent,req.body.week,req.body.version,req.body.draft))));
+router.get('/export',run(async(req,res)=>{
+ const report = await service.load(req.agent,req.query.week);
+ if(!report.draftReady)return res.status(409).json({error:'Create the report from your latest activities before exporting.'});
+ const buffer = await require('../src/services/weeklyReportExport').exportReport(req.agent,report);
+ res.set({'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':`attachment; filename="${report.friday}_WEEKLY_REPORT.xlsx"`,'Cache-Control':'no-store'}).send(buffer);
+}));
+module.exports = router;

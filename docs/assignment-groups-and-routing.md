@@ -159,3 +159,20 @@ Routing Rules screen.
 Starter rules are seeded only when the table is empty, so administrator edits
 are never overwritten. They contain no employee names; a preferred agent is
 configured against a real account by an administrator.
+## Deleting an assignment group
+
+Administrators can choose **Delete group** from an existing group's edit
+dialog and confirm the removal. The backend supplies whether deletion is
+available and explains any restriction in the dialog.
+
+Only unused groups can be removed. The default and fallback groups are
+protected. Primary or supporting memberships, active or inactive routing rules,
+current or originating ticket references, and historical SLA group references
+all block deletion. Move memberships and rules first; deactivate groups that
+must remain part of ticket history.
+
+`assignmentGroupService.deleteGroup` enforces these rules for the administrator
+API, locks the group row against concurrent foreign-key writes, and records
+`group.deleted` in the same transaction. The audit event survives deletion.
+No tickets, memberships or rules are deleted as a side effect.
+

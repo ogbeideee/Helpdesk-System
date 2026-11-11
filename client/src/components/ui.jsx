@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { OPEN_STATES } from '../constants.js';
 import { slaOverview } from '../slaView.js';
 import { confirmationIndicator, confirmationTone } from '../confirmationView.js';
+import { replyMarker, nextResponse } from '../replyView.js';
 
 /* ------------------------------------------------------------------ */
 /* Formatting helpers                                                  */
@@ -126,6 +128,8 @@ const ICON_PATHS = {
   cloud: <><path d="M4.6 11.5a3.1 3.1 0 0 1-.4-6.2 4 4 0 0 1 7.8-.9 3.4 3.4 0 0 1-.3 6.8z" /><path d="M8 8.5V13M6.2 11.2L8 13l1.8-1.8" /></>,
   search: <><circle cx="7" cy="7" r="4.5" /><path d="M10.5 10.5L14 14" /></>,
   menu: <path d="M2.5 4h11M2.5 8h11M2.5 12h11" />,
+  // Row density: four packed lines, the tight reading of the three above.
+  rows: <path d="M2.5 4.2h11M2.5 6.7h11M2.5 9.4h11M2.5 11.9h11" />,
   sun: <><circle cx="8" cy="8" r="3" /><path d="M8 1.5v1.2M8 13.3v1.2M14.5 8h-1.2M2.7 8H1.5M12.6 3.4l-.85.85M4.25 11.75l-.85.85M12.6 12.6l-.85-.85M4.25 4.25l-.85-.85" /></>,
   moon: <path d="M13.5 9.6A5.8 5.8 0 0 1 6.4 2.5a5.8 5.8 0 1 0 7.1 7.1z" />,
   monitor: <><rect x="1.75" y="3" width="12.5" height="8.5" rx="1.2" /><path d="M6 14h4" /></>,
@@ -144,6 +148,7 @@ const ICON_PATHS = {
   inbox: <><path d="M2 8.5h3l1 2h4l1-2h3" /><path d="M3.4 3.2h9.2l1.4 5.3v3.4c0 .6-.5 1.1-1.1 1.1H3.1c-.6 0-1.1-.5-1.1-1.1V8.5z" /></>,
   arrowRight: <path d="M2.5 8h10M9 4.5L12.5 8 9 11.5" />,
   collapse: <><rect x="2" y="2.5" width="12" height="11" rx="1.5" /><path d="M6.5 2.5v11" /><path d="M11.5 6.2L9.7 8l1.8 1.8" /></>,
+  refresh: <><path d="M13 6a5.2 5.2 0 1 0 .2 3M13 2.5V6H9.5" /></>,
   dots: <><circle cx="8" cy="3.5" r="1" /><circle cx="8" cy="8" r="1" /><circle cx="8" cy="12.5" r="1" /></>,
   logout: <><path d="M6 13.5H3.4c-.6 0-1.1-.5-1.1-1.1V3.6c0-.6.5-1.1 1.1-1.1H6" /><path d="M10.4 11L13.5 8l-3.1-3M13 8H6.2" /></>,
   shieldCheck: <><path d="M8 1.9l4.8 1.7v4c0 3-2 5.2-4.8 6.5C5.2 12.8 3.2 10.6 3.2 7.6v-4z" /><path d="M5.9 7.9l1.6 1.6 2.8-3" /></>,
@@ -247,6 +252,45 @@ export function PriorityBadge({ priority }) {
   );
 }
 
+/**
+ * The conversation marker: what the newest message on this ticket was, and
+ * which side wrote it. Every word and tone comes from replyView.js, which reads
+ * the API's `lastReply` block — this only renders. Renders nothing when there is
+ * no marker to show, which is the common case.
+ */
+export function ReplyChip({ ticket }) {
+  const marker = replyMarker(ticket);
+  if (!marker) return null;
+  return (
+    <span className={`chip chip-reply is-${marker.tone}`} title={`${marker.detail} · ${timeAgo(ticket.lastReply.at)}`}>
+      {marker.label}
+    </span>
+  );
+}
+
+/**
+ * The quiet line under the queue's status badge: whose turn it is.
+ *
+ * It sits BELOW the primary status rather than beside it, which is the whole
+ * point — "New" and "Awaiting requester" side by side read as two statuses
+ * contradicting each other, while "New" over "Next response: requester" reads
+ * as a status and a note about it. Wording comes from nextResponse() in
+ * replyView.js; this only renders, and renders nothing when there is nothing
+ * to say.
+ */
+export function NextResponseLine({ ticket }) {
+  const line = nextResponse(ticket);
+  if (!line) return null;
+  return (
+    <span
+      className={`next-response is-${line.tone}`}
+      title={`${line.detail} · ${timeAgo(ticket.lastReply.at)}`}
+    >
+      {line.text}
+    </span>
+  );
+}
+
 const STATE_LABELS = { NEW: 'New', IN_PROGRESS: 'In Progress', RESOLVED: 'Resolved', CLOSED: 'Closed' };
 const PRIORITY_LABELS = { low: 'Low', moderate: 'Moderate', high: 'High', critical: 'Critical' };
 
@@ -299,26 +343,71 @@ function legacySlaInfo(ticket) {
 
 /* Modal -------------------------------------------------------------- */
 
-export function Modal({ title, onClose, children, width = 460 }) {
+const modalStack = [];
+const modalBackgrounds = new Map();
+let modalReturnFocus = null;
+let modalBodyOverflow = '';
+function syncModalIsolation() {
+  if (!modalStack.length) {
+    modalBackgrounds.forEach((inert, node) => { node.inert = inert; });
+    modalBackgrounds.clear();
+    document.body.style.overflow = modalBodyOverflow;
+    return;
+  }
+  const topOverlay = modalStack.at(-1).parentElement;
+  [...document.body.children].forEach(node => {
+    if (!modalBackgrounds.has(node)) modalBackgrounds.set(node, node.inert);
+    node.inert = node !== topOverlay;
+  });
+  document.body.style.overflow = 'hidden';
+}
+export function Modal({ title, onClose, children, width = 460, className = '' }) {
   const ref = useRef(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   useEffect(() => {
-    const onKey = (e) => e.key === 'Escape' && onCloseRef.current?.();
-    window.addEventListener('keydown', onKey);
-    ref.current?.querySelector('input, textarea, select, button')?.focus();
-    return () => window.removeEventListener('keydown', onKey);
+    const dialog = ref.current;
+    const previousFocus = document.activeElement;
+    if (!modalStack.length) { modalReturnFocus = previousFocus; modalBodyOverflow = document.body.style.overflow; }
+    modalStack.push(dialog);
+    syncModalIsolation();
+    const focusable = () => [...dialog.querySelectorAll('input, textarea, select, button, a[href], [tabindex]')]
+      .filter(node => !node.disabled && node.tabIndex >= 0 && node.getClientRects().length);
+    const onKey = event => {
+      if (modalStack.at(-1) !== dialog) return;
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onCloseRef.current?.(); }
+      if (event.key !== 'Tab') return;
+      const nodes = focusable();
+      const first = nodes[0] || dialog, last = nodes.at(-1) || dialog;
+      if (!nodes.length || !dialog.contains(document.activeElement) || (event.shiftKey ? document.activeElement === first : document.activeElement === last)) {
+        event.preventDefault(); (event.shiftKey ? last : first).focus();
+      }
+    };
+    const onFocus = event => { if (modalStack.at(-1) === dialog && !dialog.contains(event.target)) (focusable()[0] || dialog).focus(); };
+    document.addEventListener('keydown', onKey, true);
+    document.addEventListener('focusin', onFocus);
+    (dialog.querySelector('[autofocus]') || focusable()[0] || dialog).focus();
+    return () => {
+      modalStack.splice(modalStack.indexOf(dialog), 1);
+      document.removeEventListener('keydown', onKey, true);
+      document.removeEventListener('focusin', onFocus);
+      syncModalIsolation();
+      const parent = modalStack.at(-1);
+      const target = parent ? (parent.contains(previousFocus) ? previousFocus : parent) : modalReturnFocus;
+      if (target?.isConnected) target.focus();
+      if (!parent) modalReturnFocus = null;
+    };
   }, []);
-  return (
+  return createPortal(
     <div className="modal-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose?.()}>
-      <div className="modal" style={{ maxWidth: width }} ref={ref} role="dialog" aria-modal="true" aria-label={title}>
+      <div className={`modal ${className}`.trim()} style={{ maxWidth: width }} ref={ref} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1}>
         <div className="modal-head">
           <h3>{title}</h3>
           <button className="btn btn-icon" onClick={onClose} aria-label="Close">✕</button>
         </div>
         {children}
       </div>
-    </div>
+    </div>, document.body
   );
 }
 

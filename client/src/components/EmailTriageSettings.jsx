@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api } from '../api.js';
+import { api, peekRead } from '../api.js';
+import { usePageRefresh } from '../usePageRefresh.js';
 import { ErrorState, Field, Spinner, useToast } from './ui.jsx';
 
 const MODES = [
@@ -33,8 +34,8 @@ function formatDate(value) {
 }
 
 export default function EmailTriageSettings() {
-  const [data, setData] = useState(null);
-  const [form, setForm] = useState(null);
+  const [data, setData] = useState(() => peekRead('/email-triage/management') ?? null);
+  const [form, setForm] = useState(() => data ? formFrom(data) : null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -46,11 +47,13 @@ export default function EmailTriageSettings() {
     try {
       const next = await api.emailTriageManagement();
       setData(next);
-      setForm((current) => current || formFrom(next));
+      setForm(formFrom(next));
     } catch (e) {
       setError(e.message);
     }
   }, []);
+
+  usePageRefresh(() => { if (!form || sameForm(form, formFrom(data))) load(); }, ['/email-triage/management']);
 
   useEffect(() => { load(); }, [load]);
 

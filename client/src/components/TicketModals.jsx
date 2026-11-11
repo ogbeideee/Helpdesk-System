@@ -9,6 +9,7 @@
 import { useState } from 'react';
 import { api } from '../api.js';
 import { Spinner, Modal } from './ui.jsx';
+import { resolutionSuggestions } from '../resolutionView.js';
 
 /* ------------------------------------------------------------------ */
 /* Candidate list — one radio row per teammate                          */
@@ -150,6 +151,7 @@ export function HandoverModal({ ticket, candidates, candidatesError, busy, run, 
 
 export function ResolveModal({ ticket, busy, run, onClose }) {
   const [resolution, setResolution] = useState('');
+  const suggestions = resolutionSuggestions(ticket.category);
 
   return (
     <Modal title={`Resolve ${ticket.ticketNumber}`} onClose={onClose}>
@@ -157,9 +159,27 @@ export function ResolveModal({ ticket, busy, run, onClose }) {
         A resolution note is required. It will be recorded in the audit history
         {ticket.requesterEmail ? ' and included in the notification to the requester.' : '.'}
       </p>
+      {suggestions.length > 0 && (
+        <label className="field">
+          <span className="field-label">Suggested resolution notes</span>
+          <select
+            value=""
+            disabled={busy}
+            onChange={(e) => { if (e.target.value) setResolution(e.target.value); }}
+          >
+            <option value="">Choose a note…</option>
+            {suggestions.map((note) => <option key={note} value={note}>{note}</option>)}
+          </select>
+          <span className="muted small">
+            Choosing a suggestion replaces the note below. Edit it to match the work completed.
+          </span>
+        </label>
+      )}
       <textarea
         rows={4}
         autoFocus
+        aria-label="Resolution note"
+        disabled={busy}
         placeholder="Describe how the issue was resolved…"
         value={resolution}
         onChange={(e) => setResolution(e.target.value)}

@@ -84,12 +84,12 @@ function statusLine(kind, clock) {
 function introLine(kind, clock) {
   if (kind === 'approaching') {
     return clock === 'response'
-      ? 'The response SLA on this ticket is approaching its breach threshold — a first public response is needed before the target passes.'
-      : 'The resolution SLA on this ticket is approaching its breach threshold — the ticket should be resolved before the target passes.';
+      ? 'Please send the requester a first public response before the response deadline below.'
+      : 'Please review this ticket and work toward resolution before the deadline below.';
   }
   return clock === 'response'
-    ? 'The response SLA on this ticket has been breached — no first public response was recorded before the target passed.'
-    : 'The resolution SLA on this ticket has been breached — the target passed without resolution.';
+    ? 'The response deadline has passed. Please send the requester a first public response as soon as possible.'
+    : 'The resolution deadline has passed. Please review the ticket and update the requester on the next steps.';
 }
 
 /**

@@ -5,18 +5,17 @@
 // tables, columns and constraints. Everyone signed in deserves better, and the
 // log needs the truth even when the response does not carry it:
 //
-//   - the server log gets everything: status, route, stack, the real message;
-//   - the client gets a generic message for 5xx (unless ERROR_DETAIL=1, an
-//     operator switch for the rare case someone is watching a terminal and a
-//     browser at the same time);
+//   - the log retains status, route, code and stack frames, excluding raw
+//     driver values and query strings that may contain private data;
+//   - the client gets a generic message for 5xx (ERROR_DETAIL=1 is permitted
+//     only outside production);
 //   - 4xx passes through untouched — those are deliberate domain answers
 //     ("already closed", "no longer RESOLVED — refresh") the UI quotes
 //     verbatim, and this middleware never rewrites them.
 //
 // Express recognises this by arity (err, req, res, next): registered last in
 // server.js, it catches anything a route's own catch re-threw, and any handler
-// that keeps its own `res.status(500).json({ error: err.message })` keeps
-// working unchanged until it is migrated.
+// route-local 5xx JSON is also sanitized by the boundary in server.js.
 function errorHandler(logger = console) {
   // eslint-disable-next-line no-unused-vars — the arity IS the contract
   return function errorHandlerMiddleware(err, req, res, _next) {
@@ -30,9 +29,11 @@ function errorHandler(logger = console) {
     const isServerError = status >= 500;
 
     if (isServerError) {
+      const code = /^[A-Za-z0-9_]{1,40}$/.test(err?.code || '') ? err.code : 'unclassified';
+      const frames = String(err?.stack || '').split('\n').filter(line => /^\s+at /.test(line)).join('\n');
       logger.error(
-        `[error] ${req.method} ${req.originalUrl} -> ${status}: ${err && err.message ? err.message : err}` +
-          (err && err.stack ? `\n${err.stack}` : '')
+        `[error] ${req.method} ${req.path || String(req.originalUrl || '').split('?')[0]} -> ${status}: ${code}` +
+          (frames ? `\n${frames}` : '')
       );
     }
 
@@ -47,7 +48,7 @@ function errorHandler(logger = console) {
       return res.status(status).json({ error: (err && err.message) || 'Request failed' });
     }
 
-    const detail = process.env.ERROR_DETAIL === '1';
+    const detail = process.env.NODE_ENV !== 'production' && process.env.ERROR_DETAIL === '1';
     return res.status(500).json({
       error: detail
         ? String((err && err.message) || err)

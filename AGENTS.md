@@ -150,6 +150,14 @@ the queue already filters on are honoured.
 
 ## Database
 
+- Conversation display and thread correction are owned by
+  `conversationService.js`; see `docs/ticket-conversations.md`.
+  `TicketConversationRead` is a per-account monotonic snapshot cursor.
+  `Comment.linkedAt` makes a relocated reply unread without changing its
+  original timestamp. Admin-only correction moves received replies and their
+  attachments atomically, with audits on both tickets. It changes neither
+  ownership nor lifecycle. Historical threading reasons are never invented.
+
 - **Schema changes ship as committed migrations.** `server/prisma/migrations/`
   holds the PostgreSQL history (init + dated migrations) and `npm run db:deploy`
   (`prisma migrate deploy`) applies it — the test harness runs `migrate deploy`
@@ -185,7 +193,13 @@ the queue already filters on are honoured.
 `RESOLVED → IN_PROGRESS` rework. Resolving asks the requester to confirm (the
 resolve email carries the confirmation link). `CLOSED` is final for people;
 only a requester email reply reopens it, via `ticketIntake.js`, which
-deliberately bypasses `canTransition`. Four paths write `ticket.closed`, all
+deliberately bypasses `canTransition`. An explicit administrator override on
+`POST /api/tickets/:id/close` (`force: true`, required note) also closes NEW or
+IN_PROGRESS directly, without inventing a ticket resolution. The service
+`administrativeClosureService.js` owns this exception, compares state/owner,
+atomically records both audits, ends the SLA cycle and cancels handovers.
+It records `via: administrative_close`; ordinary agents still resolve first.
+Five paths write `ticket.closed`, all
 compare-and-set and audited with their `via` metadata: an agent closing their
 own ticket (plain), an administrator overriding a pending confirmation
 (`via: force_close` — the button reads "Force close…", the requester's link
@@ -339,8 +353,9 @@ other screen reads the *words*, which is why INC-001838 got through them: an IT
 lead's mail to a vendor, with the department copied for visibility, is a
 perfectly good request in prose. The header is what makes it not one.
 `intakeScreening.screenInternalCopy` requires the sender to be a known `Agent`
-account (any role, active or not — a leaver's last mail must not open a ticket
-either) **and** an ingestion mailbox to be on Cc/Bcc **and not** on `To`. That
+account (any role, active or not) or in an explicitly configured exact
+`intakeInternalDomains` domain, **and** an ingestion mailbox to be on Cc/Bcc
+**and no configured ingestion address** on `To`. That
 last clause is the entire rule: addressed to us is a request whatever it reads
 like, copied to us is FYI. So an agent mailing the helpdesk directly still gets
 a ticket and an outsider who copies us still gets one. It is the one signal that
@@ -366,14 +381,20 @@ creation. The admin Profile → Settings surface owns the runtime mode, threshol
 sender/reason allowlists, metrics, and emergency stop; the Groq key is an
 environment secret only.
 
-**Session lifetime** — JWTs are stateless 12h bearer tokens, so there is no
-revocation list. `Agent.passwordChangedAt` stands in for one: `userService`
+**Session lifetime** — browser sign-in uses a 12h HttpOnly, SameSite=Strict
+cookie (Secure in production); localStorage holds only an opaque account-change
+marker. Bearer tokens remain supported for API clients. Logout persists a token
+digest in `RevokedSession`, checked on every authenticated request; cookie writes
+also enforce same-origin Origin/Fetch Metadata. `Agent.passwordChangedAt`
+invalidates older sessions across devices: `userService`
 stamps it on every password write (self-service or admin reset) and
 `requireAuth` rejects any token whose `iat` predates it. `express` runs with
 `trust proxy: 1` so rate-limit keys see the real client address behind Fly.
 
-**One link in email: the resolution confirmation.** No notification carries a
-URL **except the resolve notification**, whose signed `#/confirm/:token` link
+**Email links.** Assignment notices link the ticket number to the authenticated
+`#/tickets/:id` page, using `PORTAL_BASE_URL`; no token or access grant is
+included. Missing/invalid configuration leaves a usable unlinked notice.
+Requester mail carries a URL only in the resolve notification, whose signed `#/confirm/:token` link
 lets the requester close their own resolved ticket — the one action a requester
 cannot safely express by replying ("yes" is ambiguous against reopen-on-reply).
 The page is deliberately two-step (the GET shows the ticket; a button POSTs
@@ -381,7 +402,7 @@ closes it), so mail scanners that prefetch links close nothing.
 `email/statusLink.js` signs it; `routes/public.js` POST /confirm-resolution
 answers it (compare-and-set close from RESOLVED only, rate-limited, audited as
 `via: resolution_confirmation`). A requester has no portal account — often
-their account is the very thing that is broken — so every other notification
+their account is the very thing that is broken — so every other requester notification
 stays link-free and the reply-to-this-mail address remains the channel for
 everything else. `PORTAL_BASE_URL` gates the link: unset, the resolve mail
 falls back to the old "will be closed after confirmation" wording.
@@ -389,7 +410,7 @@ falls back to the old "will be closed after confirmation" wording.
 **Outbound transport** — `src/mailer.js` picks exactly one: **Microsoft Graph →
 SMTP → the console fallback**, in that order. All three speak the same small
 interface (`sendMail`, `sendBroadcastMail`, `hasBroadcastTarget`, and
-`broadcastTarget` for the reply-alert fallback), so no caller and no test changes
+`broadcastTarget` for the configured team target), so no caller and no test changes
 when the choice does. `src/smtp/config.js` is the SMTP option: enabled by
 `SMTP_HOST` + `SMTP_USER` + `SMTP_PASS`, implicit TLS on 465 by default,
 `SMTP_FROM` defaulting to the authenticated user, and `SMTP_BROADCAST_DL`
@@ -453,6 +474,10 @@ Reuse it; do not write a bare `update` for ownership.
   `NODE_ENV=production`.
 - Notifications go through `src/mailer.js` and the `Notification` table. Do not
   build a second notification system.
+- Received replies/reopens update the conversation and unread indicators but
+  send no extra alert email to agents or the DL. The original email is their
+  mail notification. Requester acknowledgements, public agent replies and status
+  updates remain active. The delivery worker suppresses legacy queued reply alerts.
 - Four ticket categories are fixed: `Password Reset`, `Inquiry / Help`,
   `Software`, `Hardware`.
 - Tests must never touch the application database (the Supabase PostgreSQL) — see below.
@@ -461,7 +486,7 @@ Reuse it; do not write a bare `update` for ownership.
 
 ```bash
 npm run dev                  # root: API :4000 + UI :5173 via concurrently
-cd server && npm test        # all 49 suites (scripts/run-all-tests.js)
+cd server && npm test        # all 50 suites (scripts/run-all-tests.js)
 cd server && node scripts/run-all-tests.js imap   # a few suites, by substring
 cd server && npm run test:pg:up      # one-time: disposable local test PostgreSQL
 cd client && npx vite build  # production build

@@ -30,6 +30,7 @@ const statusLink = require('../src/email/statusLink');
 const outbound = require('../src/email/outbound');
 const sweeper = require('../src/resolutionSweeper');
 const settingsService = require('../src/services/settingsService');
+const slaService = require('../src/slaService');
 const { createMailer } = require('../src/mailer');
 
 const { app } = require('../server.js');
@@ -398,6 +399,38 @@ function resolveMailWith(ticket, confirmUrl) {
   // assert the admin force close and the sweep never double-write one trail.
   const f1Count = await prisma.auditEvent.count({ where: { ticketId: f1.id, action: 'ticket.closed' } });
   eq('H12 exactly one closed event per path', f1Count, 1);
+
+  console.log('\n--- I. explicit administrative closure of open tickets ---');
+  const closeRequest = (id, token, body) => fetch(`${base}/api/tickets/${id}/close`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
+  });
+  for (const state of ['NEW', 'IN_PROGRESS']) {
+    const open = await mkTicket({ state, suffix: `admin-${state}` });
+    await slaService.startCycle(open, { actor: 'test', cycleNumber: 1 });
+    eq(`I ${state} keeps ordinary lifecycle guard`, (await closeRequest(open.id, adminJwt, {})).status, 400);
+    await prisma.ticket.update({ where: { id: open.id }, data: { assignedAgentId: agent.id } });
+    eq(`I ${state} owner cannot bypass with force flag`,
+      (await closeRequest(open.id, ritaJwt, { force: true, note: 'Override attempt' })).status, 403);
+    eq(`I ${state} requires an override note`,
+      (await closeRequest(open.id, adminJwt, { force: true })).status, 400);
+    eq(`I ${state} admin can explicitly close`,
+      (await closeRequest(open.id, adminJwt, { force: true, note: 'Queue cleanup decision' })).status, 200);
+    const closed = await prisma.ticket.findUnique({ where: { id: open.id } });
+    eq(`I ${state} is CLOSED`, closed.state, 'CLOSED');
+    check(`I ${state} has close time without invented resolution`, Boolean(closed.closedAt) && !closed.resolvedAt && !closed.resolution);
+    const events = await prisma.auditEvent.findMany({ where: { ticketId: open.id, action: 'ticket.closed' } });
+    check(`I ${state} records administrator override`, events.length === 1 && events[0].metadata.includes('administrative_close'));
+    eq(`I ${state} ends its SLA cycle`, await prisma.ticketSlaCycle.count({ where: { ticketId: open.id, endedAt: null } }), 0);
+    eq(`I ${state} repeated bulk close is harmless`,
+      (await closeRequest(open.id, adminJwt, { force: true, note: 'Repeated selection' })).status, 200);
+    eq(`I ${state} repeated close does not duplicate audit`, await prisma.auditEvent.count({ where: { ticketId: open.id, action: 'ticket.closed' } }), 1);
+  }
+  const racing = await mkTicket({ state: 'NEW', suffix: 'admin-race' });
+  const adminRaced = await Promise.all([1, 2].map(() => closeRequest(racing.id, adminJwt, { force: true, note: 'Concurrent close' })));
+  check('I concurrent closes succeed or report a conflict', adminRaced.some(response => response.status === 200)
+    && adminRaced.every(response => [200, 409].includes(response.status)));
+  eq('I concurrent closes have one audit', await prisma.auditEvent.count({ where: { ticketId: racing.id, action: 'ticket.closed' } }), 1);
 
   server.close();
   await prisma.$disconnect();

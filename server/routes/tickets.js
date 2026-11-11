@@ -18,6 +18,7 @@ const { intakeEmailMessage, IntakeValidationError } = require('../src/services/t
 const { classify } = require('../src/graph/categoryRules');
 const assignmentPolicy = require('../src/services/assignmentPolicy');
 const workloadService = require('../src/services/workloadService');
+const replyActivityService = require('../src/services/replyActivityService');
 const handoverService = require('../src/services/handoverService');
 const auditService = require('../src/services/auditService');
 // The requester confirmation window (SLA settings group), so serialized
@@ -115,7 +116,7 @@ function serializeTicket(t, slaContext = {}) {
   // carries the same per-cycle history in a stable shape. SLA timeline events
   // are trimmed to the fields the ticket timeline renders; list payloads have
   // no slaEvents loaded and expose none (undefined keys vanish in JSON).
-  const { slaCycles, slaEvents, attachments, ...ticket } = t;
+  const { slaCycles, slaEvents, attachments, lastReply, ...ticket } = t;
   const hoursLeft = workloadService.hoursUntilClaimable(t);
   // Requester resolution confirmation: a RESOLVED ticket is waiting for the
   // requester's click (the resolve email asked). The auto-close deadline is
@@ -133,6 +134,11 @@ function serializeTicket(t, slaContext = {}) {
     ...(attachments ? { attachments: attachments.map(serializeAttachment) } : {}),
     awaitingAssignment: !t.assignedAgentId && isOpenState(t.state),
     awaitingConfirmation: t.state === 'RESOLVED',
+    // Who the ball is with: the newest non-internal message on the ticket and
+    // the side that wrote it. Derived on read by replyActivityService and
+    // attached by the route — the client never re-derives who replied last, and
+    // an absent key means the ticket has no conversation yet.
+    ...(lastReply ? { lastReply } : {}),
     ...(autoCloseAt ? { confirmationAutoCloseAt: autoCloseAt.toISOString() } : {}),
     // A NEW ticket becomes takeable by a teammate once it has gone unattended
     // for the configured threshold. Surfaced so the UI reflects the rule the
@@ -162,10 +168,10 @@ function serializeTicket(t, slaContext = {}) {
 // the configured working calendar. Two indexed queries on small tables.
 async function slaCtx(now = new Date(), policy = null) {
   const effectivePolicy = policy || await slaService.loadSlaPolicy();
-  const [holidays, window] = await Promise.all([
-    slaService.loadHolidaysBetween(now, new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000), prisma, effectivePolicy),
-    confirmationWindow(),
-  ]);
+  const window = Number.isFinite(effectivePolicy.confirmationWindowDays)
+    ? { windowDays: effectivePolicy.confirmationWindowDays }
+    : await confirmationWindow();
+  const holidays = await slaService.loadHolidaysBetween(now, new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000), prisma, effectivePolicy);
   return {
     now,
     calendar: effectivePolicy.calendar,
@@ -253,6 +259,22 @@ router.post('/from-email', async (req, res) => {
 // Queries
 // ---------------------------------------------------------------------------
 // GET /api/tickets — list with filters
+router.get('/queue', async (req, res) => {
+  try {
+    // viewerId comes from the session, not the query string: the "My open
+    // tickets" quick view must mean the caller's work, and a caller must not
+    // be able to ask whose.
+    const [result, ctx] = await Promise.all([
+      require('../src/services/ticketReadService').queue({ ...req.query, viewerId: req.agent.id }), slaCtx(),
+    ]);
+    const replies = await replyActivityService.lastReplies(result.tickets.map((ticket) => ticket.id), prisma, req.agent);
+    res.json({ ...result, tickets: result.tickets.map(ticket => serializeTicket({ ...ticket, lastReply: replies.get(ticket.id) || null }, ctx)) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+router.get('/people', async (req, res) => {
+  try { res.json(await require('../src/services/ticketReadService').people()); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
 router.get('/', async (req, res) => {
   try {
     const where = {};
@@ -293,9 +315,10 @@ router.get('/', async (req, res) => {
       orderBy: { createdAt: 'desc' },
       take,
       skip,
-      include: LIST_INCLUDE,
+      ...(req.query.summary === '1' ? { select: require('../src/services/ticketReadService').QUEUE_SELECT } : { include: LIST_INCLUDE }),
     }), slaCtx()]);
-    res.json(list.map((t) => serializeTicket(t, ctx)));
+    const replies = await replyActivityService.lastReplies(list.map((t) => t.id), prisma, req.agent);
+    res.json(list.map((t) => serializeTicket({ ...t, lastReply: replies.get(t.id) || null }, ctx)));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -304,27 +327,73 @@ router.get('/', async (req, res) => {
 // GET /api/tickets/:id
 router.get('/:id', async (req, res) => {
   try {
-    const ticket = await loadTicketOr404(req.params.id, res);
+    const snapshotAt = new Date();
+    const recent = req.query.history === 'recent';
+    const ticket = await loadTicketOr404(req.params.id, res, recent ? {
+      ...DETAIL_INCLUDE,
+      comments: { orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 20 },
+      auditLogs: { orderBy: { createdAt: 'desc' }, take: 30 },
+      slaEvents: { orderBy: [{ at: 'desc' }, { id: 'desc' }], take: 30 },
+      attachments: { where: { commentId: null }, orderBy: { createdAt: 'asc' } },
+    } : DETAIL_INCLUDE);
     if (!ticket) return;
+    // These reads depend on the ticket, but not on one another. Keep bounded
+    // history enrichment separate from conversation parsing (which reads comments).
+    const historyRead = async () => {
+      if (!recent) return 0;
+      ticket.comments.reverse(); ticket.slaEvents.reverse();
+      const [total, attachments] = await Promise.all([
+        prisma.comment.count({ where: { ticketId: ticket.id } }),
+        prisma.attachment.findMany({ where: { ticketId: ticket.id, commentId: { in: ticket.comments.map(comment => comment.id) } }, orderBy: { createdAt: 'asc' } }),
+      ]);
+      ticket.attachments.push(...attachments);
+      return Math.max(0, total - ticket.comments.length);
+    };
     // What this ticket requires is the routing engine's answer for the group
     // that owns it plus the priority boost — asked here, never re-derived, so
     // the screen cannot show a bar the engine would not enforce. Derived on
     // read, so a corrected rule corrects every ticket it governs.
-    const skill = await assignmentEngine.requiredSkill({
-      category: ticket.category,
-      priority: ticket.priority,
-      text: `${ticket.shortDescription}\n${ticket.body || ''}`,
-      subject: ticket.shortDescription,
-      teamId: ticket.teamId,
-    });
+    const [olderReplyCount, skill, replies, conversation, ctx] = await Promise.all([
+      historyRead(),
+      assignmentEngine.requiredSkill({
+        category: ticket.category,
+        priority: ticket.priority,
+        text: `${ticket.shortDescription}\n${ticket.body || ''}`,
+        subject: ticket.shortDescription,
+        teamId: ticket.teamId,
+      }),
+      replyActivityService.lastReplies([ticket.id]),
+      require('../src/services/conversationService').describe(ticket, req.agent, snapshotAt),
+      slaCtx(),
+    ]);
     res.json({
-      ...serializeTicket(ticket, await slaCtx()),
+      ...serializeTicket({ ...ticket, lastReply: replies.get(ticket.id) || null }, ctx),
+      ...conversation,
+      history: { olderReplyCount, partial: recent, activityLimited: recent },
       requiredSkillLevel: skill.level,
       requiredSkillRule: skill.ruleName,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+router.post('/:id/conversation/read', async (req, res) => {
+  try {
+    const ticket = await loadTicketOr404(req.params.id, res, {});
+    if (!ticket) return;
+    res.json(await require('../src/services/conversationService').markRead(ticket.id, req.agent.id, req.body.through));
+  } catch (err) { res.status(err.status || 500).json({ error: err.message }); }
+});
+router.post('/:id/conversation/:commentId/move', async (req, res) => {
+  try {
+    const ticketId = Number(req.params.id);
+    const commentId = Number(req.params.commentId);
+    if (!Number.isSafeInteger(ticketId) || !Number.isSafeInteger(commentId)) return res.status(400).json({ error: 'Invalid message or ticket' });
+    res.json(await require('../src/services/conversationService').moveReply({
+      ticketId, commentId, targetTicketNumber: req.body.targetTicketNumber, note: req.body.note, actor: req.agent,
+    }));
+  } catch (err) { res.status(err.status || 500).json({ error: err.message }); }
 });
 
 // ---------------------------------------------------------------------------
@@ -668,7 +737,7 @@ router.post('/:id/resolve', async (req, res) => {
   }
 });
 
-// POST /api/tickets/:id/close — only from RESOLVED
+// POST /api/tickets/:id/close — RESOLVED, or explicit admin override for open work.
 router.post('/:id/close', async (req, res) => {
   try {
     const ticket = await loadTicketOr404(req.params.id, res, {
@@ -678,6 +747,16 @@ router.post('/:id/close', async (req, res) => {
     if (!ticket) return;
     const allowed = canActOnTicket(ticket, req.agent);
     if (!allowed.ok) return res.status(allowed.status).json({ error: allowed.error });
+    if (req.body.force === true && req.agent.role === 'admin' && ticket.state === 'CLOSED') {
+      return res.json(serializeTicket(ticket, await slaCtx()));
+    }
+    if (req.body.force === true && OPEN_STATES.includes(ticket.state)) {
+      const result = await require('../src/services/administrativeClosureService').closeOpenTicket(ticket, {
+        agent: req.agent, note: req.body.note, include: ACTION_INCLUDE,
+      });
+      if (!result.ticket) return res.status(result.status).json({ error: result.error });
+      return res.json(serializeTicket(result.ticket, await slaCtx()));
+    }
     const result = await applyStateChange(ticket, 'CLOSED', {
       actor: actorLabel(req.agent),
       agent: req.agent,
@@ -1117,9 +1196,17 @@ async function addNote(req, res) {
       },
     });
 
+    // A reply is activity on the ticket, so the queue's "Recently updated"
+    // ordering and its reply marker move with it — the same rule intake applies
+    // to a threaded requester reply, applied here to ours.
+    await prisma.ticket.update({
+      where: { id: ticket.id },
+      data: { updatedAt: new Date() },
+    });
+
     // Response SLA: the first public agent reply is the qualifying response.
     // Internal notes and requester messages never count (requester replies
-    // arrive through intake, which does not call this).
+    // arrive through intake; its emailResponseService qualifies staff mail).
     if (!isInternal) {
       await slaService.recordFirstResponse(ticket, {
         at: comment.createdAt,

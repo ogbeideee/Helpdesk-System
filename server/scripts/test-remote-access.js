@@ -475,8 +475,10 @@ const historyLines = (ticketId) =>
     eq('B13 an administrator may end it',
       (await req(`/api/remote-access/${behalf.data.id}/end`, { method: 'POST', token: adminToken })).status, 200);
 
-    eq('B14 any authenticated agent may READ a ticket\'s sessions',
-      (await req(`/api/remote-access/ticket/${t3.id}`, { token: unaToken })).status, 200);
+    eq('B14 non-staff accounts cannot read ticket sessions',
+      (await req(`/api/remote-access/ticket/${t3.id}`, { token: unaToken })).status, 403);
+    eq('B14b another staff agent may read ticket sessions',
+      (await req(`/api/remote-access/ticket/${t3.id}`, { token: theoToken })).status, 200);
     eq('B15 the requester may cancel their own live request',
       (await req(`/api/remote-access/${liveId}/cancel`, { method: 'POST', token: riaToken })).status, 200);
     eq('B16 an unknown session is 404',

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api } from '../api.js';
+import { api, peekRead } from '../api.js';
+import { usePageRefresh } from '../usePageRefresh.js';
 import {
   Spinner, ErrorState, EmptyState, Avatar, Modal, ConfirmDialog,
   Field, Icon, usePopover, useToast, fmtDateTime, timeAgo,
@@ -76,8 +77,8 @@ function AvailabilityStateCell({ agent, isSelf, busy, onSet }) {
 }
 
 export default function AgentsPage({ me }) {
-  const [agents, setAgents] = useState(null);
-  const [teams, setTeams] = useState([]);
+  const [agents, setAgents] = useState(() => peekRead('/agents')?.agents ?? null);
+  const [teams, setTeams] = useState(() => peekRead('/agents')?.teams ?? []);
   const [workload, setWorkload] = useState({}); // agentId -> {new, inProgress}
   const [error, setError] = useState('');
   const [editorAgent, setEditorAgent] = useState(null);
@@ -89,40 +90,20 @@ export default function AgentsPage({ me }) {
   const load = useCallback(async () => {
     setError('');
     try {
-      const [a, d] = await Promise.all([api.agents(), api.dashboard()]);
+      const a = await api.agents();
       setAgents(a.agents);
       setTeams(a.teams);
       setDataVersion((v) => v + 1);
-      // Aggregate the dashboard's recent tickets and queue into a per-agent
-      // NEW vs IN_PROGRESS breakdown. The dashboard already counts per agent.
-      const perAgent = {};
-      (d.ticketsPerAgent || []).forEach((row) => {
-        perAgent[row.agentId] = {
-          total: row.openTickets,
-          // dashboard doesn't break out states — show 0/0 as a fallback; load
-          // the workload API for richer data below if available.
-          new: 0,
-          inProgress: 0,
-        };
-      });
-      setWorkload(perAgent);
-      // Try to enrich with NEW/IN_PROGRESS using the workload API.
-      try {
-        const w = await api.workload();
-        const next = { ...perAgent };
-        (w.agents || []).forEach((row) => {
-          next[row.agentId] = {
-            total: row.openTickets,
-            new: row.newTickets ?? 0,
-            inProgress: row.inProgressTickets ?? 0,
-          };
-        });
-        setWorkload(next);
-      } catch { /* not admin / unavailable — keep totals only */ }
+      setWorkload(Object.fromEntries(a.agents.map(agent => [agent.id, {
+        total: agent.openWorkload, new: agent.newTickets, inProgress: agent.inProgressTickets,
+      }])));
+
     } catch (e) {
       setError(e.message);
     }
   }, []);
+
+  usePageRefresh(load, ['/agents']);
 
   useEffect(() => { load(); }, [load]);
 

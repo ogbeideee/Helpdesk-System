@@ -170,9 +170,7 @@ async function listGroupPools(client = prisma) {
   // The group's routing skill bar: the same figure the engine gates on and
   // /api/assignment-groups shows (assignmentEngine.groupSkillBars), so no
   // administration screen can advertise a bar the engine does not apply.
-  const minSkillByGroup = await assignmentEngine.groupSkillBars(client);
-
-  const [teams, memberships, agents] = await Promise.all([
+  const [teams, memberships, agents, minSkillByGroup] = await Promise.all([
     client.team.findMany({ where: { isActive: true }, orderBy: { key: 'asc' } }),
     client.teamMembership.findMany({ select: { agentId: true, teamId: true, isLead: true } }),
     client.agent.findMany({
@@ -180,6 +178,7 @@ async function listGroupPools(client = prisma) {
       select: { id: true, name: true, email: true, role: true, skillLevel: true, isActive: true, isAvailable: true, teamId: true },
       orderBy: { id: 'asc' },
     }),
+    assignmentEngine.groupSkillBars(client),
   ]);
 
   const staffIds = agents.map((a) => a.id);

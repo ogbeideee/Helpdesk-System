@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api } from '../api.js';
+import { api, peekRead } from '../api.js';
+import { usePageRefresh } from '../usePageRefresh.js';
 import { Spinner, ErrorState, EmptyState, useToast } from './ui.jsx';
 import { KpiCard } from './Dashboard.jsx';
 import { buildReportQuery, rangeLabel } from '../slaReportView.js';
@@ -105,7 +106,7 @@ function AttributionTable({ title, rows, emptyHint }) {
 }
 
 export default function ReportsPage() {
-  const [data, setData] = useState(null);
+  const [data, setData] = useState(() => peekRead('/reports') ?? null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState({ from: '', to: '' });
@@ -120,6 +121,8 @@ export default function ReportsPage() {
       setError(e.message);
     }
   }, []);
+
+  usePageRefresh(() => load(applied), ['/reports']);
 
   useEffect(() => { load({}); }, [load]);
 

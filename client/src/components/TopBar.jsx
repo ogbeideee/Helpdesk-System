@@ -4,6 +4,7 @@ import { CATEGORIES } from '../constants.js';
 import { Icon, Avatar, usePopover, avatarHue, initials, timeAgo, StateBadge } from './ui.jsx';
 import ThemeToggle from './ThemeToggle.jsx';
 import NotificationBell from './NotificationBell.jsx';
+import ReadStatus from './ReadStatus.jsx';
 
 /* ------------------------------------------------------------------ */
 /* Global search                                                       */
@@ -22,6 +23,8 @@ function GlobalSearch({ people, onFirstUse, routeKey }) {
   const [q, setQ] = useState('');
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [searchError, setSearchError] = useState('');
+  const [searchRetry, setSearchRetry] = useState(0);
   const [active, setActive] = useState(0);
   const { open, setOpen, close, anchorProps } = usePopover();
   const inputRef = useRef(null);
@@ -63,15 +66,16 @@ function GlobalSearch({ people, onFirstUse, routeKey }) {
     }
     let cancelled = false;
     setLoading(true);
+    setSearchError('');
     const t = setTimeout(() => {
       api
         .listTickets({ q: term, limit: 6 })
         .then((list) => { if (!cancelled) setTickets(list); })
-        .catch(() => { if (!cancelled) setTickets([]); })
+        .catch(() => { if (!cancelled) { setTickets([]); setSearchError('Ticket search is unavailable.'); } })
         .finally(() => { if (!cancelled) setLoading(false); });
     }, 220);
     return () => { cancelled = true; clearTimeout(t); };
-  }, [term]);
+  }, [term, searchRetry]);
 
   const results = useMemo(() => {
     if (term.length < 2) return [];
@@ -154,6 +158,8 @@ function GlobalSearch({ people, onFirstUse, routeKey }) {
             <div className="menu-empty"><Icon name="search" size={16} /><span>Keep typing…</span></div>
           ) : loading && !results.length ? (
             <div className="menu-empty"><span className="spinner spinner-sm" /><span>Searching…</span></div>
+          ) : searchError ? (
+            <div className="menu-empty" role="status"><span>{searchError}</span><button className="btn-link" onClick={() => setSearchRetry(value => value + 1)}>Retry</button></div>
           ) : !results.length ? (
             <div className="menu-empty"><Icon name="inbox" size={16} /><span>No match for “{term}”.</span></div>
           ) : (
@@ -283,7 +289,7 @@ export default function TopBar({ title, subtitle, dev, me, isAdmin, navOpen, onO
   const loadPeople = useCallback(() => {
     if (peopleAsked.current) return;
     peopleAsked.current = true;
-    api.dashboard().then((d) => setPeople(d.ticketsPerAgent || [])).catch(() => {});
+    api.people().then((rows) => setPeople(rows.map((person) => ({ agentId: person.id, name: person.name, email: person.email })))).catch(() => {});
   }, []);
 
   return (
@@ -313,6 +319,7 @@ export default function TopBar({ title, subtitle, dev, me, isAdmin, navOpen, onO
       <GlobalSearch people={people} onFirstUse={loadPeople} routeKey={routeKey} />
 
       <div className="topbar-actions">
+        <ReadStatus />
         <ThemeToggle />
         <NotificationBell />
         <AccountMenu me={me} isAdmin={isAdmin} onLogout={onLogout} />

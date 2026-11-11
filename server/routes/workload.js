@@ -304,16 +304,21 @@ router.get('/availability-history/:agentId', async (req, res) => {
 // GET /api/workload/notifications — the caller's in-app feed
 router.get('/notifications', async (req, res) => {
   try {
-    const events = await prisma.notification.findMany({
-      where: { agentId: req.agent.id },
-      orderBy: { createdAt: 'desc' },
-      take: 50,
-      include: { ticket: { select: { id: true, ticketNumber: true, shortDescription: true, state: true } } },
-    });
-    res.json({
-      unread: events.filter((e) => !e.readAt).length,
-      notifications: events,
-    });
+    // The count is deliberately its own query, NOT a filter over the returned
+    // page. Counting the feed meant the badge was capped by `take` below, so an
+    // agent with 300 unread notifications saw a confident "50" — the cap
+    // wearing the costume of a fact. The feed stays bounded; the number is the
+    // truth.
+    const [unread, events] = await Promise.all([
+      prisma.notification.count({ where: { agentId: req.agent.id, readAt: null } }),
+      prisma.notification.findMany({
+        where: { agentId: req.agent.id },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+        include: { ticket: { select: { id: true, ticketNumber: true, shortDescription: true, state: true } } },
+      }),
+    ]);
+    res.json({ unread, notifications: events });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

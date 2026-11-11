@@ -3,7 +3,7 @@
 Current checkpoint. Update this at the end of every task.
 Architecture and conventions live in `../CLAUDE.md`.
 
-_Last updated: 2026-10-07_
+_Last updated: 2026-10-21_
 
 ## Current Phase
 
@@ -15,6 +15,650 @@ not the quietest agent's — and a birthday or farewell notice opens no ticket a
 all.)
 
 ## Completed
+
+- **Ubuntu production cutover (2026-11-11).** Verified a fresh database dump,
+  started the Ubuntu container, and pointed Nginx at the local application.
+  Public HTTPS health and frontend checks passed, and invalid intake and
+  confirmation requests reached the application's handlers. Fly billing blocked
+  changing automatic start. The Fly machine was cordoned and stopped, then
+  stopped again after one restart. A subsequent request to the old endpoint
+  timed out and Fly still reported the machine stopped.
+
+- **Live DNS reached Ubuntu (2026-11-11).** The A record was switched before
+  the container started. Issued and installed a trusted certificate with
+  HTTP validation and configured the renewal reload hook. Nginx temporarily
+  forwards to the healthy Fly app over verified TLS. The public frontend and
+  health check pass. Ubuntu production remains stopped pending Fly control
+  access and the application handover.
+
+- **Ubuntu web ports verified (2026-11-11).** Nginx listens on 80 and 443,
+  redirects HTTP to HTTPS, and proxies to the loopback application port.
+  Both listeners responded from outside the VM. HTTPS uses a temporary
+  self-signed certificate, and the upstream container is stopped pending
+  cutover. Install a trusted certificate before directing users to the VM.
+
+- **Ubuntu deployment staged (2026-11-11).** Installed Docker and Compose on
+  the new VM and built `helpdesk:2026-11-11` from the scanned release package.
+  All 17 migrations applied to isolated PostgreSQL, and the container served
+  the health endpoint and production frontend. A read-only check found the
+  production schema up to date. Staged the root-owned configuration and created
+  the production container in `/opt/helpdesk`. HTTPS routing and the live
+  handover remain pending.
+
+- **Linux production configuration prepared (2026-11-03).** User reports image
+  build succeeded; Compose syntax check passed with the empty configuration
+  file. Exported 34 allowlisted runtime environment variables from the live
+  Fly machine to a git-ignored, user-restricted local configuration file.
+  No values displayed and no container started. Secure transfer to the VM,
+  configuration verification and HTTPS/cutover remain outstanding.
+
+- **Linux migration package prepared (2026-11-03).** Ubuntu VM has Docker and
+  Compose installed; user verified SSH from their Windows computer to the VM.
+  Exported allowlisted application sources from the live Fly instance and
+  overlaid the four prepared copy-only intake/parser/admin-setting files.
+  Package and SHA-256 file manifest are under git-ignored
+  `.scratch/linux-release-2026-11-03/`; all 222 packaged files passed the
+  repository secret scanner. No environment files, mailbox data, attachment
+  cache or dependencies were included. Package has not yet been built on
+  Linux or started. Production configuration, HTTPS, backup/migration review,
+  updates and single-instance cutover remain outstanding; Fly stays running.
+
+- **Linux VM setup guide (2026-10-23).** Created the simplified seven-page
+  Word guide at `docs/exports/Helpdesk Linux VM Setup Guide.docx`, with its
+  text source at `docs/linux-vm-helpdesk-setup.md`. Covers host identification,
+  separate Linux VM creation, Ubuntu and Docker, existing Supabase and Power
+  Automate configuration, HTTPS access, single-instance cutover, rollback and
+  maintenance. Uses example placeholders only. Standard renderer lacks
+  LibreOffice on this host; exported through Word and inspected all seven
+  rendered pages. No server, domain or deployment changes were made.
+
+- **Laptop-payment correspondence excluded (2026-10-23, live setting).**
+  Investigated screenshot INC-001926 (id 1843). Retained audits show creation
+  at 12:21 UTC and deletion at 12:24 UTC; no ticket remains. Its sender has no
+  registered account, and relevance triage returned disposition=ticket with
+  reason=no_action_required, policy=not_skip. Original recipient headers are
+  unavailable from the retained audit, so copy-only status was not asserted.
+  Added the specific full subject, stripped of reply prefixes, to the audited
+  `intakeIgnoredSubjects` setting using the deletion snapshot. Verified live
+  screening for original/reply/forward variants, preserved prior exclusions,
+  and checked an unrelated laptop request does not match this new entry.
+  No deployment, sender-wide exclusion, mail send or further deletion.
+
+- **Copy-only intake correction (2026-10-23).** INC-001925 was a manager's
+  instruction to two colleagues, with an unconfigured department alias on Cc.
+  Its triage decision was informational_announcement but attachments vetoed
+  suppression. Added explicit `intakeInternalDomains` for employees without
+  accounts, exact-domain matching, and direct-To precedence across all intake
+  aliases. Added an admin field and regression coverage. Fixed dated iPhone
+  attribution lines with sender addresses so unprefixed history cannot affect
+  classification. Four focused server suites, client checks and build pass.
+  INC-001924's source actually includes a configured helpdesk address on To;
+  it remains accepted by the direct-address rule. Existing tickets retained.
+  Four-file release prepared from current live sources in `.scratch/copy-release`;
+  Fly rejected the build because the hosting account has overdue invoices.
+  The new domain setting and parser change are not deployed.
+  Applied the missing department alias immediately through the audited live
+  settings service. Re-exported INC-001925 and verified the live screen now
+  suppresses its copied-only shape while direct requests still pass. No mail
+  was sent and no existing ticket was deleted. After deployment, run the guarded
+  `.scratch/copy-configure.cjs` on the server to enable the verified organisation
+  sender domain; it preserves existing settings and verifies both outcomes.
+
+- **Pickup acknowledgement ticket removed (2026-10-22).** Investigated
+  INC-001922: relevance triage recommended skip/no_action_required, but
+  attachment_present vetoed suppression; reply references matched no stored
+  ticket/comment. At the user's explicit request, privately archived and deleted
+  only INC-001922 (id 1839) in a guarded transaction with a retained deletion
+  audit. Verified no matching ticket remains. Original mailbox message intact.
+  No new pickup-screening rule was added in this task.
+
+- **Vendor conversation intake exclusion (2026-10-22, live setting).**
+  User identified INC-001921 as non-helpdesk vendor coordination. Its sender is
+  not a registered account, so internal-copy screening did not apply. Added
+  the specific vendor reference `IN00003901` to `intakeIgnoredSubjects` through
+  the audited settings service, preserving all prior exclusions. Verified the
+  live screening service skips new-ticket candidates for the original subject
+  and reply/forward variants; other vendor references remain unaffected.
+  Existing ticket retained; no deployment or mailbox changes required.
+
+- **Qualitative weekly report wording (2026-10-22, deployed).** Summary and
+  accomplishments now omit exact activity totals: single work has no quantity,
+  repeated work uses multiple/several. AI receives frequency labels instead of
+  raw counts; validation rejects unsupported digit and written totals. Factual
+  fallback follows the same policy and preserves project status and technical
+  names. Stored activity counts and existing drafts remain intact; regenerate
+  to use the new wording. Weekly-report suite passes on disposable PostgreSQL.
+  Scoped writer-only release `deployment-01M5HYWAJWCAZQPS9D9ZTWKMTN`
+  deployed on the existing machine. Smoke/health and DNS checks passed; live
+  writer hash and synthetic qualitative generation verified without changing
+  saved reports or calling the AI provider. Public health passed.
+
+- **Weekly report workspace refresh (2026-10-22, deployed).** Implemented the
+  approved page layout without editing the navbar or shell: readable week
+  navigation, compact expandable activity rows with quick counts, All/Recorded/
+  Favourites filters, separate Activities and Report preview tabs, folded setup
+  and shared activity management, and a sticky readiness/action bar. Report
+  wording now autosaves with serialized snapshots, in-flight edit retention,
+  failure pause/retry and flushing before navigation/generation/export. Previous
+  report notes require a selective comparison before replacement. View checks,
+  full client checks and production build pass. Mocked browser checks cover
+  counters, filters, selective carry-forward, generation/export, wording saves,
+  in-flight edits, conflict retry, stale reports and week navigation; overflow
+  checks pass at 320/390/768/900/1440px. Browser screenshots inspected in light
+  and dark. No backend or database changes. Scoped eight-file frontend release
+  `deployment-01M5HY5NK67HD18YR0V9VB12N4` deployed from the prior live image;
+  live CSS diff contains only weekly-report additions. Single-machine status,
+  smoke/health checks and DNS passed. Public health and deployed bundle checks
+  passed; browser checks against the deployed frontend with mocked API data
+  also passed, without changing production report records.
+
+- **Suggested resolution notes (2026-10-22, deployed).** Resolve dialog offers
+  three editable outcome-focused notes for each fixed ticket category. Selecting
+  a suggestion explicitly replaces the draft; agents review/edit before the
+  existing resolve action. Wording lives in `client/src/resolutionView.js`.
+  Client checks (including the new resolution check) and production build pass.
+  No backend, lifecycle or notification changes. Scoped two-file frontend
+  release `deployment-01M5HRG9AFK1TTYXTJT9QXW9BY` deployed from the prior live
+  image, preserving unrelated local work. Existing single machine, smoke/health
+  checks and DNS passed; public health and the live ticket bundle verify the
+  suggestions are present.
+
+- **Existing-thread identity backfill (2026-10-21).** Investigated INC-001915:
+  created 13:35 UTC, nine minutes before the adapter release at 13:44 UTC.
+  Its RFC reply references have no current Ticket/Comment target; no current
+  earlier transformer ticket exists. Original MIME exports verified the RFC
+  identity, requester and Outlook thread root for all 11 current email tickets.
+  Backfilled only null conversation identities with compare-and-set guards in
+  two audited transactions (10 plus one export retry). Zero email tickets now
+  lack a conversation identity. Read-only execution of the actual resolver
+  confirms a same-requester follow-up matches INC-001915. No tickets/messages
+  were merged or deleted; ownership, lifecycle and ticket numbering unchanged.
+  Private source-verification manifests are in git-ignored server/backups/.
+
+- **Reply splitting diagnosis and Outlook identity fix (2026-10-21, deployed).**
+  Live INC-001907/001911 share the same requester and Outlook Thread-Index
+  root, but their exported MIME contains no In-Reply-To or References. The
+  adapter discarded Thread-Index and stored no conversation identity, so the
+  later reply opened a ticket. Adapter now derives a namespaced conversation
+  identity from a validated 22-byte Outlook root, retaining RFC-reference
+  precedence and the existing same-requester restriction. Separate roots,
+  malformed indexes and different senders are covered. Power Automate, email
+  parser, IMAP and IMAP OAuth suites passed (4/4); secret scan clean. Scoped
+  one-file release `deployment-01M5FB7SJCEEMX03PTHB57Q1ZR` deployed on the
+  existing single machine. Machine/DNS checks and a deployed parser-only
+  original/reply identity test passed without ingestion or sending email.
+  Existing tickets have null identities and need a
+  source-verified backfill; no live tickets were changed or merged. SIM-card
+  pair INC-001900/001912 is another likely split, not yet source-confirmed.
+
+- **Health awareness announcement screening (2026-10-21, deployed).** INC-001913
+  exposed a gap between greeting banners and general informational mail.
+  Deterministic intake now screens health awareness sessions only with matching
+  subject, broadcast audience, organised/scheduled session and health evidence
+  in cleanBody. Narrow informational phrases do not count as requests; other
+  request words veto screening. Missing prose fails open, permitted subjects
+  and existing-ticket replies retain precedence. Intake-screening regression
+  coverage includes the screenshot wording and genuine IT requests. Intake
+  screening suite and secret scan passed. Scoped one-file release
+  `deployment-01M5F8PM9TNDM02GWHQMPRT7S2` preserved the existing single machine;
+  deployed source hash matches local, machine checks and public health passed.
+  At the user's request, archived and deleted only INC-001913 in a guarded
+  transaction (no replies or attachments), preserving AuditEvent history and
+  ticket numbering. Ten other tickets remain. Private archive lives under
+  git-ignored server/backups/; original mailbox message remains untouched.
+
+- **Administrator assignment-group deletion (2026-10-20, deployed).** Added
+  Delete group to the existing group editor with a confirmation step and
+  backend-supplied availability/restriction text. The administrator-only
+  service protects default/fallback groups, all primary/supporting memberships,
+  active/inactive rules, current/originating ticket references and historical
+  SLA references. A group row lock guards concurrent FK writers; deletion and
+  `group.deleted` auditing are atomic, with audit history retained. Routing
+  suite (16 deletion checks), assignment-group and audit suites, client checks,
+  production build and secret scans passed. Scoped four-file release
+  `deployment-01M5CESFSNQJJT0FR5PP2DN60H` rebuilt the live frontend, kept the
+  existing single machine and required no migration. Live health and groups
+  API returned 200; unused F is deletable and the default is protected.
+  No production group was deleted during verification.
+
+- **Launch security fixes and live pilot (2026-10-20).** Deployed a dependency-only
+  image `deployment-01M5CDRNWG92PBJXTZ24VXQ1DT` onto the existing single
+  machine. Local and deployed audits report zero vulnerabilities; live health
+  passed, with no application-source, frontend-bundle or schema changes.
+  Client checks/build passed; 52/53 server suites passed on the full run and
+  the corrected duplicate-header parser expectation passed on rerun (all 53
+  suites have passing results). Verified direct and department email intake,
+  preferred Farook assignment, requester acknowledgement, same-thread
+  reply/reopen, staff copy-only screening, resolve mail and two-step requester
+  confirmation. Archived and removed both synthetic pilot tickets afterwards;
+  final queue has zero tickets and numbering is preserved. Team availability
+  confirmed by owner. CI audit/deployment gates prepared locally. Native flow
+  failure-alert configuration is still pending access to the flow-owning
+  account; David's session sees no owned/shared flows. Browser permission
+  prevented a repeat live attachment upload; automated attachment coverage
+  passed and prior live commissioning remains recorded below. See
+  [launch-readiness.md](launch-readiness.md) for details and remaining action.
+
+- **Pre-launch ticket reset (2026-10-20).** At the user's explicit request,
+  removed all 134 existing tickets in one guarded transaction, including 240
+  comments, 71 attachment references, 300 lifecycle audit rows, 9 conversation
+  reads, 140 SLA cycles, 599 SLA events and 498 ticket notifications. Cleared
+  another 57 legacy ticket notifications with null references afterwards.
+  Final checks: zero tickets and in-app ticket notifications; live health 200
+  with ok true. A private
+  database backup passed restore/migration rehearsal on disposable PostgreSQL
+  before deletion. Preserved 9 accounts, 7 groups, 20 memberships, 9 routing
+  rules, 10 settings, administrative audit history, delivered-email metadata,
+  mailbox messages and ticket numbering (global counter 1897). A reset audit
+  event and private operation manifest record the action. Replaying old source
+  emails can recreate tickets now their original identity rows are removed.
+  Local production dependency audit reports 1 critical, 4 high and 7 moderate
+  findings; remediation and verification of the deployed image remain pending.
+
+- **Power Automate integration deployed; O365 sender enabled (2026-10-19).**
+  Scoped backend release deployment-01M5AA6WCXG48GYJBTYCVNRESW layers ten
+  reviewed application files over the prior live image, with no migration,
+  frontend build or unrelated workspace edits. Incoming MIME intake is live:
+  user verified readable ticket content, an attachment listing, and a requester
+  reply threaded into the original ticket (INC-001889). Gateway authentication,
+  failure responses, source export and an authorised shared-mailbox test send
+  were commissioned; the user confirmed receipt. Production and local outbound
+  flags are now enabled. Live runtime selected power_automate; a cutover test
+  completed successfully through the durable notification sender, and public
+  health passed after restart. Existing IMAP configuration remains available for
+  historical sources; this cutover changes the selected notification sender.
+  All notifications retain mailer.js and durable Notification delivery. Gateway
+  requires explicit completion acknowledgement; HTTP 202 does not count as sent.
+  Shared parsing preserves screening, RFC dedupe, threading and attachments;
+  cache misses can re-export the source. Secrets remain environment-only and
+  diagnostics expose booleans only. User declined credential replacement.
+  Eleven affected server suites passed on disposable PostgreSQL; secret scans
+  passed. No schema change. See power-automate.md for flow contracts, rollback
+  and operational limits. Power Automate platform failure alerts are required;
+  the IMAP watchdog does not monitor flows.
+
+- **Measured loading improvements (2026-10-18, deployed).** Applied
+  concurrent independent ticket-detail reads, selective mutation cache
+  invalidation and a shared visible-page refresh clock. Desktop notification
+  polling remains active in background tabs. See
+  `loading-performance-2026-10-18.md` for methodology and limitations: detail
+  median 31.4→21.8 ms locally and 556.1→320.9 ms with controlled 50 ms query
+  delay; read receipts caused zero unrelated refetches versus three before.
+  These are disposable/synthetic measurements, not production page timings.
+  Client checks/build and four affected server suites passed. Deployed release
+  `deployment-01M57CKYATB6PNASF1D97MKPS3` to the existing single machine;
+  Fly smoke/health/machine checks and DNS passed. Public health, new entry and
+  detail assets, immutable caching, production CSP and anonymous API rejection
+  passed. Detail download timed out on the default local network path, then
+  succeeded immediately over IPv4 (HTTP 200, 57,549 bytes). No schema or visual
+  changes; production performance was not benchmarked.
+
+- **Security/UX release and reply-alert removal (2026-10-18).** Deployed
+  `deployment-01M57AJAWTSVTQK1HSS88RPSFZ` to the existing single Fly machine.
+  Migration `20261018090000_revoked_sessions`, committed with its schema hunk
+  as `b9555b5`, is applied and verified complete. A private read-only backup
+  passed restoration/migration rehearsal with core rows and memberships intact.
+  Local Prisma's production migration command returned an opaque engine error;
+  the same committed migration succeeded from the deployment host, then table
+  existence and migration completion were independently checked. Runtime is
+  explicitly production. Received reply/reopen alerts no longer send to an
+  assignee or DL; unread/conversation updates remain, and requester-facing
+  emails remain active. Legacy queued alerts are expired before transport.
+  Affected email/conversation/SMTP/operations/security suites: 6/6 passed, on
+  top of the preceding 52/52 server regression and client checks/build. Machine
+  health, DNS, public health and published CSP/assets passed release checks.
+  The public sign-in screen also loaded in the browser without console errors;
+  the new session route rejects anonymous calls and the published detail bundle
+  contains the draft/save controls. No test emails were sent in production.
+
+- **Security/UX review implementation (2026-10-18, local).** Rows 2–11 are
+  implemented; see `security-and-ux-2026-10-18.md` for behavior, verification and
+  rollout. Cookie sessions and durable logout revocation, script CSP, aggregate
+  throttling, safe errors, staff-only workspace access, emailed staff response
+  SLA, tab-scoped drafts, modal focus isolation, compact phone detail, explicit
+  property saves, error retries and bounded initial conversation reads. Preserved
+  navigation/theme tokens. Includes an additive RevokedSession migration, not
+  applied to production. Final server regression: 52/52 suites passed on the
+  disposable PostgreSQL cluster. Client checks/build and tracked/new-file secret
+  scans pass. Browser checks use disposable data and production script CSP:
+  drafts, explicit saves, enriched conversation preservation, pending edits,
+  nested dialog focus/cleanup, light/dark and 360/390/768/1024/1366px layouts with
+  no page overflow. Temporary UI harnesses removed after verification;
+  screenshots/logs are outside the repository. Existing application data and
+  deployment remain unchanged.
+
+- **Read-only product review (2026-10-18).** Findings and evidence limits in
+  `product-review-2026-10-18.md`: session/CSP containment, login aggregate
+  throttling, raw route errors, draft loss, modal focus, phone inspector order,
+  silent data errors, refresh-overwritten group selection, full-thread reads
+  and synchronous bcrypt. Prior staff-email response-SLA discrepancy remains.
+  Client checks/build passed; live public health and CSP checked. Dependency
+  registry audit stalled; no authenticated browser or live performance audit
+  was available. No application changes or deployment.
+
+- **Conversation continuity (2026-10-14).** Restored a persistent Original
+  request badge and kept the opening email visible in long threads. Added
+  local date separators, exact recorded clock times, stable message numbers
+  and explicit gaps for hidden replies. Quoted history opens directly from
+  each email, sorted chronologically only with readable quoted dates. Unique
+  earlier sender-address/text matches get compact links; full quoted copies
+  and unmatched context remain available. Links reveal and focus hidden
+  targets without changing the hash route. Renamed the stored-text disclosure
+  View complete email. Existing standalone replies, attachment placement,
+  unread behavior and threading permissions are preserved. Pure helpers and
+  expanded conversation checks cover timezone boundaries, hidden/unread gaps,
+  ambiguity, unknown senders, internal notes and quote preservation. Browser
+  checked a nine-message synthetic thread in light/dark, link expansion/focus,
+  and 390px phone wrapping/no overflow. All client checks, build and secret
+  scan passed. Temporary preview files removed. Response-SLA treatment of
+  staff emails remains a separate issue; no backend/database changes here.
+  Deployed as `deployment-01M4X6KP0HFDQ5XQ62BHDAA3EP`; machine/DNS/public-health
+  checks and published bundle checks passed. Browser verified the live ticket
+  still has six separate messages, visible dates/clocks and the opening badge;
+  its final quoted trail cross-references all four earlier messages, and the
+  opening-message link focuses the correct entry without changing the route.
+
+- **Ticket-detail mockup alignment correction (2026-10-14).** Corrected the
+  initial styling-only pass after the user's live screenshots exposed its
+  layout mismatch. The subject/metadata now lead the conversation panel,
+  which joins directly to the composer. Person avatars, underlined tabs and
+  grouped message diagnostics reduce clutter. The inspector uses compact SLA
+  wording from slaView, with cycle dates/history and secondary account facts
+  in disclosures; skill warnings and permitted actions remain visible.
+  Phone layout keeps the subject above the inspector and conversation. The
+  existing navigation and global header are unchanged. Actual components were
+  browser checked with synthetic data in light/dark at 1366x900 and on a
+  390x844 phone: no horizontal overflow, 16px inputs, actions within the
+  desktop viewport, and thread correction still opens from Message details.
+  Client checks, production build and secret scan passed. Temporary preview
+  files removed before packaging. Deployed as
+  `deployment-01M4X4XJQPPE4KTXQ0BKG4DBGG`; machine/DNS/public-health checks
+  passed, published assets verified, and the user's live ticket page was
+  refreshed and visually checked in the authenticated browser. The subject
+  is inside the conversation panel, sender avatars and compact diagnostic
+  disclosures are present, and the primary action is visible at the original
+  desktop viewport. Navigation remains unchanged.
+
+- **Ticket detail visual refinement (2026-10-14).** Applied the approved
+  conversation/inspector direction using existing theme tokens. Soft message
+  surfaces, amber internal-note edges and an unread divider improve reading;
+  SLA now leads the single inspector, with existing primary actions moved
+  into its Actions section. Navigation and global header are unchanged.
+  Composer visibility controls now expose their pressed state and the input
+  has an accessible name. All client checks (including mobile/contrast) and
+  production build and secret scan passed. Deployed as
+  `deployment-01M4X3VZPQCZCA18TB1J3TTZZR`; machine checks, DNS and public health
+  passed. Live stylesheet and ticket-detail bundle verified to include the
+  workspace styles and inspector actions. No server/database changes in this
+  task. Visual browser verification remains outstanding.
+
+- **Long weekly-review dialog fix (2026-10-13).** Fixed an overflowing review
+  whose Generate report button was below the viewport. The review opts into a
+  bounded flex modal with a keyboard-focusable scrolling activity region and
+  fixed header/footer. Other modal layouts retain their existing behavior.
+  All client checks/build and secret scan passed. Browser tested all 15
+  activities with long descriptions at 1920x930, default desktop and 390x640;
+  verified scroll position changes, footer visibility, no mobile horizontal
+  overflow, and successful generation. Deployed image
+  `deployment-01M4VAZK3G2G958WYR06PBV6N1`; machine/DNS/public-health checks
+  passed. Live report bundle and stylesheet verified for bounded modal,
+  scrolling activity region and pinned footer. No database/server changes.
+
+- **Weekly report convenience improvements (2026-10-13).** Added personal
+  account-backed favourites, serialized/debounced entry autosave, project
+  progress/completion statuses and a review-before-generation modal with
+  optional project/off-site description prompts. Preferences are separate from
+  weekly report facts; existing draft fingerprints remain compatible when no
+  project status is supplied. Completed-with-zero is rejected server-side.
+  Carry-forward clears project statuses. Writer prompts, factual wording and
+  AI passage validation respect explicit statuses. Client checks/build and
+  expanded isolated weekly-report tests passed. Browser checked in-flight
+  typing survives autosave/reload, favourites persist, review prompts appear,
+  and generated project wording remains in progress. Migration
+  `20261013180000_weekly_report_preferences` committed as `26e943f`.
+  Applied migration to the application database (16 migrations current).
+  Full server run 51/51 passed; final client checks/build passed, including
+  serialization, in-flight edit retention and failure/retry checks. Browser
+  also verified trailing spaces survive an autosave acknowledgement. Deployed
+  image `deployment-01M4V77ZKH9CMD54H9SVYJGYJC` on the existing single machine.
+  Machine/DNS/public-health checks passed. Live bundle includes all four
+  improvements; authenticated preferences read, synthetic AI project-status
+  wording and Excel export passed without writing production report data.
+  Updated-file and tracked-file secret scans clean; local server environment
+  secret file excluded from the image.
+
+- **Weekly activity frequency choices (2026-10-13).** Replaced always-visible
+  counters with native Not done / Once / Multiple times radio choices.
+  Multiple times reveals a counter starting at 2, with direct entry and + / −.
+  Existing saved numeric counts remain compatible; descriptions are preserved,
+  and zero-count descriptions are explicitly labelled progress only. Pure
+  interaction helpers live in weeklyReportView.js; the new region component is
+  WeeklyActivityFrequency.jsx. All client checks and production build passed.
+  Browser verified option changes, multiple-count restoration, minimum 2,
+  direct entry and save/reload persistence on disposable PostgreSQL data.
+  No server or database changes. Deployed image
+  `deployment-01M4V67CNT5K4K0K8ZP2055Y3J` on the existing single machine.
+  Machine/DNS/public-health checks passed; live weekly report bundle and
+  stylesheet verified for all three options. Updated-file secret scan clean.
+
+- **Weekly report writing and references (2026-10-13).** Added a reusable
+  private Excel writing/formatting reference per agent, prior-report note
+  carry-forward with zeroed new activity counters, Groq-backed grounded prose
+  generation and a local factual fallback. Create Report writes the summary
+  and four accomplishment sections; editable saved drafts export without
+  regeneration. Current-input fingerprints prevent stale exports. Reference
+  uploads reject macros, formulas, external links and excessive archive sizes.
+  Expanded isolated server suite covers upload privacy, formatting retention,
+  old-fact exclusion, counts, provider failures, edited drafts and throttling.
+  Browser checked generation, editing, export and reference re-upload against
+  disposable test data. Original supplied workbook parsing verified. Added
+  migration `20261013150000_weekly_report_reference`, committed with the initial
+  report migration in `76e6953` and applied to the application database (all
+  15 migrations current). Full server run 51/51 passed, client checks/build
+  passed, and focused report tests passed again after sizing model output by
+  the number of recorded activities. Tracked/untracked application scans clean.
+  Deployed image `deployment-01M4TJ8F2YWN6RD4TPM1P0X4P1` on the existing single
+  machine. Machine/DNS/public-health checks passed. Live authenticated API,
+  synthetic AI writing, Excel export and reference re-parsing passed without
+  writing any production report data. Live bundle includes upload, AI wording
+  and editable-draft controls. Local server environment secret file excluded.
+
+- **Personal weekly reports (2026-10-13).** Added staff-only weekly counters
+  and descriptions for the 15 supplied activities, custom activities,
+  administrator-managed standard activities, report notes and preview, and
+  Excel export using the supplied template's sanitized formatting. Optional
+  attributed-ticket counting is off by default. Personal snapshots have no
+  change history and concurrent saves are protected. Applied migration
+  `20261013120000_weekly_activity_reports` to the application database; all
+  14 migrations are current. Full server run 51/51 passed, all client checks
+  and production build passed, tracked and 30 untracked application-file
+  secret scans clean. Deployed image
+  `deployment-01M4TENM4C26WMH0JRG7Z5VFVS` on the existing single machine.
+  Machine checks, DNS and public health passed; live bundle includes the
+  weekly report screen. Read-only authenticated live checks loaded all 15
+  activities and verified the generated Excel workbook and prepared-by field;
+  anonymous access returns 401. Image excludes the local server environment
+  secret file. See `weekly-reports.md`.
+
+- **Aligned SLA pairs, option 01 (2026-10-12).** Queue SLA clocks render as
+  fixed label/value pairs without pill backgrounds. Labels remain neutral;
+  exceptional values retain explicit Missed/Overdue wording and a coloured
+  dot. Values use tabular numbers and no wrapping. SLA column widened to
+  248px; mobile cards give SLA a full-width row. Derived SLA values and backend
+  rules are unchanged. Client checks, production build and secret scan passed.
+  Deployed release deployment-01M4QQEX7VB2ZDKV590DYZA0P3; machine
+  checks, DNS and public health passed. Live stylesheet index-BVnd-s9k.css
+  verified for aligned pairs, transparent alerts and full-width mobile SLA.
+
+
+- **Queue dividers and visual cleanup (2026-10-12).** Clearer horizontal row
+  borders plus subtle vertical separators group identity, workflow, SLA and
+  ownership. Group labels and healthy SLA clocks lose extra pill backgrounds.
+  Group/agent content is bounded with ellipsis and full-name tooltips; avatars
+  retain their size. Mobile cards explicitly remove vertical separators.
+  Client checks, production build and secret scan passed. Deployed release
+  deployment-01M4QPYD21NZP8WWS49JQKM9JP; machine/DNS checks and public
+  health passed. Live stylesheet index-DiXXxUIu.css verified for separators,
+  plain healthy SLA clocks and bounded group labels. No backend changes.
+
+
+- **Lifecycle badge colours (2026-10-12).** Shared badges now use blue for New,
+  violet for In Progress, green for Resolved and grey for Closed. Moderate
+  priority remains neutral; High/Critical stay amber/red. Existing theme
+  tokens and one shared component rule set cover both themes. Client checks,
+  including badge contrast >=4.5:1 in light/dark, production build and secret
+  scan passed. CSS-only product change. Deployed release
+  deployment-01M4QNB8514GT1F9DPS6C1W7QG; machine checks, DNS and public
+  health passed. Live stylesheet index-CRLt4-T6.css verified to contain
+  the blue New and violet In Progress rules.
+
+
+- **Queue release verification (2026-10-12).** Resolved the earlier session's
+  process-spawning blocker without changing testpg: the disposable local
+  PostgreSQL cluster starts normally here. Full server run: 49/50 passed,
+  including SLA overdueMs, SLA dashboard/report, API and workload. The sole
+  public-status rate-limit failure passed on immediate rerun; the test now
+  pins 127.0.0.1 so address-family selection cannot split its per-IP bucket,
+  and passed again. All 50 suites therefore have passing results, though the
+  original full run was not completely green. Client checks and production
+  build passed; tracked-file and 21 new application-file secret scans clean.
+  No uncommitted migrations. Fly browser sign-in completed. CLI auto-upgrade
+  failed during download; restored its existing executable and DLL backups
+  and disabled update checks for this release. Final release: deployment-01M4QMY2K6Z42WDRADWGJXX1PE.
+  Machine checks and DNS passed; public health returns only { ok: true };
+  released bundle index-ChKTUvMS.js contains the queue quick views and
+  response-owner wording. Remote inspection confirms only example environment
+  files remain, with no local environment secret files.
+  Packaging inspection found /app/server/.env present in the initial image:
+  root-only Docker ignore patterns missed nested env files. Added recursive
+  env exclusions and rebuilt; credentials from prior image copies require
+  rotation under docs/credential-rotation.md. No values were displayed.
+  Dependency audit (production dependencies): 1 critical, 4 high, 6 moderate;
+  remediation remains a separate follow-up.
+
+
+- **Assignment email ticket links (2026-10-09).** The ticket number in assignment
+  notifications is an HTML hyperlink to the authenticated `#/tickets/:id` page;
+  the text alternative includes the same URL. Configured public origin/subpath
+  is used, with safe fallback for absent/invalid configuration. No access token
+  is embedded and existing ticket permissions apply. Requester notifications
+  retain their existing link policy. Email integration, SMTP and resolution
+  suites passed, including safe URL configuration and escaping checks. Existing
+  delivered messages are unchanged. Fly release
+  `deployment-01M4FYM9SAGQYXDHYXZTDQ5331` passed health checks. A production
+  builder check (without sending email) confirmed the configured origin, correct
+  ticket route, text alternative and absence of embedded credentials; the
+  unauthenticated ticket API still returns 401. A synthetic email preview was
+  visually verified.
+
+- **Outlook trails and checklist audit (2026-10-09).** Verified the intake
+  ledger's sender/message identities, friendly outcome labels, sender/ticket
+  links, reply activity timestamps, queue/detail reply markers, tests and docs.
+  Message IDs are now expandable/copyable in the ledger. Complete Outlook
+  From/Sent/To/Cc/Subject blocks separate historical mail without requiring an
+  Original Message marker; expanded history renders individual header dividers
+  and collapsed signatures. Regression coverage includes the helpdesk portal
+  signature banner, legal footer, wrapped recipients, multiple older emails,
+  explicit signature delimiters and angle-bracket address preservation.
+  Stored messages are unchanged. Affected server suites, client checks, build,
+  secret scan and a disposable browser preview passed. A read-only check of the
+  reported ticket confirmed separate current/quoted text and the portal banner
+  inside the quoted email's collapsed signature. Fly release
+  `deployment-01M4FWN5JTZCCM6TQD3MVQGYQ4` passed machine/public health checks,
+  released-asset checks and an authenticated read-only response check of the
+  reported ticket: Outlook headers separated, portal signature recognised,
+  full original retained. No live message content was changed.
+
+- **Ticket conversation improvements (2026-10-09).** Conversation/Activity tabs,
+  clear message types, expandable quote/signature/original text, five-message
+  folding, message-local attachments, response ownership and per-account unread
+  badges/dividers are implemented. Admins can inspect recorded matching evidence
+  and move received replies with attachments to another open ticket, with a
+  reason, transactional state checks and audits on both tickets. Historical
+  matching reasons remain explicitly unknown. Existing text, statuses and
+  ownership are preserved. See [ticket-conversations.md](ticket-conversations.md).
+  All 50 server suites passed (48 in the full run, two after fixing test fixture
+  assumptions about the harness's cleared inbound settings); client checks,
+  production build, secret scans and isolated browser checks passed. The queue
+  retains its existing read-performance budget. A private production backup
+  passed restoration and migration rehearsal before the additive migration was
+  deployed. Schema/migration commit: `a93efc4`. Fly release
+  `deployment-01M4FVWGH4QT3207NNVNEHG24V` passed machine health checks;
+  public health, released interface assets and authenticated read-only queue/
+  conversation API checks passed. Browser correction tests used disposable
+  tickets only; no live conversation was moved for verification.
+
+- **SeeCode architecture diagrams (2026-10-08).** Created the interactive
+  [system overview](../diagrams/ticketdesk-architecture.html) and
+  [email intake detail](../diagrams/email-intake.html), with editable JSON specs,
+  source evidence and PNG exports in `diagrams/`. They use the app palette and
+  distinguish live IMAP intake from the unverified Graph alternative and
+  optional relevance triage. Both render without warnings; PNGs were visually
+  checked for readable labels and connections. Documentation only; no deployment.
+
+- **Bulk close of unfinished tickets corrected (2026-10-08).** The original
+  selection action reused the resolved-only endpoint, so selecting New tickets
+  failed with `Invalid transition NEW -> CLOSED`. Queue confirmation now sends
+  an explicit administrator override. A service permits New/In Progress closure
+  only for admins with a note, compares state and ownership, writes both audits
+  transactionally and ends the SLA cycle. Ticket resolution remains unstated;
+  outstanding handovers are cancelled and the ordinary status notification is
+  sent. Resolved-ticket confirmation behavior remains intact. Already-closed
+  selections are harmless; failed rows remain selected. Regression coverage
+  includes both open states, owner/administrator permissions, required notes,
+  SLA finalization, repeat requests and concurrent closes. The ten relevant
+  API, handover, SLA and resolution-confirmation suites passed, together with
+  all client checks, the production build and secret scanning. No schema change.
+  Deployed `deployment-01M4DDDBEC6WB0BP502WM274PJ` to the existing single
+  machine; deployment health checks, public liveness and the live bundle's
+  administrator confirmation text passed. No live ticket was closed for testing.
+
+- **Application-wide loading improvements (2026-10-08).** Authenticated display
+  reads now share a bounded, memory-only session cache: fresh reads reuse data,
+  revisits show cached results while refreshing, and successful writes/session
+  changes invalidate it. Visible pages refresh every thirty seconds and on
+  focus; the header provides refresh/retry feedback. Background refresh preserves
+  unsaved settings drafts and applied report filters. Navigation preloads page
+  code on hover/focus. Dashboard and agent screens each use one primary request;
+  ticket detail renders before its secondary panels finish loading. The queue
+  still displays twenty-five tickets per page, now fetched as twenty-five compact
+  records with server-wide sorting/filtering and a separate total. Bodies remain
+  available in detail/search; existing API consumers retain the full list shape.
+  The long-email fixture verifies over ninety percent less queue payload. All
+  49 server suites, client checks, production build and tracked/new-file secret
+  scans passed. Browser checks covered main screens, pagination/sorting, detail,
+  cached navigation and preserving a settings draft during refresh. No schema
+  change or infrastructure relocation. Deployed image
+  `deployment-01M4D9JCAVNGR4ECHH1Q4RCREP` on the existing single machine;
+  deployment checks, public health and live bundle verification passed.
+  Authenticated loopback reads on the deployed machine returned 78 legacy
+  tickets in 541,254 bytes versus 25 queue rows in 38,845 bytes (93% reduction).
+  One sequential smoke sample measured queue 2.04s, dashboard 1.63s, agents
+  1.01s and groups 1.11s; the legacy queue took 1.67s. These are server API
+  observations, not end-user page timings or evidence of a faster cold queue
+  query. Cached navigation and fewer requests improve perceived loading;
+  server/database distance remains a separate infrastructure limitation.
+
+- **Bulk closing and announcement cleanup (2026-10-08).** Queue selection now
+  offers Close selected with a confirmation explaining the requester override.
+  It uses the existing close endpoint sequentially, preserving permissions,
+  RESOLVED-only transitions, compare-and-set writes and audits. Successful rows
+  are deselected; failures remain selected with a reason. Birthday ticket
+  INC-001831 predates the October 7 birthday-filter implementation; replaying
+  its stored body through today's parser yields an empty clean body and screens
+  it out. Country/age-prefixed independence greetings were missing from the
+  banner patterns and are now covered, with request-preservation checks.
+  Removed four confirmed non-ticket emails: INC-001755 (sales circular),
+  INC-001810 (safety event), INC-001819 (independence greeting), INC-001831
+  (birthday). One requester comment and fifteen notifications were removed with
+  them; no attachments. Verified all four absent afterwards. Saved three narrow
+  ignored-subject phrases through the audited settings service for these
+  standing announcements; induction and exit notices remain untouched.
+  Client checks/build, intake-screening and resolution-confirm suites, and
+  secret scan passed. Deployed image
+  `deployment-01M4D6P3S1DA4M6XWVQSXWECT4` to the existing single Fly machine;
+  deployment health checks passed. Public liveness returns 200/ok and the live
+  application bundle contains the new Close selected control. No schema change.
 
 - **Stale page imports recover after deployment (2026-10-07), release 49.**
   An already-open browser referenced a retired Handovers chunk. The SPA
@@ -288,7 +932,64 @@ all.)
 - **Previous session (2026-09-10):** AI classifier seam + benchmark,
   Prisma guard, Vercel/Fly prep (all committed as `6c045eb` etc.)
 
-## Completed This Session (2026-09-28)
+## Completed
+
+- **Aligned SLA pairs, option 01 (2026-10-12).** Queue SLA clocks render as
+  fixed label/value pairs without pill backgrounds. Labels remain neutral;
+  exceptional values retain explicit Missed/Overdue wording and a coloured
+  dot. Values use tabular numbers and no wrapping. SLA column widened to
+  248px; mobile cards give SLA a full-width row. Derived SLA values and backend
+  rules are unchanged. Client checks, production build and secret scan passed.
+  Deployed release deployment-01M4QQEX7VB2ZDKV590DYZA0P3; machine
+  checks, DNS and public health passed. Live stylesheet index-BVnd-s9k.css
+  verified for aligned pairs, transparent alerts and full-width mobile SLA.
+
+
+- **Queue dividers and visual cleanup (2026-10-12).** Clearer horizontal row
+  borders plus subtle vertical separators group identity, workflow, SLA and
+  ownership. Group labels and healthy SLA clocks lose extra pill backgrounds.
+  Group/agent content is bounded with ellipsis and full-name tooltips; avatars
+  retain their size. Mobile cards explicitly remove vertical separators.
+  Client checks, production build and secret scan passed. Deployed release
+  deployment-01M4QPYD21NZP8WWS49JQKM9JP; machine/DNS checks and public
+  health passed. Live stylesheet index-DiXXxUIu.css verified for separators,
+  plain healthy SLA clocks and bounded group labels. No backend changes.
+
+
+- **Lifecycle badge colours (2026-10-12).** Shared badges now use blue for New,
+  violet for In Progress, green for Resolved and grey for Closed. Moderate
+  priority remains neutral; High/Critical stay amber/red. Existing theme
+  tokens and one shared component rule set cover both themes. Client checks,
+  including badge contrast >=4.5:1 in light/dark, production build and secret
+  scan passed. CSS-only product change. Deployed release
+  deployment-01M4QNB8514GT1F9DPS6C1W7QG; machine checks, DNS and public
+  health passed. Live stylesheet index-CRLt4-T6.css verified to contain
+  the blue New and violet In Progress rules.
+
+
+- **Queue release verification (2026-10-12).** Resolved the earlier session's
+  process-spawning blocker without changing testpg: the disposable local
+  PostgreSQL cluster starts normally here. Full server run: 49/50 passed,
+  including SLA overdueMs, SLA dashboard/report, API and workload. The sole
+  public-status rate-limit failure passed on immediate rerun; the test now
+  pins 127.0.0.1 so address-family selection cannot split its per-IP bucket,
+  and passed again. All 50 suites therefore have passing results, though the
+  original full run was not completely green. Client checks and production
+  build passed; tracked-file and 21 new application-file secret scans clean.
+  No uncommitted migrations. Fly browser sign-in completed. CLI auto-upgrade
+  failed during download; restored its existing executable and DLL backups
+  and disabled update checks for this release. Final release: deployment-01M4QMY2K6Z42WDRADWGJXX1PE.
+  Machine checks and DNS passed; public health returns only { ok: true };
+  released bundle index-ChKTUvMS.js contains the queue quick views and
+  response-owner wording. Remote inspection confirms only example environment
+  files remain, with no local environment secret files.
+  Packaging inspection found /app/server/.env present in the initial image:
+  root-only Docker ignore patterns missed nested env files. Added recursive
+  env exclusions and rebuilt; credentials from prior image copies require
+  rotation under docs/credential-rotation.md. No values were displayed.
+  Dependency audit (production dependencies): 1 critical, 4 high, 6 moderate;
+  remediation remains a separate follow-up.
+ This Session (2026-09-28)
 
 - **A mis-levelled ticket can no longer happen by design.** INC-001787 (a
   Software ticket) read "Skill required L2 · Standard" while the request was
@@ -349,7 +1050,64 @@ all.)
   contract + per-ticket derivation + the ticket detail payload),
   `test-assignment-pool` (B13–B16: the advertised bar follows the rules).
 
-## Completed This Session (2026-09-26)
+## Completed
+
+- **Aligned SLA pairs, option 01 (2026-10-12).** Queue SLA clocks render as
+  fixed label/value pairs without pill backgrounds. Labels remain neutral;
+  exceptional values retain explicit Missed/Overdue wording and a coloured
+  dot. Values use tabular numbers and no wrapping. SLA column widened to
+  248px; mobile cards give SLA a full-width row. Derived SLA values and backend
+  rules are unchanged. Client checks, production build and secret scan passed.
+  Deployed release deployment-01M4QQEX7VB2ZDKV590DYZA0P3; machine
+  checks, DNS and public health passed. Live stylesheet index-BVnd-s9k.css
+  verified for aligned pairs, transparent alerts and full-width mobile SLA.
+
+
+- **Queue dividers and visual cleanup (2026-10-12).** Clearer horizontal row
+  borders plus subtle vertical separators group identity, workflow, SLA and
+  ownership. Group labels and healthy SLA clocks lose extra pill backgrounds.
+  Group/agent content is bounded with ellipsis and full-name tooltips; avatars
+  retain their size. Mobile cards explicitly remove vertical separators.
+  Client checks, production build and secret scan passed. Deployed release
+  deployment-01M4QPYD21NZP8WWS49JQKM9JP; machine/DNS checks and public
+  health passed. Live stylesheet index-DiXXxUIu.css verified for separators,
+  plain healthy SLA clocks and bounded group labels. No backend changes.
+
+
+- **Lifecycle badge colours (2026-10-12).** Shared badges now use blue for New,
+  violet for In Progress, green for Resolved and grey for Closed. Moderate
+  priority remains neutral; High/Critical stay amber/red. Existing theme
+  tokens and one shared component rule set cover both themes. Client checks,
+  including badge contrast >=4.5:1 in light/dark, production build and secret
+  scan passed. CSS-only product change. Deployed release
+  deployment-01M4QNB8514GT1F9DPS6C1W7QG; machine checks, DNS and public
+  health passed. Live stylesheet index-CRLt4-T6.css verified to contain
+  the blue New and violet In Progress rules.
+
+
+- **Queue release verification (2026-10-12).** Resolved the earlier session's
+  process-spawning blocker without changing testpg: the disposable local
+  PostgreSQL cluster starts normally here. Full server run: 49/50 passed,
+  including SLA overdueMs, SLA dashboard/report, API and workload. The sole
+  public-status rate-limit failure passed on immediate rerun; the test now
+  pins 127.0.0.1 so address-family selection cannot split its per-IP bucket,
+  and passed again. All 50 suites therefore have passing results, though the
+  original full run was not completely green. Client checks and production
+  build passed; tracked-file and 21 new application-file secret scans clean.
+  No uncommitted migrations. Fly browser sign-in completed. CLI auto-upgrade
+  failed during download; restored its existing executable and DLL backups
+  and disabled update checks for this release. Final release: deployment-01M4QMY2K6Z42WDRADWGJXX1PE.
+  Machine checks and DNS passed; public health returns only { ok: true };
+  released bundle index-ChKTUvMS.js contains the queue quick views and
+  response-owner wording. Remote inspection confirms only example environment
+  files remain, with no local environment secret files.
+  Packaging inspection found /app/server/.env present in the initial image:
+  root-only Docker ignore patterns missed nested env files. Added recursive
+  env exclusions and rebuilt; credentials from prior image copies require
+  rotation under docs/credential-rotation.md. No values were displayed.
+  Dependency audit (production dependencies): 1 critical, 4 high, 6 moderate;
+  remediation remains a separate follow-up.
+ This Session (2026-09-26)
 
 - **Merged `origin/feature/tests-and-docs` (Farook, 2026-09-25) into
   `post-deployment-v1`.** Two commits: `feat(client): make the UI usable on
@@ -384,7 +1142,64 @@ all.)
   email-rules, email-integration, imap, ingest, triage ×2, screening,
   graph-mailbox, m365.
 
-## Completed This Session (2026-09-26, resumed)
+## Completed
+
+- **Aligned SLA pairs, option 01 (2026-10-12).** Queue SLA clocks render as
+  fixed label/value pairs without pill backgrounds. Labels remain neutral;
+  exceptional values retain explicit Missed/Overdue wording and a coloured
+  dot. Values use tabular numbers and no wrapping. SLA column widened to
+  248px; mobile cards give SLA a full-width row. Derived SLA values and backend
+  rules are unchanged. Client checks, production build and secret scan passed.
+  Deployed release deployment-01M4QQEX7VB2ZDKV590DYZA0P3; machine
+  checks, DNS and public health passed. Live stylesheet index-BVnd-s9k.css
+  verified for aligned pairs, transparent alerts and full-width mobile SLA.
+
+
+- **Queue dividers and visual cleanup (2026-10-12).** Clearer horizontal row
+  borders plus subtle vertical separators group identity, workflow, SLA and
+  ownership. Group labels and healthy SLA clocks lose extra pill backgrounds.
+  Group/agent content is bounded with ellipsis and full-name tooltips; avatars
+  retain their size. Mobile cards explicitly remove vertical separators.
+  Client checks, production build and secret scan passed. Deployed release
+  deployment-01M4QPYD21NZP8WWS49JQKM9JP; machine/DNS checks and public
+  health passed. Live stylesheet index-DiXXxUIu.css verified for separators,
+  plain healthy SLA clocks and bounded group labels. No backend changes.
+
+
+- **Lifecycle badge colours (2026-10-12).** Shared badges now use blue for New,
+  violet for In Progress, green for Resolved and grey for Closed. Moderate
+  priority remains neutral; High/Critical stay amber/red. Existing theme
+  tokens and one shared component rule set cover both themes. Client checks,
+  including badge contrast >=4.5:1 in light/dark, production build and secret
+  scan passed. CSS-only product change. Deployed release
+  deployment-01M4QNB8514GT1F9DPS6C1W7QG; machine checks, DNS and public
+  health passed. Live stylesheet index-CRLt4-T6.css verified to contain
+  the blue New and violet In Progress rules.
+
+
+- **Queue release verification (2026-10-12).** Resolved the earlier session's
+  process-spawning blocker without changing testpg: the disposable local
+  PostgreSQL cluster starts normally here. Full server run: 49/50 passed,
+  including SLA overdueMs, SLA dashboard/report, API and workload. The sole
+  public-status rate-limit failure passed on immediate rerun; the test now
+  pins 127.0.0.1 so address-family selection cannot split its per-IP bucket,
+  and passed again. All 50 suites therefore have passing results, though the
+  original full run was not completely green. Client checks and production
+  build passed; tracked-file and 21 new application-file secret scans clean.
+  No uncommitted migrations. Fly browser sign-in completed. CLI auto-upgrade
+  failed during download; restored its existing executable and DLL backups
+  and disabled update checks for this release. Final release: deployment-01M4QMY2K6Z42WDRADWGJXX1PE.
+  Machine checks and DNS passed; public health returns only { ok: true };
+  released bundle index-ChKTUvMS.js contains the queue quick views and
+  response-owner wording. Remote inspection confirms only example environment
+  files remain, with no local environment secret files.
+  Packaging inspection found /app/server/.env present in the initial image:
+  root-only Docker ignore patterns missed nested env files. Added recursive
+  env exclusions and rebuilt; credentials from prior image copies require
+  rotation under docs/credential-rotation.md. No values were displayed.
+  Dependency audit (production dependencies): 1 critical, 4 high, 6 moderate;
+  remediation remains a separate follow-up.
+ This Session (2026-09-26, resumed)
 
 Picked up the interrupted session and finished it. The suite count went 37 → 41.
 
@@ -577,7 +1392,64 @@ Picked up the interrupted session and finished it. The suite count went 37 → 4
   oldest-first, then the self-test) and reports **37 commits, 0 range
   failures**.
 
-## Completed This Session (2026-09-24)
+## Completed
+
+- **Aligned SLA pairs, option 01 (2026-10-12).** Queue SLA clocks render as
+  fixed label/value pairs without pill backgrounds. Labels remain neutral;
+  exceptional values retain explicit Missed/Overdue wording and a coloured
+  dot. Values use tabular numbers and no wrapping. SLA column widened to
+  248px; mobile cards give SLA a full-width row. Derived SLA values and backend
+  rules are unchanged. Client checks, production build and secret scan passed.
+  Deployed release deployment-01M4QQEX7VB2ZDKV590DYZA0P3; machine
+  checks, DNS and public health passed. Live stylesheet index-BVnd-s9k.css
+  verified for aligned pairs, transparent alerts and full-width mobile SLA.
+
+
+- **Queue dividers and visual cleanup (2026-10-12).** Clearer horizontal row
+  borders plus subtle vertical separators group identity, workflow, SLA and
+  ownership. Group labels and healthy SLA clocks lose extra pill backgrounds.
+  Group/agent content is bounded with ellipsis and full-name tooltips; avatars
+  retain their size. Mobile cards explicitly remove vertical separators.
+  Client checks, production build and secret scan passed. Deployed release
+  deployment-01M4QPYD21NZP8WWS49JQKM9JP; machine/DNS checks and public
+  health passed. Live stylesheet index-DiXXxUIu.css verified for separators,
+  plain healthy SLA clocks and bounded group labels. No backend changes.
+
+
+- **Lifecycle badge colours (2026-10-12).** Shared badges now use blue for New,
+  violet for In Progress, green for Resolved and grey for Closed. Moderate
+  priority remains neutral; High/Critical stay amber/red. Existing theme
+  tokens and one shared component rule set cover both themes. Client checks,
+  including badge contrast >=4.5:1 in light/dark, production build and secret
+  scan passed. CSS-only product change. Deployed release
+  deployment-01M4QNB8514GT1F9DPS6C1W7QG; machine checks, DNS and public
+  health passed. Live stylesheet index-CRLt4-T6.css verified to contain
+  the blue New and violet In Progress rules.
+
+
+- **Queue release verification (2026-10-12).** Resolved the earlier session's
+  process-spawning blocker without changing testpg: the disposable local
+  PostgreSQL cluster starts normally here. Full server run: 49/50 passed,
+  including SLA overdueMs, SLA dashboard/report, API and workload. The sole
+  public-status rate-limit failure passed on immediate rerun; the test now
+  pins 127.0.0.1 so address-family selection cannot split its per-IP bucket,
+  and passed again. All 50 suites therefore have passing results, though the
+  original full run was not completely green. Client checks and production
+  build passed; tracked-file and 21 new application-file secret scans clean.
+  No uncommitted migrations. Fly browser sign-in completed. CLI auto-upgrade
+  failed during download; restored its existing executable and DLL backups
+  and disabled update checks for this release. Final release: deployment-01M4QMY2K6Z42WDRADWGJXX1PE.
+  Machine checks and DNS passed; public health returns only { ok: true };
+  released bundle index-ChKTUvMS.js contains the queue quick views and
+  response-owner wording. Remote inspection confirms only example environment
+  files remain, with no local environment secret files.
+  Packaging inspection found /app/server/.env present in the initial image:
+  root-only Docker ignore patterns missed nested env files. Added recursive
+  env exclusions and rebuilt; credentials from prior image copies require
+  rotation under docs/credential-rotation.md. No values were displayed.
+  Dependency audit (production dependencies): 1 critical, 4 high, 6 moderate;
+  remediation remains a separate follow-up.
+ This Session (2026-09-24)
 
 - **Live ticket queue controls.** The simulator is no longer exposed in the
   client navigation, hash routing, dashboard quick actions, or system status;
@@ -661,7 +1533,64 @@ Picked up the interrupted session and finished it. The suite count went 37 → 4
   rollout gates, operational metrics, and 30/60/90-day execution plan.
 
 
-## Completed This Session (2026-09-16)
+## Completed
+
+- **Aligned SLA pairs, option 01 (2026-10-12).** Queue SLA clocks render as
+  fixed label/value pairs without pill backgrounds. Labels remain neutral;
+  exceptional values retain explicit Missed/Overdue wording and a coloured
+  dot. Values use tabular numbers and no wrapping. SLA column widened to
+  248px; mobile cards give SLA a full-width row. Derived SLA values and backend
+  rules are unchanged. Client checks, production build and secret scan passed.
+  Deployed release deployment-01M4QQEX7VB2ZDKV590DYZA0P3; machine
+  checks, DNS and public health passed. Live stylesheet index-BVnd-s9k.css
+  verified for aligned pairs, transparent alerts and full-width mobile SLA.
+
+
+- **Queue dividers and visual cleanup (2026-10-12).** Clearer horizontal row
+  borders plus subtle vertical separators group identity, workflow, SLA and
+  ownership. Group labels and healthy SLA clocks lose extra pill backgrounds.
+  Group/agent content is bounded with ellipsis and full-name tooltips; avatars
+  retain their size. Mobile cards explicitly remove vertical separators.
+  Client checks, production build and secret scan passed. Deployed release
+  deployment-01M4QPYD21NZP8WWS49JQKM9JP; machine/DNS checks and public
+  health passed. Live stylesheet index-DiXXxUIu.css verified for separators,
+  plain healthy SLA clocks and bounded group labels. No backend changes.
+
+
+- **Lifecycle badge colours (2026-10-12).** Shared badges now use blue for New,
+  violet for In Progress, green for Resolved and grey for Closed. Moderate
+  priority remains neutral; High/Critical stay amber/red. Existing theme
+  tokens and one shared component rule set cover both themes. Client checks,
+  including badge contrast >=4.5:1 in light/dark, production build and secret
+  scan passed. CSS-only product change. Deployed release
+  deployment-01M4QNB8514GT1F9DPS6C1W7QG; machine checks, DNS and public
+  health passed. Live stylesheet index-CRLt4-T6.css verified to contain
+  the blue New and violet In Progress rules.
+
+
+- **Queue release verification (2026-10-12).** Resolved the earlier session's
+  process-spawning blocker without changing testpg: the disposable local
+  PostgreSQL cluster starts normally here. Full server run: 49/50 passed,
+  including SLA overdueMs, SLA dashboard/report, API and workload. The sole
+  public-status rate-limit failure passed on immediate rerun; the test now
+  pins 127.0.0.1 so address-family selection cannot split its per-IP bucket,
+  and passed again. All 50 suites therefore have passing results, though the
+  original full run was not completely green. Client checks and production
+  build passed; tracked-file and 21 new application-file secret scans clean.
+  No uncommitted migrations. Fly browser sign-in completed. CLI auto-upgrade
+  failed during download; restored its existing executable and DLL backups
+  and disabled update checks for this release. Final release: deployment-01M4QMY2K6Z42WDRADWGJXX1PE.
+  Machine checks and DNS passed; public health returns only { ok: true };
+  released bundle index-ChKTUvMS.js contains the queue quick views and
+  response-owner wording. Remote inspection confirms only example environment
+  files remain, with no local environment secret files.
+  Packaging inspection found /app/server/.env present in the initial image:
+  root-only Docker ignore patterns missed nested env files. Added recursive
+  env exclusions and rebuilt; credentials from prior image copies require
+  rotation under docs/credential-rotation.md. No values were displayed.
+  Dependency audit (production dependencies): 1 critical, 4 high, 6 moderate;
+  remediation remains a separate follow-up.
+ This Session (2026-09-16)
 
 - **`origin/feature/tests-and-docs` pulled into `post-deployment-v1`.** The two
   commits behind (`fd8b31d` full-suite test runner + IMAP/email-source test
@@ -706,7 +1635,64 @@ Picked up the interrupted session and finished it. The suite count went 37 → 4
   README as the "~890-line long-form manual"; they now point at `docs/` for
   per-subsystem detail.
 
-## Completed This Session (2026-09-14)
+## Completed
+
+- **Aligned SLA pairs, option 01 (2026-10-12).** Queue SLA clocks render as
+  fixed label/value pairs without pill backgrounds. Labels remain neutral;
+  exceptional values retain explicit Missed/Overdue wording and a coloured
+  dot. Values use tabular numbers and no wrapping. SLA column widened to
+  248px; mobile cards give SLA a full-width row. Derived SLA values and backend
+  rules are unchanged. Client checks, production build and secret scan passed.
+  Deployed release deployment-01M4QQEX7VB2ZDKV590DYZA0P3; machine
+  checks, DNS and public health passed. Live stylesheet index-BVnd-s9k.css
+  verified for aligned pairs, transparent alerts and full-width mobile SLA.
+
+
+- **Queue dividers and visual cleanup (2026-10-12).** Clearer horizontal row
+  borders plus subtle vertical separators group identity, workflow, SLA and
+  ownership. Group labels and healthy SLA clocks lose extra pill backgrounds.
+  Group/agent content is bounded with ellipsis and full-name tooltips; avatars
+  retain their size. Mobile cards explicitly remove vertical separators.
+  Client checks, production build and secret scan passed. Deployed release
+  deployment-01M4QPYD21NZP8WWS49JQKM9JP; machine/DNS checks and public
+  health passed. Live stylesheet index-DiXXxUIu.css verified for separators,
+  plain healthy SLA clocks and bounded group labels. No backend changes.
+
+
+- **Lifecycle badge colours (2026-10-12).** Shared badges now use blue for New,
+  violet for In Progress, green for Resolved and grey for Closed. Moderate
+  priority remains neutral; High/Critical stay amber/red. Existing theme
+  tokens and one shared component rule set cover both themes. Client checks,
+  including badge contrast >=4.5:1 in light/dark, production build and secret
+  scan passed. CSS-only product change. Deployed release
+  deployment-01M4QNB8514GT1F9DPS6C1W7QG; machine checks, DNS and public
+  health passed. Live stylesheet index-CRLt4-T6.css verified to contain
+  the blue New and violet In Progress rules.
+
+
+- **Queue release verification (2026-10-12).** Resolved the earlier session's
+  process-spawning blocker without changing testpg: the disposable local
+  PostgreSQL cluster starts normally here. Full server run: 49/50 passed,
+  including SLA overdueMs, SLA dashboard/report, API and workload. The sole
+  public-status rate-limit failure passed on immediate rerun; the test now
+  pins 127.0.0.1 so address-family selection cannot split its per-IP bucket,
+  and passed again. All 50 suites therefore have passing results, though the
+  original full run was not completely green. Client checks and production
+  build passed; tracked-file and 21 new application-file secret scans clean.
+  No uncommitted migrations. Fly browser sign-in completed. CLI auto-upgrade
+  failed during download; restored its existing executable and DLL backups
+  and disabled update checks for this release. Final release: deployment-01M4QMY2K6Z42WDRADWGJXX1PE.
+  Machine checks and DNS passed; public health returns only { ok: true };
+  released bundle index-ChKTUvMS.js contains the queue quick views and
+  response-owner wording. Remote inspection confirms only example environment
+  files remain, with no local environment secret files.
+  Packaging inspection found /app/server/.env present in the initial image:
+  root-only Docker ignore patterns missed nested env files. Added recursive
+  env exclusions and rebuilt; credentials from prior image copies require
+  rotation under docs/credential-rotation.md. No values were displayed.
+  Dependency audit (production dependencies): 1 critical, 4 high, 6 moderate;
+  remediation remains a separate follow-up.
+ This Session (2026-09-14)
 
 - **Full-suite test runner — `npm test` rewritten.** The old 35-suite `&&`
   chain stopped at the first failure, silently skipping every suite behind it
@@ -748,7 +1734,64 @@ Picked up the interrupted session and finished it. The suite count went 37 → 4
   "Intentionally NOT implemented" list now match the code. `dev.db` survives
   only as a vestigial pre-migration artifact referenced by no code.
 
-## Completed This Session (2026-09-25)
+## Completed
+
+- **Aligned SLA pairs, option 01 (2026-10-12).** Queue SLA clocks render as
+  fixed label/value pairs without pill backgrounds. Labels remain neutral;
+  exceptional values retain explicit Missed/Overdue wording and a coloured
+  dot. Values use tabular numbers and no wrapping. SLA column widened to
+  248px; mobile cards give SLA a full-width row. Derived SLA values and backend
+  rules are unchanged. Client checks, production build and secret scan passed.
+  Deployed release deployment-01M4QQEX7VB2ZDKV590DYZA0P3; machine
+  checks, DNS and public health passed. Live stylesheet index-BVnd-s9k.css
+  verified for aligned pairs, transparent alerts and full-width mobile SLA.
+
+
+- **Queue dividers and visual cleanup (2026-10-12).** Clearer horizontal row
+  borders plus subtle vertical separators group identity, workflow, SLA and
+  ownership. Group labels and healthy SLA clocks lose extra pill backgrounds.
+  Group/agent content is bounded with ellipsis and full-name tooltips; avatars
+  retain their size. Mobile cards explicitly remove vertical separators.
+  Client checks, production build and secret scan passed. Deployed release
+  deployment-01M4QPYD21NZP8WWS49JQKM9JP; machine/DNS checks and public
+  health passed. Live stylesheet index-DiXXxUIu.css verified for separators,
+  plain healthy SLA clocks and bounded group labels. No backend changes.
+
+
+- **Lifecycle badge colours (2026-10-12).** Shared badges now use blue for New,
+  violet for In Progress, green for Resolved and grey for Closed. Moderate
+  priority remains neutral; High/Critical stay amber/red. Existing theme
+  tokens and one shared component rule set cover both themes. Client checks,
+  including badge contrast >=4.5:1 in light/dark, production build and secret
+  scan passed. CSS-only product change. Deployed release
+  deployment-01M4QNB8514GT1F9DPS6C1W7QG; machine checks, DNS and public
+  health passed. Live stylesheet index-CRLt4-T6.css verified to contain
+  the blue New and violet In Progress rules.
+
+
+- **Queue release verification (2026-10-12).** Resolved the earlier session's
+  process-spawning blocker without changing testpg: the disposable local
+  PostgreSQL cluster starts normally here. Full server run: 49/50 passed,
+  including SLA overdueMs, SLA dashboard/report, API and workload. The sole
+  public-status rate-limit failure passed on immediate rerun; the test now
+  pins 127.0.0.1 so address-family selection cannot split its per-IP bucket,
+  and passed again. All 50 suites therefore have passing results, though the
+  original full run was not completely green. Client checks and production
+  build passed; tracked-file and 21 new application-file secret scans clean.
+  No uncommitted migrations. Fly browser sign-in completed. CLI auto-upgrade
+  failed during download; restored its existing executable and DLL backups
+  and disabled update checks for this release. Final release: deployment-01M4QMY2K6Z42WDRADWGJXX1PE.
+  Machine checks and DNS passed; public health returns only { ok: true };
+  released bundle index-ChKTUvMS.js contains the queue quick views and
+  response-owner wording. Remote inspection confirms only example environment
+  files remain, with no local environment secret files.
+  Packaging inspection found /app/server/.env present in the initial image:
+  root-only Docker ignore patterns missed nested env files. Added recursive
+  env exclusions and rebuilt; credentials from prior image copies require
+  rotation under docs/credential-rotation.md. No values were displayed.
+  Dependency audit (production dependencies): 1 critical, 4 high, 6 moderate;
+  remediation remains a separate follow-up.
+ This Session (2026-09-25)
 
 - **Email relevance triage foundation.** Added a separate Groq-backed triage
   service and conservative local policy after deterministic screening and

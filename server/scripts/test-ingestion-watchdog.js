@@ -13,6 +13,11 @@
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
 
 const testdb = require('./lib/testdb').use('ingestion-watchdog');
+// testdb clears inbound credentials. Configure this suite's inert fixture
+// explicitly; snapshots are injected and no mailbox connection is opened.
+process.env.IMAP_HOST = '127.0.0.1';
+process.env.IMAP_USER = 'watchdog@example.com';
+process.env.IMAP_PASSWORD = 'watchdog-fixture-only';
 
 const bcrypt = require('bcryptjs');
 const prisma = require('../src/lib/prisma');

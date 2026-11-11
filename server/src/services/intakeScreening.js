@@ -183,10 +183,10 @@ const BULK_PRECEDENCE = new Set(['bulk', 'list', 'junk']);
 // The evidence is a HEADER, not a judgement about the words, which is what
 // makes it deterministic and checkable by eye:
 //
-//   - the sender is one of our own accounts (an Agent row — any role, active or
-//     not, because a leaver's last mail still must not open a ticket);
+//   - the sender is one of our own accounts (any Agent row), or has an exact
+//     domain explicitly configured in intakeInternalDomains;
 //   - a mailbox this installation ingests from appears on Cc or Bcc;
-//   - and that same mailbox does NOT appear on To.
+//   - and no configured intake address appears on To.
 //
 // The last clause is the whole rule. Addressed to us = a request, whatever it
 // looks like; copied to us = FYI. So an agent emailing the helpdesk directly
@@ -200,8 +200,8 @@ const BULK_PRECEDENCE = new Set(['bulk', 'list', 'junk']);
 //   - no configured ingestion address -> the rule is inert;
 //   - an agent-table read failure -> inert;
 //   - off via `intakeInternalCopies`.
-// And the sender must be a KNOWN account: an outsider who copies the helpdesk
-// is somebody asking, and nothing about it is speculative.
+// Outside the known accounts and explicit internal domains, copied mail is
+// accepted. Domains are never inferred from a public forwarding mailbox.
 // ---------------------------------------------------------------------------
 
 /** Enough of an address to compare one, without pretending to validate it. */
@@ -213,7 +213,7 @@ const ADDRESS_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * never a guess about which mailbox is "the" one.
  */
 function defaultMailboxAddresses() {
-  return [process.env.GRAPH_SHARED_MAILBOX, process.env.IMAP_USER]
+    return [process.env.GRAPH_SHARED_MAILBOX, process.env.IMAP_USER, process.env.POWER_AUTOMATE_MAILBOX]
     .map((value) => String(value || '').trim().toLowerCase())
     .filter((value) => ADDRESS_RE.test(value));
 }
@@ -270,9 +270,10 @@ function copiedInboxAddress(msg, context = {}) {
   if (!mailboxes.length) return null;
 
   const senders = new Set(addressList(context.staffSenders));
-  if (!senders.size) return null;
   const sender = String((msg && msg.requesterEmail) || '').trim().toLowerCase();
-  if (!sender || !senders.has(sender)) return null;
+  const domains = new Set(addressList(context.internalDomains));
+  const domain = ADDRESS_RE.test(sender) ? sender.split('@')[1] : '';
+  if (!sender || (!senders.has(sender) && !domains.has(domain))) return null;
 
   // No recipient headers means no evidence at all. The portal and dev intake
   // paths never compute them, so this stays inert there rather than guessing.
@@ -284,7 +285,7 @@ function copiedInboxAddress(msg, context = {}) {
   const mailbox = mailboxes.find((candidate) => copied.includes(candidate));
   if (!mailbox) return null;
   // Addressed to us directly is a request, however internal the sender is.
-  if (to.includes(mailbox)) return null;
+  if (mailboxes.some((candidate) => to.includes(candidate))) return null;
   return mailbox;
 }
 
@@ -328,6 +329,10 @@ const MAX_BANNER_TAIL_WORDS = 5;
 
 /** Banner phrases, anchored at the start of the subject. */
 const GREETING_BANNERS = [
+  {
+    label: 'independence greeting',
+    re: /^(?:[a-z]+\s*@\s*\d+\s+)?happy\s+independence(?:\s+day)?\b/,
+  },
   {
     label: 'birthday greeting',
     re: /^(?:a\s+|very\s+|belated\s+)*happy\s+birthday\b|^birthday\s+(?:greetings?|wishes|message|celebration|shout[\s-]?out)s?\b|^many\s+happy\s+returns\b/,
@@ -422,6 +427,24 @@ function matchBannerSubject(subject, ownWords) {
     return { label: banner.label, tail };
   }
   return null;
+}
+
+/** Health-session broadcasts need positive subject AND body evidence. Read only
+ * cleanBody; missing prose fails open. Ordinary invitation phrases are not IT
+ * requests, but any remaining request word vetoes the skip. */
+function isHealthAwarenessAnnouncement(subject, ownWords) {
+  const bare = normalizeSubject(subject).replace(SUBJECT_PREFIX_RE, '');
+  if (!/\b(?:health|wellness|outbreak|ebola|cholera|malaria|disease)\b/.test(bare)) return false;
+  if (!/\bawareness\s+session\b/.test(bare)) return false;
+  if (hasRequestWord(bare)) return false;
+  if (typeof ownWords !== 'string' || !ownWords.trim()) return false;
+  if (!/\b(?:all\s+employees|all\s+staff|dear\s+colleagues)\b/i.test(ownWords)) return false;
+  if (!/\b(?:organi[sz]ed|scheduled)\s+(?:an?\s+)?awareness\s+session\b/i.test(ownWords)) return false;
+  if (!/\b(?:health|hygiene|infection|preventive\s+measures)\b/i.test(ownWords)) return false;
+  const prose = ownWords
+    .replace(/\bplease\s+find\s+(?:the\s+)?session\s+details\s+below\b/gi, '')
+    .replace(/\bprovide\s+(?:valuable\s+)?information\b/gi, '');
+  return !hasRequestWord(prose);
 }
 
 /*
@@ -523,7 +546,8 @@ async function screenInternalCopy(msg, options = {}) {
     }
   }
 
-  const mailbox = copiedInboxAddress(msg, { mailboxAddresses: mailboxes, staffSenders: senders });
+  const internalDomains = String(settings.intakeInternalDomains || '').split(',').map((v) => v.trim().toLowerCase()).filter(Boolean);
+  const mailbox = copiedInboxAddress(msg, { mailboxAddresses: mailboxes, staffSenders: senders, internalDomains });
   return mailbox ? `copied to this mailbox only (${mailbox} on Cc/Bcc, not on To)` : null;
 }
 
@@ -564,6 +588,10 @@ async function screenMessage(msg, options = {}) {
     return {
       reason: `greeting announcement (${bannerHit.label}${bannerHit.tail ? `: ${bannerHit.tail}` : ''})`,
     };
+  }
+
+  if (isHealthAwarenessAnnouncement(msg && msg.subject, msg && msg.cleanBody)) {
+    return { reason: 'health awareness session announcement' };
   }
 
   // 5) Automated-mail headers (RFC 3834 + bulk markers).
@@ -613,6 +641,7 @@ module.exports = {
   hasRequestWord,
   isPermittedSubject,
   isRecallSubject,
+  isHealthAwarenessAnnouncement,
   matchBannerSubject,
   parseAddressEntries,
   parseSenderEntries,

@@ -27,8 +27,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  dependency-audit:
+    name: Dependency security audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm audit --audit-level=moderate
+
   server:
-    name: Server suites (45)
+    name: Server suites
     runs-on: ubuntu-latest
     services:
       postgres:

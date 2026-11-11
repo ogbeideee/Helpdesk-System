@@ -8,6 +8,7 @@ const prisma = require('../src/lib/prisma');
 const { requireAdmin } = require('../src/authMiddleware');
 const routingService = require('../src/services/routingService');
 const auditService = require('../src/services/auditService');
+const assignmentGroups = require('../src/services/assignmentGroupService');
 const { CATEGORIES } = require('../src/states');
 
 const router = express.Router();
@@ -148,7 +149,10 @@ router.get('/groups', async (req, res) => {
   try {
     const groups = await prisma.team.findMany({
       orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
-      include: { _count: { select: { memberships: { where: { isPrimary: true } }, routingRules: true } } },
+      include: {
+        _count: { select: assignmentGroups.deletionCounts },
+        memberships: { where: { isPrimary: true }, select: { agentId: true } },
+      },
     });
     res.json({
       groups: groups.map((g) => ({
@@ -158,8 +162,9 @@ router.get('/groups', async (req, res) => {
         description: g.description,
         isActive: g.isActive,
         isDefault: g.isDefault,
-        agentCount: g._count.memberships,
+        agentCount: g.memberships.length,
         ruleCount: g._count.routingRules,
+        ...assignmentGroups.deletionInfo(g),
         createdAt: g.createdAt,
         updatedAt: g.updatedAt,
       })),
@@ -255,6 +260,16 @@ router.patch('/groups/:id', async (req, res) => {
     res.json(updated);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/groups/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid assignment group id' });
+  try {
+    res.json(await assignmentGroups.deleteGroup(id, req.agent));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Unable to delete assignment group' });
   }
 });
 

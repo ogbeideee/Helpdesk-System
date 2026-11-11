@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api } from '../api.js';
+import { api, peekRead } from '../api.js';
+import { usePageRefresh } from '../usePageRefresh.js';
 import {
   Spinner, ErrorState, Field, ConfirmDialog, useToast,
 } from './ui.jsx';
@@ -23,8 +24,8 @@ function holidayLabel(h) {
 }
 
 export default function SlaSettingsPage() {
-  const [data, setData] = useState(null);
-  const [form, setForm] = useState(null);
+  const [data, setData] = useState(() => peekRead('/sla/settings') ?? null);
+  const [form, setForm] = useState(() => data ? buildForm(data) : null);
   const [error, setError] = useState('');
   const [issues, setIssues] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -43,6 +44,8 @@ export default function SlaSettingsPage() {
       setError(e.message);
     }
   }, []);
+
+  usePageRefresh(() => { if (!form || !formDirty(form, data)) load(); }, ['/sla/settings']);
 
   useEffect(() => { load(); }, [load]);
 
@@ -78,7 +81,7 @@ export default function SlaSettingsPage() {
     run(async () => {
       const next = await api.updateSlaSettings(formPayload(form));
       setData(next);
-      setForm(buildForm(next));
+      setForm(current => current || buildForm(next));
     }, 'SLA settings saved — new cycles will use them');
   }
 

@@ -1,0 +1,18 @@
+{
+  "type": "object",
+  "properties": {
+    "operation": { "type": "string", "enum": ["sendMail", "exportEmail"] },
+    "messageId": { "type": "string" },
+    "mail": {
+      "type": "object",
+      "properties": {
+        "to": { "type": "string" },
+        "cc": { "type": "string" },
+        "subject": { "type": "string" },
+        "body": { "type": "string" },
+        "html": { "type": "string" }
+      }
+    }
+  },
+  "required": ["operation"]
+}

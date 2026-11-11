@@ -231,6 +231,32 @@ function use(name) {
   for (const key of [
     'SMTP_HOST', 'SMTP_PORT', 'SMTP_SECURE', 'SMTP_USER', 'SMTP_PASS', 'SMTP_FROM',
     'SMTP_FROM_NAME', 'SMTP_BROADCAST_DL', 'SMTP_TLS_REJECT_UNAUTHORIZED',
+    'POWER_AUTOMATE_INTAKE_KEY', 'POWER_AUTOMATE_FLOW_URL', 'POWER_AUTOMATE_FLOW_KEY',
+    'POWER_AUTOMATE_OUTBOUND_ENABLED', 'POWER_AUTOMATE_BROADCAST_DL', 'POWER_AUTOMATE_MAILBOX',
+  ]) {
+    process.env[key] = '';
+  }
+
+  // INBOUND mail is the same class of hazard and the most destructive one:
+  // twenty-odd suites spawn server.js, and a spawned server polls whatever
+  // mailbox the developer's .env points at. With live IMAP credentials that is
+  // the PRODUCTION mailbox, so a test run would ingest real requester mail into
+  // a database that is dropped at the end of the suite — and mark those messages
+  // \Seen on the way, which hides them from the real poller's unseen-only search
+  // for good. Silent mail loss, caused by running the tests.
+  //
+  // Cleared here, at the one choke point, for the same reason the SMTP block
+  // above exists: no suite can forget. A suite that wants an ingestion path
+  // configures its own fixture (scripts/test-imap.js, test-imap-oauth.js,
+  // test-ingestion-watchdog.js) and test-m365.js asserts the disabled state.
+  // Graph is cleared alongside it — the credentials complete enablement rule
+  // means one .env edit away from the identical failure.
+  for (const key of [
+    'IMAP_HOST', 'IMAP_PORT', 'IMAP_SECURE', 'IMAP_USER', 'IMAP_PASSWORD',
+    'IMAP_MAILBOX', 'IMAP_POLL_INTERVAL_MS', 'IMAP_TLS_REJECT_UNAUTHORIZED',
+    'IMAP_OAUTH2_CLIENT_ID', 'IMAP_OAUTH2_CLIENT_SECRET', 'IMAP_OAUTH2_REFRESH_TOKEN',
+    'IMAP_OAUTH2_TOKEN_URL',
+    'GRAPH_TENANT_ID', 'GRAPH_CLIENT_ID', 'GRAPH_CLIENT_SECRET', 'GRAPH_SHARED_MAILBOX',
   ]) {
     process.env[key] = '';
   }

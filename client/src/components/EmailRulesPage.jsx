@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api } from '../api.js';
+import { api, peekRead } from '../api.js';
+import { usePageRefresh } from '../usePageRefresh.js';
 import {
   Spinner, ErrorState, EmptyState, Modal, ConfirmDialog, Field, useToast,
 } from './ui.jsx';
@@ -14,8 +15,8 @@ import {
  * through the normal classifier and defaults.
  */
 export default function EmailRulesPage() {
-  const [rules, setRules] = useState(null);
-  const [groups, setGroups] = useState([]);
+  const [rules, setRules] = useState(() => peekRead('/email-rules')?.rules ?? null);
+  const [groups, setGroups] = useState(() => peekRead('/teams') ?? []);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(null); // 'new' | rule object
@@ -34,6 +35,8 @@ export default function EmailRulesPage() {
       setError(e.message);
     }
   }, []);
+
+  usePageRefresh(load, ['/email-rules', '/teams']);
 
   useEffect(() => { load(); }, [load]);
 

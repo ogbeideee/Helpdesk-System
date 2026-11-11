@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const prisma = require('./lib/prisma');
+const sessions = require('./services/sessionService');
 
 // JWT signing secret. Production must be started with a real JWT_SECRET set in
 // the environment; we fail safely (refuse to start) rather than silently run on
@@ -42,18 +43,17 @@ function sanitizeAgent(agent) {
 
 function signToken(agent) {
   return jwt.sign({ sub: agent.id, email: agent.email, role: agent.role }, JWT_SECRET, {
-    expiresIn: TOKEN_TTL,
+    expiresIn: TOKEN_TTL, jwtid: require('crypto').randomUUID(),
   });
 }
 
 function extractToken(req) {
-  const header = req.headers.authorization || '';
-  const [scheme, token] = header.split(' ');
-  if (scheme !== 'Bearer' || !token) return null;
-  return token;
+  return sessions.extractToken(req);
 }
 
 async function requireAuth(req, res, next) {
+  try {
+  if (!sessions.sameOriginMutation(req)) return res.status(403).json({ error: 'Cross-origin session request refused' });
   const token = extractToken(req);
   if (!token) {
     return res.status(401).json({ error: 'Authentication required' });
@@ -64,12 +64,17 @@ async function requireAuth(req, res, next) {
   } catch {
     return res.status(401).json({ error: 'Session expired — please sign in again' });
   }
+  if (await sessions.isRevoked(token)) return res.status(401).json({ error: 'Session ended — please sign in again' });
   const agent = await prisma.agent.findUnique({
     where: { id: payload.sub },
     include: { team: true },
   });
   if (!agent || !agent.isActive) {
     return res.status(401).json({ error: 'Account is disabled or no longer exists' });
+  }
+  const staffWorkspace = /^\/api\/(tickets|dashboard|stats|weekly-reports|remote-access|workload|handovers)(\/|$)/.test(String(req.originalUrl || '').split('?')[0]);
+  if (staffWorkspace && !['agent', 'admin'].includes(agent.role)) {
+    return res.status(403).json({ error: 'A staff account is required to access the helpdesk workspace' });
   }
   // Password-change session invalidation: a token issued before the stamp is
   // a pre-change session and must not survive it. Second-granularity compare —
@@ -79,7 +84,10 @@ async function requireAuth(req, res, next) {
     return res.status(401).json({ error: 'Password changed — please sign in again' });
   }
   req.agent = agent;
+  req.sessionToken = token;
+  req.sessionExpiresAt = new Date(payload.exp * 1000);
   next();
+  } catch (error) { next(error); }
 }
 
 function requireAgent(req, res, next) {

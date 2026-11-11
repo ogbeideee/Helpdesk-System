@@ -130,7 +130,7 @@ function logGraphStatus(logger) {
   } else {
     logger('Microsoft Graph integration disabled.');
     logger(
-      `[graph] missing env vars: ${missing.join(', ')}. The API and frontend keep running; email ingestion is off and notifications are logged locally.`
+      `[graph] missing env vars: ${missing.join(', ')}. The API and frontend keep running; direct Graph ingestion is off. Other configured transports are unaffected.`
     );
   }
 }

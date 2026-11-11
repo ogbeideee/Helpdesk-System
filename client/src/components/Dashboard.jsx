@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
-import { api } from '../api.js';
+import { api, peekRead } from '../api.js';
+import { usePageRefresh } from '../usePageRefresh.js';
 import { PRIORITIES, CATEGORIES } from '../constants.js';
 import { usePageHeader } from '../pageHeader.js';
 import { slaKpiCards } from '../slaKpis.js';
@@ -115,26 +116,21 @@ function Panel({ title, icon, action, children, className = '' }) {
 /* ------------------------------------------------------------------ */
 
 export default function Dashboard({ onOpen, me, handoverCount = 0 }) {
-  const [data, setData] = useState(null);
-  const [recent, setRecent] = useState(null);
-  const [mine, setMine] = useState(null);
+  const [data, setData] = useState(() => peekRead('/dashboard') ?? null);
+  const [recent, setRecent] = useState(() => peekRead('/dashboard')?.recentlyCreated ?? null);
+  const [mine, setMine] = useState(() => peekRead('/dashboard')?.myWorkload ?? null);
   const [error, setError] = useState('');
 
   const load = useCallback(() => {
     setError('');
-    api.dashboard().then(setData).catch((e) => setError(e.message));
-    // The dashboard endpoint returns the newest five tickets without their
-    // owner; the queue endpoint carries the assignment, which the operational
-    // table needs. Same data, one extra field.
-    api.listTickets({ limit: 8 }).then(setRecent).catch(() => setRecent([]));
-    api.myWorkload().then(setMine).catch(() => setMine(null));
+    api.dashboard().then((next) => { setData(next); setRecent(next.recentlyCreated); setMine(next.myWorkload); }).catch((e) => setError(e.message));
+
   }, []);
+
+  usePageRefresh(load, ['/dashboard', '/workload/me']);
 
   useEffect(() => {
     load();
-    const onChange = () => load();
-    window.addEventListener('td:changed', onChange);
-    return () => window.removeEventListener('td:changed', onChange);
   }, [load]);
 
   usePageHeader(

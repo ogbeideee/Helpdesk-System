@@ -327,6 +327,8 @@ async function main() {
     IMAP_USER: 'imap-health@sources.test',
     IMAP_PASSWORD: 'imap-health-secret-pass',
     IMAP_SECURE: 'false',
+    IMAP_POLL_INTERVAL_MS: '1000',
+    GRAPH_POLL_INTERVAL_MS: '0',
     // A complete Graph set, so the redaction assertions below run against a
     // configured integration rather than passing trivially on a blank one.
     GRAPH_TENANT_ID: '11111111-2222-3333-4444-555555555555',

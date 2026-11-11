@@ -150,7 +150,7 @@ check('E2 every event has a kind, a time and a title',
 check('E3 the rail is oldest first',
   tl.every((e, i) => i === 0 || new Date(tl[i - 1].at) <= new Date(e.at)));
 eq('E4 a requester reply is a requester comment',
-  tl.find((e) => e.title.startsWith('Requester reply'))?.kind, 'update');
+  tl.find((e) => e.title.startsWith('Requester reply'))?.kind, 'requester');
 eq('E5 an internal note is its own kind',
   tl.find((e) => e.detail === 'Needs a part')?.kind, 'internal');
 eq('E6 an unnamed agent still gets a title',
@@ -200,7 +200,7 @@ eq('E17 an existing note is not overwritten by the resolution text',
   buildTimeline(resolvedWithNote).find((e) => e.kind === 'resolution')?.detail, 'own note');
 list('E18 the whole rail, oldest first',
   tl.map((e) => e.kind),
-  ['sla', 'sla-warn', 'status', 'handover', 'update', 'internal', 'update', 'update']);
+  ['sla', 'sla-warn', 'status', 'handover', 'requester', 'internal', 'requester', 'update']);
 
 /* ---- F. degenerate input --------------------------------------------- */
 

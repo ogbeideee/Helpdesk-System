@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api } from '../api.js';
+import { api, peekRead } from '../api.js';
+import { usePageRefresh } from '../usePageRefresh.js';
 import { Spinner, ErrorState, EmptyState, Modal, useToast, fmtDateTime } from './ui.jsx';
 
 export default function HandoversPage({ me, onCountChange }) {
-  const [inbox, setInbox] = useState(null);
-  const [outbox, setOutbox] = useState([]);
+  const [inbox, setInbox] = useState(() => peekRead('/handovers/inbox') ?? null);
+  const [outbox, setOutbox] = useState(() => peekRead('/handovers/outbox')?.requests ?? []);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [suggestFor, setSuggestFor] = useState(null);
-  const [settings, setSettings] = useState(null);
+  const [settings, setSettings] = useState(() => peekRead('/handovers/settings') ?? null);
   const [showToast, toastNode] = useToast();
 
   const load = useCallback(() => {
@@ -22,11 +23,11 @@ export default function HandoversPage({ me, onCountChange }) {
       .catch((e) => setError(e.message));
   }, [onCountChange]);
 
+  usePageRefresh(load, ['/handovers']);
+
   useEffect(() => {
     load();
     api.handoverSettings().then(setSettings).catch(() => {});
-    const t = setInterval(load, 60000);
-    return () => clearInterval(t);
   }, [load]);
 
   async function run(fn, message) {

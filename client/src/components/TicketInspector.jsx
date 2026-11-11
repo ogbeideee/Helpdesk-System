@@ -6,7 +6,7 @@
 // remaining time arrive precomputed, remote-access actions arrive as a
 // decision), so each card formats and reflects.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { api } from '../api.js';
 import { PRIORITIES, CATEGORIES } from '../constants.js';
 import { slaOverview, cycleSummary } from '../slaView.js';
@@ -17,6 +17,7 @@ import {
 } from '../remoteAccessView.js';
 import { StateBadge, ConfirmationChip, Avatar, fmtDateTime, timeAgo } from './ui.jsx';
 import { requiredSkillOf, skillLabel, assigneeBelowRequired } from '../ticketSkillView.js';
+import { ticketPropertyChanges } from '../ticketPropertiesView.js';
 
 export function Row({ label, children, stack }) {
   return (
@@ -33,9 +34,22 @@ export function Row({ label, children, stack }) {
 
 export function PropertiesCard({ ticket, busy, groupPick, setGroupPick, run, me }) {
   const [groups, setGroups] = useState([]);
-  useEffect(() => { api.groups().then(setGroups).catch(() => {}); }, []);
+  const [groupsError, setGroupsError] = useState('');
+  const [priorityPick, setPriorityPick] = useState(ticket.priority);
+  const [categoryPick, setCategoryPick] = useState(ticket.category);
+  const prior = useRef({ priority: ticket.priority, category: ticket.category });
+  useEffect(() => {
+    const previous = prior.current;
+    setPriorityPick(value => value === previous.priority ? ticket.priority : value);
+    setCategoryPick(value => value === previous.category ? ticket.category : value);
+    prior.current = { priority: ticket.priority, category: ticket.category };
+  }, [ticket.priority, ticket.category]);
+  function loadGroups() { setGroupsError(''); api.groups().then(setGroups).catch(() => setGroupsError('Assignment groups are unavailable.')); }
+  useEffect(loadGroups, []);
 
   const isAdmin = me.role === 'admin';
+  const changes = ticketPropertyChanges(ticket, { priority: priorityPick, category: categoryPick, group: groupPick }, isAdmin);
+  const changed = Object.keys(changes).length > 0;
   const group = groups.find((g) => g.key === (ticket.team?.key || ''));
   // The engine's own answer for THIS ticket — the bar of the routing rule that
   // governs it in this group, plus the priority boost. The group's bar is only
@@ -45,11 +59,6 @@ export function PropertiesCard({ ticket, busy, groupPick, setGroupPick, run, me 
   return (
     <section className="insp-section">
       <h2 className="insp-title">Details</h2>
-
-      <Row label="Requester">
-        <span className="insp-strong">{ticket.requesterName || 'Unknown'}</span>
-        {ticket.requesterEmail && <span className="insp-sub mono-sm">{ticket.requesterEmail}</span>}
-      </Row>
 
       <Row label="Status">
         <span className="insp-inline">
@@ -69,9 +78,10 @@ export function PropertiesCard({ ticket, busy, groupPick, setGroupPick, run, me 
       <Row label="Priority">
         <select
           className="insp-select"
-          value={ticket.priority}
+          aria-label="Priority"
+          value={priorityPick}
           disabled={busy}
-          onChange={(e) => run(async () => api.updateTicket(ticket.id, { priority: e.target.value }), 'Priority updated')}
+          onChange={e => setPriorityPick(e.target.value)}
         >
           {PRIORITIES.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
         </select>
@@ -80,38 +90,41 @@ export function PropertiesCard({ ticket, busy, groupPick, setGroupPick, run, me 
       <Row label="Category">
         <select
           className="insp-select"
-          value={ticket.category}
+          aria-label="Category"
+          value={categoryPick}
           disabled={busy}
-          onChange={(e) => run(async () => api.updateTicket(ticket.id, { category: e.target.value }), 'Category updated')}
+          onChange={e => setCategoryPick(e.target.value)}
         >
           {[...new Set([ticket.category, ...CATEGORIES])].map((c) => <option key={c}>{c}</option>)}
         </select>
       </Row>
 
-      <Row label="Group" stack>
+      <Row label="Group">
         <span className="insp-inline">
           <select
             className="insp-select"
+            aria-label="Assignment group"
             value={groupPick}
-            disabled={busy || !isAdmin}
+            disabled={busy || !isAdmin || Boolean(groupsError)}
             title={isAdmin ? '' : 'Only an administrator can change the assignment group'}
             onChange={(e) => setGroupPick(e.target.value)}
           >
             <option value="">Triage</option>
+            {ticket.team && !groups.some(group => group.key === ticket.team.key) && <option value={ticket.team.key}>{ticket.team.name}</option>}
             {groups.map((g) => <option key={g.key} value={g.key}>{g.name}</option>)}
           </select>
-          {isAdmin && groupPick !== (ticket.team?.key || '') && (
-            <button
-              className="btn btn-secondary btn-sm"
-              disabled={busy}
-              onClick={() => run(
-                async () => api.updateTicket(ticket.id, { assignmentGroup: groupPick || null }),
-                'Assignment group changed'
-              )}
-            >Apply</button>
-          )}
         </span>
       </Row>
+
+      {groupsError && <p className="inline-load-error" role="status">{groupsError} <button className="btn-link" onClick={loadGroups}>Retry</button></p>}
+      {changed && <div className="property-save-bar" role="status">
+        <span className="muted small">Unsaved changes</span>
+        <button className="btn btn-primary btn-sm" disabled={busy} onClick={async () => {
+          const ok = await run(() => api.updateTicket(ticket.id, changes), 'Ticket details saved', { resetGroup: true });
+          if (ok) { setPriorityPick(priorityPick); setCategoryPick(categoryPick); }
+        }}>{busy ? 'Saving…' : 'Save changes'}</button>
+        <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => { setPriorityPick(ticket.priority); setCategoryPick(ticket.category); setGroupPick(ticket.team?.key || ''); }}>Cancel</button>
+      </div>}
 
       <Row label="Assigned to">
         {ticket.assignedAgent ? (
@@ -120,9 +133,6 @@ export function PropertiesCard({ ticket, busy, groupPick, setGroupPick, run, me 
               <Avatar name={ticket.assignedAgent.name} size={22} />
               <span className="insp-strong">{ticket.assignedAgent.name}</span>
             </span>
-            {ticket.assignedAgent.skillLevel && (
-              <span className="insp-sub">{skillLabel(ticket.assignedAgent.skillLevel)}</span>
-            )}
           </>
         ) : <span className="unassigned-tag">Unassigned</span>}
       </Row>
@@ -130,15 +140,20 @@ export function PropertiesCard({ ticket, busy, groupPick, setGroupPick, run, me 
       {requiredSkill && (
         <Row label="Skill required">
           <span>{skillLabel(requiredSkill.level)}</span>
-          {requiredSkill.ruleName && <span className="insp-sub">{requiredSkill.ruleName}</span>}
           {assigneeBelowRequired(ticket, requiredSkill) && (
             <span className="insp-sub warn-text">Assignee is below the required level</span>
           )}
         </Row>
       )}
 
-      <div className="insp-divider" />
-
+      <details className="ticket-additional-details">
+        <summary>More details</summary>
+        <Row label="Requester">
+          <span className="insp-strong">{ticket.requesterName || 'Unknown'}</span>
+          {ticket.requesterEmail && <span className="insp-sub mono-sm">{ticket.requesterEmail}</span>}
+        </Row>
+        {ticket.assignedAgent?.skillLevel && <Row label="Agent skill">{skillLabel(ticket.assignedAgent.skillLevel)}</Row>}
+        {requiredSkill?.ruleName && <Row label="Skill rule">{requiredSkill.ruleName}</Row>}
       <Row label="Created">
         <span title={fmtDateTime(ticket.createdAt)}>{timeAgo(ticket.createdAt)}</span>
         <span className="insp-sub">{fmtDateTime(ticket.createdAt)}</span>
@@ -146,6 +161,7 @@ export function PropertiesCard({ ticket, busy, groupPick, setGroupPick, run, me 
       <Row label="Updated">
         <span title={fmtDateTime(ticket.updatedAt)}>{timeAgo(ticket.updatedAt)}</span>
       </Row>
+      </details>
       {ticket.dueAt && !ticket.sla && (
         <Row label="SLA target">
           <span className={ticket.overdue ? 'warn-text' : ''}>{fmtDateTime(ticket.dueAt)}</span>
@@ -179,26 +195,20 @@ export function SlaCard({ ticket }) {
 
   return (
     <section className="insp-section">
-      <h2 className="insp-title">SLA</h2>
-
-      <Row label="Cycle">
-        <span>
-          {sla.cycleNumber}
-          <span className="insp-sub">{sla.cycleEndedAt ? 'ended' : 'active'}</span>
-        </span>
-      </Row>
-
-      <Row label="Started" stack>
-        <span title={fmtDateTime(sla.cycleStartedAt)}>{timeAgo(sla.cycleStartedAt)}</span>
-        <span className="insp-sub">{fmtDateTime(sla.cycleStartedAt)}</span>
-      </Row>
+      <h2 className="insp-title ticket-sla-heading">SLA <span className="ticket-sla-caption">Working time</span></h2>
 
       <SlaClockRow label="Response" block={ticket.sla?.response} view={sla.response} />
       <SlaClockRow label="Resolution" block={ticket.sla?.resolution} view={sla.resolution} />
 
-      {previous.length > 0 && (
-        <>
-          <div className="insp-divider" />
+      <details className="ticket-additional-details">
+        <summary>Cycle {sla.cycleNumber} · {sla.cycleEndedAt ? 'ended' : 'active'}</summary>
+        <Row label="Started" stack>
+          <span>{fmtDateTime(sla.cycleStartedAt)}</span>
+        </Row>
+        {ticket.sla?.response?.dueAt && <Row label="Response due" stack>{fmtDateTime(ticket.sla.response.dueAt)}</Row>}
+        {ticket.sla?.resolution?.dueAt && <Row label="Resolution due" stack>{fmtDateTime(ticket.sla.resolution.dueAt)}</Row>}
+        {ticket.sla?.response?.firstResponseAt && <Row label="First response" stack>{fmtDateTime(ticket.sla.response.firstResponseAt)}</Row>}
+        {previous.length > 0 && <>
           <div className="sla-history">
             <span className="insp-label">Previous cycles</span>
             {previous.map((c) => {
@@ -213,27 +223,22 @@ export function SlaCard({ ticket }) {
               );
             })}
           </div>
-        </>
-      )}
+        </>}
+      </details>
     </section>
   );
 }
 
-const TONE_PILL = { bad: 'pill-overdue', warn: 'pill-sla-warn', ok: 'pill-sla', muted: 'pill-state-closed' };
-
 function SlaClockRow({ label, block, view }) {
   return (
-    <Row label={label} stack>
+    <div className={`ticket-sla-clock is-${view.tone}`}>
       {/* The view's text already carries the remaining working time where it
           runs; a separate line here would say it twice. */}
-      <span className={`pill ${TONE_PILL[view.tone] || 'pill-sla'}`}>{view.text}</span>
-      {block?.dueAt && (
-        <span className="insp-sub">Due {fmtDateTime(block.dueAt)}</span>
-      )}
-      {block?.firstResponseAt && (
-        <span className="insp-sub">First response {fmtDateTime(block.firstResponseAt)}</span>
-      )}
-    </Row>
+      <div className="ticket-sla-line" title={block?.dueAt ? `Due ${fmtDateTime(block.dueAt)}` : undefined}>
+        <span>{label}</span>
+        <strong title={view.text}>{view.short === '—' ? view.text : view.short}</strong>
+      </div>
+    </div>
   );
 }
 
@@ -348,7 +353,7 @@ export function ActionsCard({
   const mine = ticket.assignedAgentId === me.id;
   const isAdmin = me.role === 'admin';
 
-  // Secondary moves only: the likely next step already sits in the header.
+  // Secondary moves only: the likely next step is in the inspector's Actions section.
   const secondary = [];
   if (canResolve && canStart) secondary.push({ label: 'Start working', onClick: onStart });
   if (canClose && canResolve) secondary.push({ label: 'Close ticket', onClick: onClose });

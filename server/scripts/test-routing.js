@@ -583,6 +583,46 @@ async function main() {
 
     /* ---- originating assignment group ------------------------------- */
     {
+      const deletion = require('../src/services/assignmentGroupService');
+      const { nextTicketNumber } = require('../src/ticketNumbers');
+      const empty = await prisma.team.create({ data: { key: 'delete_test_empty', name: 'Unused deletion fixture' } });
+      const remove = (id, token = adminT) => req(`/api/routing/groups/${id}`, { method: 'DELETE', token });
+      eq('group deletion: unauthenticated forbidden', (await remove(empty.id, null)).status, 401);
+      eq('group deletion: agent forbidden', (await remove(empty.id, agentT)).status, 403);
+      eq('group deletion: default protected', (await remove(general.id)).status, 409);
+      eq('group deletion: invalid id rejected', (await remove('bad')).status, 400);
+      eq('group deletion: missing group is 404', (await remove(99999999)).status, 404);
+      const listed = (await req('/api/routing/groups', { token: adminT })).data.groups;
+      eq('group deletion: empty group advertised as deletable', listed.find(g => g.id === empty.id).deletable, true);
+      eq('group deletion: default reason returned', Boolean(listed.find(g => g.id === general.id).deleteBlockedReason), true);
+      await prisma.teamMembership.create({ data: { agentId: admin.id, teamId: empty.id, isPrimary: false } });
+      eq('group deletion: supporting membership blocks deletion', (await remove(empty.id)).status, 409);
+      await prisma.teamMembership.deleteMany({ where: { teamId: empty.id } });
+      const rule = await prisma.routingRule.create({ data: { name: `${MARK}Delete guard`, teamId: empty.id, isActive: false } });
+      eq('group deletion: inactive rule blocks deletion', (await remove(empty.id)).status, 409);
+      await prisma.routingRule.delete({ where: { id: rule.id } });
+      const history = await prisma.ticket.create({ data: { ticketNumber: await nextTicketNumber(prisma), shortDescription: `${MARK}Group deletion history`, requesterEmail: `delete@${DOMAIN}`, teamId: empty.id, originatingTeamId: empty.id, state: 'CLOSED' } });
+      eq('group deletion: closed ticket blocks deletion', (await remove(empty.id)).status, 409);
+      await prisma.ticket.update({ where: { id: history.id }, data: { teamId: null } });
+      eq('group deletion: originating group history blocks deletion', (await remove(empty.id)).status, 409);
+      await prisma.ticket.update({ where: { id: history.id }, data: { originatingTeamId: null } });
+      const cycle = await prisma.ticketSlaCycle.create({ data: { ticketId: history.id, cycleNumber: 1, startedAt: new Date(), teamId: empty.id } });
+      eq('group deletion: historical SLA group blocks deletion', (await remove(empty.id)).status, 409);
+      await prisma.ticketSlaCycle.delete({ where: { id: cycle.id } });
+      await prisma.ticket.delete({ where: { id: history.id } });
+      // Audit and deletion must roll back together.
+      const brokenAuditClient = { $transaction: callback => prisma.$transaction(tx => callback(new Proxy(tx, { get(target, key) { return key === 'auditEvent' ? { create: async () => { throw Error('synthetic audit failure'); } } : Reflect.get(target, key); } }))) };
+      let failed = false;
+      try { await deletion.deleteGroup(empty.id, admin, brokenAuditClient); } catch { failed = true; }
+      check('group deletion: audit failure rolls back deletion', failed && Boolean(await prisma.team.findUnique({ where: { id: empty.id } })));
+      eq('group deletion: unused group deleted', (await remove(empty.id)).status, 200);
+      eq('group deletion: repeated deletion is 404', (await remove(empty.id)).status, 404);
+      const event = await prisma.auditEvent.findFirst({ where: { entityId: empty.id, action: 'group.deleted' } });
+      check('group deletion: surviving audit identifies group and actor', event?.entityLabel === empty.name && event?.actorId === admin.id);
+    }
+
+    /* ---- originating assignment group ------------------------------- */
+    {
       const made = await req('/api/tickets', {
         method: 'POST', token: adminT,
         body: {

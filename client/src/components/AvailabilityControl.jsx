@@ -41,6 +41,7 @@ export default function AvailabilityControl({ me, onChanged }) {
       setBlocked(null);
       setConfirm(null);
       if (onChanged) onChanged({ ...me, isAvailable: result.isAvailable });
+      window.dispatchEvent(new CustomEvent('td:changed'));
       const moved = result.reassigned;
       showToast(
         result.isAvailable
