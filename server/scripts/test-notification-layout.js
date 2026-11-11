@@ -68,10 +68,10 @@ async function main() {
     assert(assignment.body.includes('Open ticket: https://example.com/support/#/tickets/42'));
     assert(assignment.body.includes('Excerpt:'));
     const branded = decorateMail({ subject: '[INC-123456] Resolution SLA approaching breach: Excel', body: 'Due: Tomorrow' });
-    assert(branded.html.includes('src="https://example.com/support/email-assets/bestaf-logo.png"'));
+    assert(branded.html.includes('src="https://example.com/support/email-assets/bestaf-logo-full.png"'));
     assert(branded.html.includes('alt="BESTAF Technologies"'));
     assert(branded.html.includes('Resolution deadline approaching'));
-    assert(branded.html.includes('width="60" height="64"'));
+    assert(branded.html.includes('width="144" height="72"'));
     process.env.PORTAL_BASE_URL = 'https://user:private@example.com/';
     assert(!decorateMail({ subject: 'Update', body: 'Safe text' }).html.includes('<img'));
   } finally {

@@ -16,6 +16,10 @@ all.)
 
 ## Completed
 
+- **Full logo in automatic emails (2026-11-11).** Deployed the supplied
+  wide logo in the shared notification footer. The layout checks passed and
+  the public image matched the supplied PNG by SHA-256.
+
 - **Ubuntu production cutover (2026-11-11).** Verified a fresh database dump,
   started the Ubuntu container, and pointed Nginx at the local application.
   Public HTTPS health and frontend checks passed, and invalid intake and

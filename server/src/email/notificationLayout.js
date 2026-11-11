@@ -11,8 +11,8 @@ function notificationShell(inner, { title = 'Ticket update', tone = 'info', tick
   try {
     const base = new URL(process.env.PORTAL_BASE_URL || '');
     if (base.protocol === 'https:' && !base.username && !base.password) {
-      const src = new URL('email-assets/bestaf-logo.png', base.origin + base.pathname.replace(/\/?$/, '/'));
-      logo = `<td width="76" valign="middle" style="padding-right:16px;"><img src="${escapeHtml(src.toString())}" width="60" height="64" alt="BESTAF Technologies" style="display:block;width:60px;height:64px;border:0;"></td>`;
+      const src = new URL('email-assets/bestaf-logo-full.png', base.origin + base.pathname.replace(/\/?$/, '/'));
+      logo = `<td width="160" valign="middle" style="padding-right:16px;"><img src="${escapeHtml(src.toString())}" width="144" height="72" alt="BESTAF Technologies" style="display:block;width:144px;height:72px;border:0;"></td>`;
     }
   } catch { /* Text signature remains usable without a configured public URL. */ }
   return `<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width, initial-scale=1"></head>
