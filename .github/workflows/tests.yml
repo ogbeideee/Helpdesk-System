@@ -83,6 +83,18 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5433/ticketing_test
           DIRECT_URL: postgresql://postgres:postgres@127.0.0.1:5433/ticketing_test
 
+      - name: Make PostgreSQL tools available to the test harness
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql
+          for bin_dir in /usr/lib/postgresql/*/bin; do
+            if [[ -x "$bin_dir/initdb" && -x "$bin_dir/psql" ]]; then
+              echo "$bin_dir" >> "$GITHUB_PATH"
+              exit 0
+            fi
+          done
+          exit 1
+
       - name: Run every server suite
         working-directory: server
         run: npm test
