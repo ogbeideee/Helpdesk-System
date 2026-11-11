@@ -10,8 +10,7 @@
 # migration history with `prisma migrate deploy`, and refuses anything that
 # looks like the application's database (Supabase hosts outright).
 #
-# The deployment workflow (fly-deploy.yml) still triggers on main/master only;
-# CI never auto-deploys, it only gates.
+# The Ubuntu release workflow packages an image for deployment over SSH.
 name: Tests
 
 on:

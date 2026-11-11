@@ -1,0 +1,48 @@
+name: Ubuntu release
+
+on:
+  push:
+    branches: [main, master, post-deployment-v1]
+    paths:
+      - .github/workflows/ubuntu-release.yml
+      - Dockerfile
+      - .dockerignore
+      - package*.json
+      - client/**
+      - server/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ubuntu-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Reject vulnerable production dependencies
+        run: npm audit --omit=dev --audit-level=moderate
+      - name: Build the Ubuntu image
+        run: docker build --tag "helpdesk:${GITHUB_SHA}" .
+      - name: Export the image
+        run: |
+          set -o pipefail
+          docker save "helpdesk:${GITHUB_SHA}" | gzip > helpdesk-image.tar.gz
+          sha256sum helpdesk-image.tar.gz > helpdesk-image.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: helpdesk-ubuntu-${{ github.sha }}
+          path: |
+            helpdesk-image.tar.gz
+            helpdesk-image.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 7

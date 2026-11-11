@@ -103,3 +103,23 @@ tested image and verified backup, stop the single old machine, apply committed
 migrations, deploy the prepared image and verify administrator diagnostics.
 Rollback after this migration requires a matching snapshot/revision or a
 forward compatibility repair; deploying the old image alone is insufficient.
+## Ubuntu releases
+
+The Ubuntu release workflow builds a commit-tagged Docker image, checks
+production dependencies, and attaches the image and SHA-256 checksum to the
+GitHub Actions run. Download and extract the artifact from the selected commit
+after its tests pass. Transfer the artifact directory and `scripts/deploy-ubuntu.sh`
+to the Ubuntu VM over the existing SSH connection.
+
+On the VM, run the deployment script with the full commit SHA and the path to
+the extracted artifact directory.
+
+```bash
+sudo bash deploy-ubuntu.sh <commit-sha> <artifact-directory>
+```
+
+The script uses the Compose deployment in `/opt/helpdesk`, checks migration
+status, replaces the single container, and checks local health. If the new
+container fails, it restores the previous image. For releases with pending
+migrations, review compatibility and apply the committed migrations during a
+maintenance window before deploying the image.
