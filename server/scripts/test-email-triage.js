@@ -1,6 +1,7 @@
 /* Focused email relevance triage tests. No network and no application DB. */
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
+process.env.DATABASE_URL = 'postgresql://test:test@127.0.0.1:1/triage_unit_test';
 
 const assert = require('assert');
 const policy = require('../src/services/emailTriagePolicy');

@@ -95,6 +95,9 @@ jobs:
           done
           exit 1
 
+      - name: Build the frontend for server integration tests
+        run: npm run build
+
       - name: Run every server suite
         working-directory: server
         run: npm test
